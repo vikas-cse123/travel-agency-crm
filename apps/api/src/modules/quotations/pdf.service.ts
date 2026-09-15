@@ -4,6 +4,7 @@ import {
   formatAgeList,
   formatItineraryDayTitle,
   hotelStayNights,
+  isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
   normalizeFaqs,
   resolveHotelMealPlanLines,
@@ -2315,7 +2316,8 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
           let imgColH = imgW + 8;
           if (aMeta) imgColH += 22 + 8;
 
-          const titleH = a.name ? hOf(a.name, 12, contentW, 'Bold') + 3 : 0;
+          const isDuplicateTitle = isItineraryActivityTitleDuplicate(day.title, a.name);
+          const titleH = !isDuplicateTitle && a.name ? hOf(a.name, 12, contentW, 'Bold') + 3 : 0;
           const descLines = htmlToRichTextLines(a.description);
           const descBlock = colorEmojiFlowBlock(descLines, contentX, contentW, 10.5, 2);
           const transferH = aTransfer ? 6 + 20 + 6 : 0;
@@ -2381,7 +2383,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
               underY += 30;
             }
             let yy = top;
-            if (a.name) {
+            if (!isDuplicateTitle && a.name) {
               doc
                 .font('Bold')
                 .fontSize(12)

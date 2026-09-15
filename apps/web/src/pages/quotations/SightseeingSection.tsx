@@ -149,7 +149,7 @@ export const emptySightseeingDay = (dayNumber: number, seed?: Partial<SightDay>)
   // Persist the default-checked breakfast's displayed mode so the public page
   // never falls back to the shared legacy mealMode and shows "(Hotel)".
   mealPreferences: { breakfast: { mode: 'NO_TRANSFER', transferDetails: null } },
-  dailyTransfer: 'SHARED',
+  dailyTransfer: 'NO_TRANSFER',
   activities: [emptySightseeingActivity()],
   ...seed,
 });
@@ -587,7 +587,7 @@ function DayCard({
   // Day-level transfer is a legacy fallback for activities without their own
   // per-activity transfer; the builder edits transfers per activity.
   const dayDailyTransfer =
-    (form.watch(fp(`${base}.dailyTransfer`)) as string | null | undefined) ?? 'SHARED';
+    (form.watch(fp(`${base}.dailyTransfer`)) as string | null | undefined) ?? 'NO_TRANSFER';
   const dayTitle = (form.watch(fp(`${base}.title`)) as string | null) ?? '';
   const titleTouched = form.watch(fp(`${base}.titleTouched`)) ?? false;
 
@@ -1028,38 +1028,6 @@ function DayCard({
                         />
                       </div>
                     </div>
-                    <div>
-                      <p className={`${subsectionHeadingMuted} border-b border-border/40 pb-1`}>Transfer</p>
-                      <div className="mt-2 flex flex-wrap gap-4 text-sm">
-                        {(
-                          [
-                            ['PRIVATE', 'Private Transfer'],
-                            ['SHARED', 'Shared Transfer'],
-                            ['NO_TRANSFER', 'No Transfer'],
-                          ] as const
-                        ).map(([value, label]) => {
-                          const current =
-                            (form.watch(fp(`${abase}.dailyTransfer`)) as
-                              string | null | undefined) ?? dayDailyTransfer;
-                          return (
-                            <label key={value} className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} daily transfer ${label}`}
-                                value={value}
-                                checked={current === value}
-                                onChange={() =>
-                                  form.setValue(fp(`${abase}.dailyTransfer`), value as never, {
-                                    shouldDirty: true,
-                                  })
-                                }
-                              />
-                              {label}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
                     <ActivityPricing
                       form={form}
                       dayIndex={dayIndex}
@@ -1218,11 +1186,48 @@ function DayCard({
                     </div>
                   );
                 })}
+             </div>
+           </div>
+            <div>
+              <p className={`${subsectionHeadingMuted} border-b border-border/40 pb-1`}>Transfer</p>
+              <div className="mt-2 space-y-3">
+                {activities.fields.map((activity, aIndex) => {
+                  const abase = `${base}.activities.${aIndex}`;
+                  const current =
+                    (form.watch(fp(`${abase}.dailyTransfer`)) as string | null | undefined) ??
+                    dayDailyTransfer;
+                  return (
+                    <div key={activity.id} className="flex flex-wrap gap-4 text-sm">
+                      {(
+                        [
+                          ['NO_TRANSFER', 'No Transfer'],
+                          ['INCLUDE_AT_HOTEL', 'Include At Hotel'],
+                          ['WITH_TRANSFER', 'With Transfer'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <label key={value} className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} daily transfer ${label}`}
+                            value={value}
+                            checked={current === value}
+                            onChange={() =>
+                              form.setValue(fp(`${abase}.dailyTransfer`), value as never, {
+                                shouldDirty: true,
+                              })
+                            }
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-    </article>
-  );
-}
+     </article>
+   );
+ }
 
 /** Reference "Sightseeing" tab — day-wise activity itinerary. */
 export function SightseeingSection({

@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import sharp from 'sharp';
 import {
   formatAgeList,
+  isItineraryActivityTitleDuplicate,
   normalizeFaqs,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
@@ -1757,8 +1758,8 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
             align: 'center',
             lineBreak: false,
           });
-        const displayTitle =
-          clean(activity.name) || stripItineraryDayPrefixes(day.title) || `Day ${day.dayNumber}`;
+        const dayStrippedRaw = stripItineraryDayPrefixes(day.title);
+        const displayTitle = dayStrippedRaw || `Day ${day.dayNumber}`;
         doc
           .font('Bold')
           .fontSize(12)
@@ -1810,7 +1811,9 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
         const transfer = transferLabel(activity.dailyTransfer ?? day.dailyTransfer);
         if (transfer) pill(transfer, dayX, metaTop, { minWidth: 92, height: 20, size: 6.5 });
 
-        const descriptionTitle = displayTitle;
+        const activityTitle = clean(activity.name);
+        const shouldShowActivityTitle =
+          !!activityTitle && !isItineraryActivityTitleDuplicate(day.title, activityTitle);
         doc
           .save()
           .roundedRect(M + 2, descriptionTop + 3, CONTENT_W, bodyHeight, 10)
@@ -1821,17 +1824,19 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           .roundedRect(M, descriptionTop, CONTENT_W, bodyHeight, 10)
           .fill('#f7f9fc')
           .restore();
-        doc.circle(ITIN_TIMELINE_X, descriptionTop + 22, ITIN_CIRCLE_OUTER_R).fill(GOLD);
-        doc.circle(ITIN_TIMELINE_X, descriptionTop + 22, ITIN_CIRCLE_INNER_R).fill(NAVY);
-        doc
-          .font('Bold')
-          .fontSize(11.5)
-          .fillColor(NAVY)
-          .text(descriptionTitle, ITIN_TITLE_LEFT, descriptionTop + 14, {
-            width: CONTENT_W - 66,
-            height: 22,
-            ellipsis: true,
-          });
+        if (shouldShowActivityTitle) {
+          doc.circle(ITIN_TIMELINE_X, descriptionTop + 22, ITIN_CIRCLE_OUTER_R).fill(GOLD);
+          doc.circle(ITIN_TIMELINE_X, descriptionTop + 22, ITIN_CIRCLE_INNER_R).fill(NAVY);
+          doc
+            .font('Bold')
+            .fontSize(11.5)
+            .fillColor(NAVY)
+            .text(activityTitle, ITIN_TITLE_LEFT, descriptionTop + 14, {
+              width: CONTENT_W - 66,
+              height: 22,
+              ellipsis: true,
+            });
+        }
         drawRichLines(
           richDescription,
           ITIN_TEXT_LEFT,

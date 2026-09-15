@@ -81,6 +81,17 @@ export function formatItineraryDayTitle(
   return title ? `Day ${dayNumber}: ${title}` : `Day ${dayNumber}`;
 }
 
+/** True when an activity name duplicates the day title (after stripping Day N: prefixes). */
+export function isItineraryActivityTitleDuplicate(
+  dayTitle: string | null | undefined,
+  activityName: string | null | undefined,
+): boolean {
+  const day = stripItineraryDayPrefixes(dayTitle).trim().toLowerCase();
+  const act = stripItineraryDayPrefixes(activityName).trim().toLowerCase();
+  if (!day || !act) return false;
+  return day === act;
+}
+
 export interface ItineraryImageActivityRef {
   imageDocumentId?: string | null;
   imageUrl?: string | null;
@@ -1054,9 +1065,11 @@ export const sightseeingActivitySchema = z.object({
   ),
   imageSnapshotPresent: z.boolean().optional(),
   pdfImageUrl: optionalText(1000),
-  // Per-activity transfer (PRIVATE/SHARED/NO_TRANSFER). Absent on legacy rows,
-  // which fall back to the day-level dailyTransfer when displayed.
-  dailyTransfer: z.enum(SIGHTSEEING_TRANSFER_MODES).nullish(),
+  // Per-activity transfer now uses meal modes (NO_TRANSFER/INCLUDE_AT_HOTEL/WITH_TRANSFER)
+  // for consistency with MEALS INCLUDED. Old PRIVATE/SHARED values remain accepted for backwards compatibility.
+  dailyTransfer: z
+    .union([z.enum(SIGHTSEEING_MEAL_MODES), z.enum(SIGHTSEEING_TRANSFER_MODES)])
+    .nullish(),
   // Absent/null on every activity saved before this feature; read as [].
   pricingOptions: z.preprocess(
     (value) => (value === null || value === undefined ? [] : value),
@@ -1093,7 +1106,9 @@ export const sightseeingDaySchema = z.object({
   // Independent per-meal mode + transfer details. `mealMode` is retained for
   // legacy snapshots that predate per-meal preferences.
   mealPreferences: sightseeingMealPreferencesSchema,
-  dailyTransfer: z.enum(SIGHTSEEING_TRANSFER_MODES).default('SHARED'),
+  dailyTransfer: z
+    .union([z.enum(SIGHTSEEING_MEAL_MODES), z.enum(SIGHTSEEING_TRANSFER_MODES)])
+    .default('NO_TRANSFER'),
   activities: arrayFromNullish(sightseeingActivitySchema).pipe(
     z.array(sightseeingActivitySchema).max(20),
   ),

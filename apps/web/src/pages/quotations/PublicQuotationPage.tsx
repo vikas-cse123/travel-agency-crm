@@ -33,6 +33,7 @@ import {
   formatItineraryDayTitle,
   formatAgeList,
   hotelStayNights,
+  isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
@@ -443,15 +444,6 @@ function SectionNav({ sticky }: { sticky: boolean }) {
             );
           })}
         </div>
-        {/* Subtle edge fades when more items are scrolled off-screen (mobile). */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-12 w-6 bg-gradient-to-r from-card/90 to-transparent"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-card/90 to-transparent"
-        />
       </div>
     </nav>
   );
@@ -1220,6 +1212,13 @@ function SightseeingItineraryView({
             const validActivities = day.activities.filter(
               (activity) => activity.name?.trim() || activity.description?.trim(),
             );
+            const primaryActivityForHeader =
+              validActivities.find(
+                (a) => a.showTime !== false && a.startTime?.trim(),
+              ) ?? null;
+            const headerTimeLabel = primaryActivityForHeader?.startTime
+              ? `${formatTime12Hour(primaryActivityForHeader.startTime)}${primaryActivityForHeader.duration ? ` · ${primaryActivityForHeader.duration}` : ''}`
+              : null;
             const dayFallbackImage = resolveItineraryDayImage(day.activities, {
               document: (documentId) => documentImages[documentId]?.imageUrl ?? null,
               snapshot: (imageUrl) => imageUrl,
@@ -1262,16 +1261,22 @@ function SightseeingItineraryView({
                     <h3 className="text-lg font-bold text-slate-800">{title}</h3>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
                       {day.city?.trim() && (
-                        <>
-                          <span className="inline-flex items-center gap-1">
-                            <MapPin className="h-4 w-4" /> {day.city}
-                          </span>
-                          {dateLabel && <span aria-hidden="true">|</span>}
-                        </>
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin className="h-4 w-4" /> {day.city}
+                        </span>
+                      )}
+                      {day.city?.trim() && (dateLabel || headerTimeLabel) && (
+                        <span aria-hidden="true">|</span>
                       )}
                       {dateLabel && (
                         <span className="inline-flex items-center gap-1">
                           <CalendarDays className="h-4 w-4" /> {dateLabel}
+                        </span>
+                      )}
+                      {dateLabel && headerTimeLabel && <span aria-hidden="true">|</span>}
+                      {headerTimeLabel && (
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="h-4 w-4" /> {headerTimeLabel}
                         </span>
                       )}
                     </div>
@@ -1298,19 +1303,15 @@ function SightseeingItineraryView({
                                   }
                                 />
                                 <div className="min-w-0 flex-1">
-                                  <p className="flex items-center gap-2 font-semibold text-slate-800">
-                                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                                    {activity.name}
-                                  </p>
-                                  {activity.showTime !== false && activity.startTime && (
-                                    <p className="mt-1 flex items-center gap-1 pl-6 text-xs font-medium text-slate-500">
-                                      <Clock className="h-3.5 w-3.5" />
-                                      {formatTime12Hour(activity.startTime)}
-                                      {activity.duration ? ` · ${activity.duration}` : ''}
-                                    </p>
-                                  )}
+                                  {!isItineraryActivityTitleDuplicate(day.title, activity.name) &&
+                                    activity.name?.trim() && (
+                                      <p className="flex items-center gap-2 font-semibold text-slate-800">
+                                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                                        {activity.name}
+                                      </p>
+                                    )}
                                   {activity.description && (
-                                    <div className="mt-1 pl-6">
+                                    <div className="mt-1 sm:pl-6">
                                       <ItineraryRichText html={activity.description} />
                                     </div>
                                   )}
@@ -1376,19 +1377,15 @@ function SightseeingItineraryView({
                                       }
                                     />
                                     <div className="min-w-0 flex-1">
-                                      <p className="flex items-center gap-2 font-semibold text-slate-800">
-                                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                                        {activity.name}
-                                      </p>
-                                      {activity.showTime !== false && activity.startTime && (
-                                        <p className="mt-1 flex items-center gap-1 pl-6 text-xs font-medium text-slate-500">
-                                          <Clock className="h-3.5 w-3.5" />
-                                          {formatTime12Hour(activity.startTime)}
-                                          {activity.duration ? ` · ${activity.duration}` : ''}
-                                        </p>
-                                      )}
+                                      {!isItineraryActivityTitleDuplicate(day.title, activity.name) &&
+                                        activity.name?.trim() && (
+                                          <p className="flex items-center gap-2 font-semibold text-slate-800">
+                                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                                            {activity.name}
+                                          </p>
+                                        )}
                                       {activity.description && (
-                                        <div className="mt-1 pl-6">
+                                        <div className="mt-1 sm:pl-6">
                                           <ItineraryRichText html={activity.description} />
                                         </div>
                                       )}
