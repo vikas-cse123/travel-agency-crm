@@ -415,6 +415,27 @@
 .flight-notes * {
   background: transparent !important;
 }
+
+/* Customer-facing weblink rich text (`<strong>` / `<b>` emphasis).
+ *
+ * Stored rich text carries only the semantic strong/b intent. Without an
+ * explicit rule these elements inherit the container's `text-slate-600` body
+ * colour and the User-Agent's relative `font-weight: bolder`, so they read
+ * lighter/softer than the design's true 700 Inter face and near-black emphasis
+ * colour used by the CRM editor and the PDFs. Pin the same font family as the
+ * surrounding body, the strongest real (700) face — never a synthesised one —
+ * and the dark navy emphasis colour, and neutralise wash-out effects. Only
+ * semantic emphasis is touched; body text and explicit utility colours on
+ * authored markup are left untouched. */
+.weblink-rich-text strong,
+.weblink-rich-text b {
+  font-family: inherit;
+  font-weight: 700;
+  color: oklch(var(--slate-900) / 1);
+  opacity: 1;
+  text-shadow: none;
+  transform: none;
+}
 label[data-image-drop-active='true'],
 input[data-image-drop-active='true'] {
   outline: 3px solid rgb(37 99 235 / 55%);

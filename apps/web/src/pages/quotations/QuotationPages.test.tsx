@@ -4170,6 +4170,15 @@ describe('Phase 8 quotation pages', () => {
     expect(within(article).getByText('Shared Transfer')).toBeInTheDocument();
     expect(within(article).getByText(/Meals:/)).toBeInTheDocument();
     expect(within(article).getByText('Breakfast (Hotel)')).toBeInTheDocument();
+    // Bold rich text lives inside the weblink rich-text scope so the shared
+    // emphasis typography (real 700 Inter face + navy colour) applies to the
+    // semantically authored <strong>, independent of the surrounding body copy.
+    const boldMerlion = within(article).getByText('Merlion');
+    expect(boldMerlion.tagName).toBe('STRONG');
+    expect(boldMerlion.closest('.weblink-rich-text')).not.toBeNull();
+    expect(
+      screen.getByText('Explore the highlights.').closest('.weblink-rich-text'),
+    ).not.toBeNull();
   });
 
   it('renders independent per-meal modes and transfer details in the Meals summary', async () => {
@@ -5197,6 +5206,9 @@ describe('Phase 8 quotation pages', () => {
     expect(box).toHaveTextContent('Passport');
     expect(box).toHaveTextContent('Water bottle');
     expect(box.querySelector('strong')).toBeInTheDocument();
+    // The emphasis sits inside the shared weblink rich-text scope so the bold
+    // typography fix reaches every authored <strong>/<b> automatically.
+    expect(box.querySelector('strong')?.closest('.weblink-rich-text')).not.toBeNull();
     expect(box.querySelector('ul')).toBeInTheDocument();
     expect(box.querySelector('a')).toHaveAttribute('href', 'https://example.test');
     expect(screen.queryByText(/<p>/)).not.toBeInTheDocument();
