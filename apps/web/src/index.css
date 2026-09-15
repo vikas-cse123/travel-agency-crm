@@ -437,6 +437,23 @@
   transform: none;
 }
 
+/* Itinerary: normal body text must be #000000 like Day 1, not gray.
+   Later days were saved with inline gray (e.g. from Google Docs paste) that
+   overrode the container's text. Force #000000 for normal text, keep
+   intentional red/magenta/blue and bold. */
+.itinerary-rich-text {
+  color: #000000;
+}
+.itinerary-rich-text p,
+.itinerary-rich-text span,
+.itinerary-rich-text div,
+.itinerary-rich-text li {
+  color: inherit;
+}
+.itinerary-rich-text [style*="color:"]:not([style*="rgb(230, 0, 0)"]):not([style*="rgb(230,0,0)"]):not([style*="rgb(255, 0, 255)"]):not([style*="rgb(255,0,255)"]):not([style*="#dc2626"]):not([style*="#e11d48"]):not([style*="#c026d3"]):not([style*="#1155cc"]):not([style*="red"]):not([style*="magenta"]):not([style*="blue"]) {
+  color: #000000 !important;
+}
+
 /* Rich-text paragraph rhythm.
  *
  * Tailwind's preflight already zeroes `p` margins; we restate it explicitly so

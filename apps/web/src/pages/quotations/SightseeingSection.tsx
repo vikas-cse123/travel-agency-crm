@@ -862,8 +862,6 @@ function DayCard({
                 (form.watch(fp(`${abase}.images`)) as SightImage[] | undefined) ?? [];
               const imageSnapshotPresent =
                 (form.watch(fp(`${abase}.imageSnapshotPresent`)) as boolean | undefined) ?? false;
-              const pdfImageUrl =
-                (form.watch(fp(`${abase}.pdfImageUrl`)) as string | null | undefined) ?? null;
               const imageUrlFor = (image: SightImage) => {
                 // Prefer an already-hydrated or eagerly-provided URL (saved
                 // snapshot or activities-feed presigned URL) for immediate
@@ -889,30 +887,6 @@ function DayCard({
                 (!imageSnapshotPresent
                   ? ((sightseeingId ? presentations[sightseeingId]?.imageUrl : null) ?? snapshotUrl)
                   : null);
-              const moveImage = (imageIndex: number, direction: -1 | 1) => {
-                const target = imageIndex + direction;
-                if (target < 0 || target >= activityImages.length) return;
-                const next = [...activityImages];
-                [next[imageIndex], next[target]] = [next[target]!, next[imageIndex]!];
-                form.setValue(fp(`${abase}.images`), next as never, { shouldDirty: true });
-                form.setValue(fp(`${abase}.imageSnapshotPresent`), true as never, {
-                  shouldDirty: true,
-                });
-              };
-              const removeImage = (imageIndex: number) => {
-                const removed = activityImages[imageIndex];
-                const next = activityImages.filter((_, index) => index !== imageIndex);
-                form.setValue(fp(`${abase}.images`), next as never, { shouldDirty: true });
-                form.setValue(fp(`${abase}.imageSnapshotPresent`), true as never, {
-                  shouldDirty: true,
-                });
-                if (removed && pdfImageUrl === quotationSnapshotImageIdentity(removed))
-                  form.setValue(
-                    fp(`${abase}.pdfImageUrl`),
-                    (next[0] ? quotationSnapshotImageIdentity(next[0]) : null) as never,
-                    { shouldDirty: true },
-                  );
-              };
               const isUploading = uploadingActivity === aIndex;
               return (
                 <div
@@ -1035,20 +1009,6 @@ function DayCard({
                       ariaPrefix={`Day ${dayIndex + 1} activity ${aIndex + 1}`}
                       pax={pax}
                     />
-                    <ActivityImageGallery
-                      dayIndex={dayIndex}
-                      activityIndex={aIndex}
-                      images={activityImages}
-                      pdfImageUrl={pdfImageUrl}
-                      imageUrl={imageUrlFor}
-                      onMove={moveImage}
-                      onRemove={removeImage}
-                      onSelectPdf={(identity) =>
-                        form.setValue(fp(`${abase}.pdfImageUrl`), identity as never, {
-                          shouldDirty: true,
-                        })
-                      }
-                    />
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button
                         size="sm"
@@ -1073,25 +1033,11 @@ function DayCard({
                 </div>
               );
             })}
-            {imageError && (
-              <p role="alert" className="text-sm font-medium text-red-600">
-                {imageError}
-              </p>
-            )}
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => activities.append(emptySightseeingActivity())}
-              >
-                <Plus className="h-4 w-4" /> Add Activity at End
-              </Button>
-            </div>
-          </div>
+           </div>
 
-          <div className="rounded-lg bg-slate-50 p-4">
-            <div>
-              <p className={labelCls}>Meals Included</p>
+           <div className="rounded-lg bg-slate-50 p-4">
+             <div>
+               <p className={labelCls}>Meals Included</p>
               <div className="mt-2 flex flex-wrap gap-4">
                 {meals.map((meal) => {
                   const mealPath = `${base}.meals.${meal}`;
@@ -1188,46 +1134,130 @@ function DayCard({
                 })}
              </div>
            </div>
-            <div>
-              <p className={`${subsectionHeadingMuted} border-b border-border/40 pb-1`}>Transfer</p>
-              <div className="mt-2 space-y-3">
-                {activities.fields.map((activity, aIndex) => {
-                  const abase = `${base}.activities.${aIndex}`;
-                  const current =
-                    (form.watch(fp(`${abase}.dailyTransfer`)) as string | null | undefined) ??
-                    dayDailyTransfer;
-                  return (
-                    <div key={activity.id} className="flex flex-wrap gap-4 text-sm">
-                      {(
-                        [
-                          ['NO_TRANSFER', 'No Transfer'],
-                          ['INCLUDE_AT_HOTEL', 'Include At Hotel'],
-                          ['WITH_TRANSFER', 'With Transfer'],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <label key={value} className="flex items-center gap-2">
-                          <input
-                            type="radio"
-                            aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} daily transfer ${label}`}
-                            value={value}
-                            checked={current === value}
-                            onChange={() =>
-                              form.setValue(fp(`${abase}.dailyTransfer`), value as never, {
-                                shouldDirty: true,
-                              })
-                            }
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  );
-                })}
+            <div className="rounded-lg bg-slate-50 p-4">
+              <div>
+                <p className={subsectionHeadingMuted}>Transfer</p>
+                <div className="mt-2 space-y-3">
+                  {activities.fields.map((activity, aIndex) => {
+                    const abase = `${base}.activities.${aIndex}`;
+                    const current =
+                      (form.watch(fp(`${abase}.dailyTransfer`)) as string | null | undefined) ??
+                      dayDailyTransfer;
+                    return (
+                      <div
+                        key={activity.id}
+                        className="mt-3 rounded-md border border-slate-200 bg-card p-3"
+                      >
+                        <div className="flex flex-wrap gap-4 text-sm">
+                          {(
+                            [
+                              ['NO_TRANSFER', 'No Transfer'],
+                              ['INCLUDE_AT_HOTEL', 'Include At Hotel'],
+                              ['WITH_TRANSFER', 'With Transfer'],
+                            ] as const
+                          ).map(([value, label]) => (
+                            <label key={value} className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} daily transfer ${label}`}
+                                value={value}
+                                checked={current === value}
+                                onChange={() =>
+                                  form.setValue(fp(`${abase}.dailyTransfer`), value as never, {
+                                    shouldDirty: true,
+                                  })
+                                }
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-     </article>
-   );
- }
+            <div className="space-y-4">
+              {activities.fields.map((activity, aIndex) => {
+                const abase = `${base}.activities.${aIndex}`;
+                const activityImages =
+                  (form.watch(fp(`${abase}.images`)) as SightImage[] | undefined) ?? [];
+                const pdfImageUrl =
+                  (form.watch(fp(`${abase}.pdfImageUrl`)) as string | null | undefined) ?? null;
+                const sightseeingId =
+                  (form.watch(fp(`${abase}.sightseeingId`)) as string | null) ?? null;
+                const imageUrlFor = (image: SightImage) => {
+                  if (image.url) return image.url;
+                  const identity = image.masterImageId ?? image.id;
+                  const viaMaster = identity
+                    ? (presentations[sightseeingId ?? '']?.images.find(
+                        (presented) => presented.id === identity,
+                      )?.url ?? null)
+                    : null;
+                  if (viaMaster) return viaMaster;
+                  return null;
+                };
+                const moveImage = (imageIndex: number, direction: -1 | 1) => {
+                  const target = imageIndex + direction;
+                  if (target < 0 || target >= activityImages.length) return;
+                  const next = [...activityImages];
+                  [next[imageIndex], next[target]] = [next[target]!, next[imageIndex]!];
+                  form.setValue(fp(`${abase}.images`), next as never, { shouldDirty: true });
+                  form.setValue(fp(`${abase}.imageSnapshotPresent`), true as never, {
+                    shouldDirty: true,
+                  });
+                };
+                const removeImage = (imageIndex: number) => {
+                  const removed = activityImages[imageIndex];
+                  const next = activityImages.filter((_, index) => index !== imageIndex);
+                  form.setValue(fp(`${abase}.images`), next as never, { shouldDirty: true });
+                  form.setValue(fp(`${abase}.imageSnapshotPresent`), true as never, {
+                    shouldDirty: true,
+                  });
+                  if (removed && pdfImageUrl === quotationSnapshotImageIdentity(removed))
+                    form.setValue(
+                      fp(`${abase}.pdfImageUrl`),
+                      (next[0] ? quotationSnapshotImageIdentity(next[0]) : null) as never,
+                      { shouldDirty: true },
+                    );
+                };
+                return (
+                  <ActivityImageGallery
+                    key={activity.id}
+                    dayIndex={dayIndex}
+                    activityIndex={aIndex}
+                    images={activityImages}
+                    pdfImageUrl={pdfImageUrl}
+                    imageUrl={imageUrlFor}
+                    onMove={moveImage}
+                    onRemove={removeImage}
+                    onSelectPdf={(identity) =>
+                      form.setValue(fp(`${abase}.pdfImageUrl`), identity as never, {
+                        shouldDirty: true,
+                      })
+                    }
+                  />
+                );
+              })}
+            </div>
+            {imageError && (
+              <p role="alert" className="text-sm font-medium text-red-600">
+                {imageError}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => activities.append(emptySightseeingActivity())}
+              >
+                <Plus className="h-4 w-4" /> Add Activity at End
+              </Button>
+            </div>
+      </article>
+    );
+  }
 
 /** Reference "Sightseeing" tab — day-wise activity itinerary. */
 export function SightseeingSection({

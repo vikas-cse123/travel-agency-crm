@@ -157,6 +157,9 @@ function isHidden(style: Record<string, string>): boolean {
  * Drops colours that carry no intent: transparent, inherited, pure black and
  * the all-zero rgba Google Docs emits for default text. Everything else is
  * kept so intentional text/highlight colours survive the paste.
+ * Also drops default grayish body colours (slate-500/600/700 etc.) so pasted
+ * normal text inherits the weblink's dark slate-800, while intentional
+ * saturated colours (red, magenta, blue) are preserved.
  */
 function normalizeColor(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -171,6 +174,39 @@ function normalizeColor(value: string | null | undefined): string | null {
   if (/^rgba?\(\s*0\s*,\s*0\s*,\s*0(?:\s*,\s*0(?:\.0+)?)?\s*\)$/.test(lower)) return null;
   if (/^#(?:000|000000|00000000)$/.test(lower) || lower === 'black') return null;
   if (!COLOR_PATTERN.test(trimmed)) return null;
+  // Strip default grayish body colours (e.g. #475569 slate-600, #64748b slate-500,
+  // #334155 slate-700, #57534e stone) so they inherit the weblink's dark.
+  // Keep intentional saturated colours (red, magenta, blue).
+  const hexMatch = lower.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/);
+  if (hexMatch?.[1]) {
+    const rawHex = hexMatch[1];
+    const hex = rawHex.length === 3 ? rawHex.split('').map((c) => c + c).join('') : rawHex.slice(0, 6);
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max - min < 60 && !(r > 240 && g > 240 && b > 240)) {
+      const isRed = r > 150 && g < 80 && b < 80;
+      const isMagenta = r > 150 && b > 150 && g < 80;
+      const isBlue = b > 150 && r < 80 && g < 100;
+      if (!isRed && !isMagenta && !isBlue) return null;
+    }
+  }
+  const rgbMatch = lower.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (rgbMatch?.[1] && rgbMatch[2] && rgbMatch[3]) {
+    const r = parseInt(rgbMatch[1], 10);
+    const g = parseInt(rgbMatch[2], 10);
+    const b = parseInt(rgbMatch[3], 10);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max - min < 60 && !(r > 240 && g > 240 && b > 240)) {
+      const isRed = r > 150 && g < 80 && b < 80;
+      const isMag = r > 150 && b > 150 && g < 80;
+      const isBlue = b > 150 && r < 80 && g < 100;
+      if (!isRed && !isMag && !isBlue) return null;
+    }
+  }
   return trimmed;
 }
 

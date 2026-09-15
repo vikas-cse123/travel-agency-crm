@@ -210,7 +210,7 @@ const sanitizeHtml = (html: string) =>
 function RichHtml({ html }: { html: string }) {
   return (
     <div
-      className="weblink-rich-text rich-text-content text-sm leading-relaxed text-slate-600 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+      className="weblink-rich-text rich-text-content text-sm leading-relaxed text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
       dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
     />
   );
@@ -279,7 +279,7 @@ const buildPolicySections = (version: QuotationVersion): PolicySection[] => {
       key: 'booking',
       label: 'Booking Terms',
       Icon: FileText,
-      iconClass: 'text-slate-500',
+      iconClass: 'text-[#000000]',
       html: version.bookingTerms,
       rows: version.terms ?? [],
       visible: false,
@@ -300,8 +300,8 @@ const publicHeroIntroduction = (value: string | null | undefined) =>
 function Info({ label, value, full }: { label: string; value: string; full?: boolean }) {
   return (
     <div className={full ? 'sm:col-span-2' : ''}>
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-0.5 font-semibold text-slate-800">{value || '—'}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-[#000000]">{label}</p>
+      <p className="mt-0.5 font-semibold text-[#000000]">{value || '—'}</p>
     </div>
   );
 }
@@ -318,7 +318,7 @@ function SectionTitle({ children }: { children: string }) {
     <h2
       id={sectionAnchorId(children)}
       data-section-title={children}
-      className="mb-4 scroll-mt-24 border-l-4 pl-3 text-2xl font-bold text-slate-800"
+      className="mb-4 scroll-mt-24 border-l-4 pl-3 text-2xl font-bold text-[#000000]"
       style={{ borderColor: '#16a34a' }}
     >
       {children}
@@ -413,7 +413,7 @@ function SectionNav({ sticky }: { sticky: boolean }) {
       } rounded-full border border-slate-200 bg-card/90 p-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/70`}
     >
       <div className="relative flex items-center gap-1">
-        <span className="ml-2 mr-1 flex shrink-0 items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <span className="ml-2 mr-1 flex shrink-0 items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#000000]">
           <Compass className="h-4 w-4 text-emerald-600" aria-hidden="true" />
           <span className="hidden sm:inline">Jump to</span>
         </span>
@@ -436,7 +436,7 @@ function SectionNav({ sticky }: { sticky: boolean }) {
                 className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-all ${
                   active
                     ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    : 'text-[#000000] hover:bg-slate-100'
                 }`}
               >
                 {section.label}
@@ -567,10 +567,10 @@ function DestinationExpertSection({
               </div>
             </div>
             <div className="mt-7 w-full">
-              <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-[#000000]">
                 {greeting}
               </p>
-              <p className="mt-2 text-[30px] font-extrabold tracking-tight text-slate-900 md:text-[34px] md:leading-none">
+              <p className="mt-2 text-[30px] font-extrabold tracking-tight text-[#000000] md:text-[34px] md:leading-none">
                 {expertDisplay}
               </p>
               {expert.jobTitle?.trim() ? (
@@ -583,7 +583,7 @@ function DestinationExpertSection({
                 </p>
               ) : null}
               {expert.specialization?.trim() && expert.jobTitle?.trim() ? (
-                <p className="mt-1 text-xs text-slate-500">{expert.specialization}</p>
+                <p className="mt-1 text-xs text-[#000000]">{expert.specialization}</p>
               ) : null}
             </div>
           </div>
@@ -593,7 +593,7 @@ function DestinationExpertSection({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
                 Destination Expert
               </p>
-              <h3 className="mt-2 max-w-[28ch] text-xl font-bold leading-tight tracking-tight text-slate-900 md:text-[24px]">
+              <h3 className="mt-2 max-w-[28ch] text-xl font-bold leading-tight tracking-tight text-[#000000] md:text-[24px]">
                 {destTitle}
               </h3>
               <div className="mt-3 h-1 w-10 rounded-full bg-emerald-600/15" aria-hidden="true" />
@@ -602,20 +602,20 @@ function DestinationExpertSection({
             {(showExp || showTrips || showLangs) && (
               <div className="mt-6 flex flex-wrap justify-center gap-2 md:justify-start">
                 {showExp && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-[#000000] shadow-sm">
                     <Star className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />{' '}
                     {expert.yearsOfExperience}+ Years
                   </span>
                 )}
                 {showTrips && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm">
-                    <Building2 className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />{' '}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-[#000000] shadow-sm">
+                    <Building2 className="h-3.5 w-3.5 text-[#000000]" aria-hidden="true" />{' '}
                     {expert.tripsPlanned}+ Trips
                   </span>
                 )}
                 {showLangs && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm">
-                    <Compass className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />{' '}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-[#000000] shadow-sm">
+                    <Compass className="h-3.5 w-3.5 text-[#000000]" aria-hidden="true" />{' '}
                     {expert.languages}
                   </span>
                 )}
@@ -623,7 +623,7 @@ function DestinationExpertSection({
             )}
 
             {bio && (
-              <p className="mx-auto mt-6 max-w-[60ch] whitespace-pre-line break-words text-[15px] leading-7 text-slate-600 md:mx-0">
+              <p className="mx-auto mt-6 max-w-[60ch] whitespace-pre-line break-words text-[15px] leading-7 text-[#000000] md:mx-0">
                 {bio}
               </p>
             )}
@@ -644,7 +644,7 @@ function DestinationExpertSection({
                   {expert.config.showCall && phone && telPhone && (
                     <a
                       href={`tel:${telPhone}`}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-200"
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-[#000000] shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-200"
                     >
                       <Phone className="h-4 w-4" aria-hidden="true" /> Call
                     </a>
@@ -652,7 +652,7 @@ function DestinationExpertSection({
                   {expert.config.showEmail && email && (
                     <a
                       href={`mailto:${email}`}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-200"
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-[#000000] shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-200"
                     >
                       <Mail className="h-4 w-4" aria-hidden="true" /> Email
                     </a>
@@ -689,18 +689,18 @@ function FaqSection({ faqs }: { faqs: Array<{ question: string; answer: string }
                 className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
               >
                 <span
-                  className="weblink-rich-text rich-text-content min-w-0 flex-1 whitespace-pre-line break-words text-sm font-semibold text-slate-800 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+                  className="weblink-rich-text rich-text-content min-w-0 flex-1 whitespace-pre-line break-words text-sm font-semibold text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(faq.question) }}
                 />
                 <ChevronDown
-                  className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+                  className={`h-4 w-4 shrink-0 text-[#000000] transition-transform ${open ? 'rotate-180' : ''}`}
                   aria-hidden="true"
                 />
               </button>
               {open && (
                 <div
                   id={`faq-panel-${index}`}
-                  className="weblink-rich-text rich-text-content whitespace-pre-line break-words border-t px-4 py-3 text-sm leading-relaxed text-slate-600 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+                  className="weblink-rich-text rich-text-content whitespace-pre-line break-words border-t px-4 py-3 text-sm leading-relaxed text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(faq.answer) }}
                 />
               )}
@@ -761,23 +761,23 @@ function FlightJourneyView({
                   ) : (
                     <Plane className="h-4 w-4" style={{ color }} />
                   )}
-                  <strong className="text-slate-800">{airlineName}</strong>
-                  {s.flightNumber && <span className="text-slate-500">{s.flightNumber}</span>}
+                  <strong className="text-[#000000]">{airlineName}</strong>
+                  {s.flightNumber && <span className="text-[#000000]">{s.flightNumber}</span>}
                 </div>
                 {s.travelClass && (
-                  <span className="text-sm font-medium text-slate-500">{s.travelClass} Class</span>
+                  <span className="text-sm font-medium text-[#000000]">{s.travelClass} Class</span>
                 )}
               </div>
               {i > 0 && s.connectionVia && (
-                <p className="mt-2 text-xs text-slate-500">Connection via {s.connectionVia}</p>
+                <p className="mt-2 text-xs text-[#000000]">Connection via {s.connectionVia}</p>
               )}
               <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
                 <div className="text-left">
                   <div className="text-2xl font-bold" style={{ color }}>
                     {formatTime12Hour(s.departureTime, '--:--')}
                   </div>
-                  <div className="font-medium text-slate-700">{s.from || '—'}</div>
-                  <div className="text-xs text-slate-400">{dateShort(s.departureDate) ?? ''}</div>
+                  <div className="font-medium text-[#000000]">{s.from || '—'}</div>
+                  <div className="text-xs text-[#000000]">{dateShort(s.departureDate) ?? ''}</div>
                 </div>
                 <div className="flex flex-col items-center px-1">
                   <div className="flex items-center gap-1">
@@ -787,18 +787,18 @@ function FlightJourneyView({
                     <span className="h-px w-10 sm:w-24" style={{ backgroundColor: color }} />
                     <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
                   </div>
-                  {s.duration && <div className="mt-1 text-xs text-slate-500">🕐 {s.duration}</div>}
+                  {s.duration && <div className="mt-1 text-xs text-[#000000]">🕐 {s.duration}</div>}
                 </div>
                 <div className="text-right">
                   <div className="text-2xl font-bold" style={{ color }}>
                     {formatTime12Hour(s.arrivalTime, '--:--')}
                   </div>
-                  <div className="font-medium text-slate-700">{s.to || '—'}</div>
-                  <div className="text-xs text-slate-400">{dateShort(s.arrivalDate) ?? ''}</div>
+                  <div className="font-medium text-[#000000]">{s.to || '—'}</div>
+                  <div className="text-xs text-[#000000]">{dateShort(s.arrivalDate) ?? ''}</div>
                 </div>
               </div>
               {(s.cabinLuggage || s.checkInLuggage) && (
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-slate-600">
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-[#000000]">
                   <span className="font-semibold">🧳 Baggage:</span>
                   {s.cabinLuggage && (
                     <span className="rounded border px-2 py-0.5">
@@ -812,7 +812,7 @@ function FlightJourneyView({
               )}
               {s.notes && s.notes.replace(/<[^>]*>/g, '').trim() && (
                 <div className="flight-notes mt-3 border-t pt-3">
-                  <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-slate-600">
+                  <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-[#000000]">
                     ℹ️ Notes:
                   </p>
                   <RichHtml html={s.notes} />
@@ -861,14 +861,14 @@ function FlightImageViewer({
               className={`flex min-h-16 items-center gap-3 border-t border-slate-200 bg-white px-3.5 py-3 ${description ? 'justify-between' : 'justify-end'}`}
             >
               {description && (
-                <p className="min-w-0 text-sm leading-relaxed text-slate-700">{description}</p>
+                <p className="min-w-0 text-sm leading-relaxed text-[#000000]">{description}</p>
               )}
               <a
                 href={image.url}
                 target="_blank"
                 rel="noreferrer"
                 aria-label={`Preview ${accessibleTitle}`}
-                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900"
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-[#000000] transition hover:border-slate-300 hover:bg-slate-100 hover:text-[#000000]"
               >
                 <ExternalLink className="h-4 w-4" aria-hidden="true" />
                 Preview
@@ -944,17 +944,17 @@ function ActivityPricing({
   if (!rows.length) return null;
   return (
     <div className="mt-4 border-t border-slate-100 pt-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pricing</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-[#000000]">Pricing</p>
       <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {rows.map((row, index) => (
           <div
             key={`${row.label}-${index}`}
             className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
           >
-            <dt className="break-words text-xs font-medium leading-4 text-slate-500">
+            <dt className="break-words text-xs font-medium leading-4 text-[#000000]">
               {row.label}
             </dt>
-            <dd className="mt-0.5 break-words text-sm font-semibold leading-5 text-slate-900">
+            <dd className="mt-0.5 break-words text-sm font-semibold leading-5 text-[#000000]">
               {fmt(row.price)}
             </dd>
           </div>
@@ -1111,8 +1111,13 @@ function ItineraryRichText({ html }: { html: string | null }) {
   const text = (html ?? '').trim();
   if (!text) return null;
   if (!/<[a-z][\s\S]*>/i.test(text))
-    return <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600">{text}</p>;
-  return <RichHtml html={text} />;
+    return <p className="whitespace-pre-line text-sm leading-relaxed text-[#000000]">{text}</p>;
+  return (
+    <div
+      className="weblink-rich-text rich-text-content itinerary-rich-text text-sm leading-relaxed text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+      dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }}
+    />
+  );
 }
 
 /** Fixed-size itinerary image with a safe fallback on load failure. */
@@ -1120,7 +1125,7 @@ function ItineraryImage({ src, alt }: { src: string | null; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (failed || !src)
     return (
-      <div className="flex h-full w-full items-center justify-center bg-slate-100 text-slate-400">
+      <div className="flex h-full w-full items-center justify-center bg-slate-100 text-[#000000]">
         <ImageIcon className="h-10 w-10" />
       </div>
     );
@@ -1139,7 +1144,7 @@ function ItineraryThumb({ src, alt }: { src: string | null; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed)
     return (
-      <div className="flex h-full w-full items-center justify-center bg-slate-100 text-slate-300">
+      <div className="flex h-full w-full items-center justify-center bg-slate-100 text-[#000000]">
         <ImageIcon className="h-4 w-4" />
       </div>
     );
@@ -1193,7 +1198,7 @@ function SightseeingItineraryView({
             <InfoIcon className="h-4 w-4 shrink-0 text-cyan-600" aria-hidden="true" />
             Instructions
           </p>
-          <div className="mt-2 text-sm leading-relaxed text-slate-700">
+          <div className="mt-2 text-sm leading-relaxed text-[#000000]">
             <ItineraryRichText html={description ?? ''} />
           </div>
         </div>
@@ -1258,8 +1263,8 @@ function SightseeingItineraryView({
                     />
                   )}
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-lg font-bold text-slate-800">{title}</h3>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
+                    <h3 className="text-lg font-bold text-[#000000]">{title}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#000000]">
                       {day.city?.trim() && (
                         <span className="inline-flex items-center gap-1">
                           <MapPin className="h-4 w-4" /> {day.city}
@@ -1288,7 +1293,7 @@ function SightseeingItineraryView({
                         return (
                           <>
                             <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
-                              <p className="border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-slate-700">
+                              <p className="border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-[#000000]">
                                 Activities &amp; Details
                               </p>
                               <div className="flex flex-col gap-3 bg-white p-3 sm:flex-row">
@@ -1305,7 +1310,7 @@ function SightseeingItineraryView({
                                 <div className="min-w-0 flex-1">
                                   {!isItineraryActivityTitleDuplicate(day.title, activity.name) &&
                                     activity.name?.trim() && (
-                                      <p className="flex items-center gap-2 font-semibold text-slate-800">
+                                      <p className="flex items-center gap-2 font-semibold text-[#000000]">
                                         <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                                         {activity.name}
                                       </p>
@@ -1340,8 +1345,8 @@ function SightseeingItineraryView({
                               </div>
                             </div>
                             {mealsLabel && (
-                              <p className="mt-2 flex items-center gap-1 text-sm text-slate-600">
-                                <Utensils className="h-4 w-4 text-slate-400" />
+                              <p className="mt-2 flex items-center gap-1 text-sm text-[#000000]">
+                                <Utensils className="h-4 w-4 text-[#000000]" />
                                 <span className="font-semibold">Meals:</span> {mealsLabel}
                               </p>
                             )}
@@ -1351,7 +1356,7 @@ function SightseeingItineraryView({
                     ) : validActivities.length >= 2 ? (
                       <>
                         <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
-                          <p className="border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-slate-700">
+                          <p className="border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-[#000000]">
                             Activities &amp; Details
                           </p>
                           <div className="bg-white p-3">
@@ -1379,7 +1384,7 @@ function SightseeingItineraryView({
                                     <div className="min-w-0 flex-1">
                                       {!isItineraryActivityTitleDuplicate(day.title, activity.name) &&
                                         activity.name?.trim() && (
-                                          <p className="flex items-center gap-2 font-semibold text-slate-800">
+                                          <p className="flex items-center gap-2 font-semibold text-[#000000]">
                                             <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                                             {activity.name}
                                           </p>
@@ -1419,8 +1424,8 @@ function SightseeingItineraryView({
                           </div>
                         </div>
                         {mealsLabel && (
-                          <p className="mt-2 flex items-center gap-1 text-sm text-slate-600">
-                            <Utensils className="h-4 w-4 text-slate-400" />
+                          <p className="mt-2 flex items-center gap-1 text-sm text-[#000000]">
+                            <Utensils className="h-4 w-4 text-[#000000]" />
                             <span className="font-semibold">Meals:</span> {mealsLabel}
                           </p>
                         )}
@@ -1443,8 +1448,8 @@ function SightseeingItineraryView({
                           );
                         })()}
                         {mealsLabel && (
-                          <p className="mt-2 flex items-center gap-1 text-sm text-slate-600">
-                            <Utensils className="h-4 w-4 text-slate-400" />
+                          <p className="mt-2 flex items-center gap-1 text-sm text-[#000000]">
+                            <Utensils className="h-4 w-4 text-[#000000]" />
                             <span className="font-semibold">Meals:</span> {mealsLabel}
                           </p>
                         )}
@@ -1849,7 +1854,7 @@ export function PublicQuotationPage() {
         <div className="max-w-md rounded-xl bg-card p-8 text-center shadow">
           <XCircle className="mx-auto h-10 w-10 text-red-600" />
           <h1 className="mt-3 text-xl font-semibold">Quotation unavailable</h1>
-          <p className="mt-2 text-slate-500">{error}</p>
+          <p className="mt-2 text-[#000000]">{error}</p>
         </div>
       </main>
     );
@@ -2004,7 +2009,7 @@ export function PublicQuotationPage() {
       <a
         key="phone"
         href={`tel:${company.phone}`}
-        className="text-slate-500 hover:text-slate-700 hover:underline"
+        className="text-[#000000] hover:text-[#000000] hover:underline"
       >
         {company.phone}
       </a>,
@@ -2014,7 +2019,7 @@ export function PublicQuotationPage() {
       <a
         key="email"
         href={`mailto:${company.email}`}
-        className="break-all text-slate-500 hover:text-slate-700 hover:underline"
+        className="break-all text-[#000000] hover:text-[#000000] hover:underline"
       >
         {company.email}
       </a>,
@@ -2093,12 +2098,12 @@ export function PublicQuotationPage() {
                 />
                 {preparedBy && (
                   <div className="sm:col-span-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[#000000]">
                       Prepared By
                     </p>
-                    <p className="mt-0.5 font-semibold text-slate-800">{preparedBy}</p>
+                    <p className="mt-0.5 font-semibold text-[#000000]">{preparedBy}</p>
                     {preparedContacts.length > 0 && (
-                      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-slate-500">
+                      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-[#000000]">
                         {preparedContacts.map((contact, index) => (
                           <span key={index} className="inline-flex items-center gap-x-1.5">
                             {index > 0 && <span aria-hidden="true">|</span>}
@@ -2124,7 +2129,7 @@ export function PublicQuotationPage() {
               {company.phone && (
                 <a
                   href={`tel:${company.phone}`}
-                  className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 font-semibold text-slate-800 hover:bg-slate-50"
+                  className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 font-semibold text-[#000000] hover:bg-slate-50"
                 >
                   <Phone className="h-4 w-4" /> Contact Now
                 </a>
@@ -2152,9 +2157,9 @@ export function PublicQuotationPage() {
               : pricing.sections;
             return (
               <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-bold text-slate-900">{pricingHeading}</h2>
+                <h2 className="text-xl font-bold text-[#000000]">{pricingHeading}</h2>
                 {pricingSubheading ? (
-                  <p className="mt-1 text-sm text-slate-500">{pricingSubheading}</p>
+                  <p className="mt-1 text-sm text-[#000000]">{pricingSubheading}</p>
                 ) : null}
                   <div className="mt-5 space-y-3">
                     {orderedSections
@@ -2173,19 +2178,19 @@ export function PublicQuotationPage() {
                           if (breakdown) {
                             return (
                               <div key={s.id} className="space-y-2">
-                                <div className="flex items-center justify-between gap-4 text-sm font-semibold text-slate-900">
+                                <div className="flex items-center justify-between gap-4 text-sm font-semibold text-[#000000]">
                                   <span>Flights</span>
                                   <span>{fmt(s.amount)}</span>
                                 </div>
                                 {breakdown.map((row) => (
                                   <div key={row.label} className="flex items-center justify-between gap-4 text-sm">
-                                    <span className="text-slate-600">
+                                    <span className="text-[#000000]">
                                       {row.label}: {row.count} × {fmt(row.rate)}
                                     </span>
-                                    <span className="font-medium text-slate-900">{fmt(row.total)}</span>
+                                    <span className="font-medium text-[#000000]">{fmt(row.total)}</span>
                                   </div>
                                 ))}
-                                <div className="flex items-center justify-between gap-4 border-t pt-2 text-sm font-bold text-slate-900">
+                                <div className="flex items-center justify-between gap-4 border-t pt-2 text-sm font-bold text-[#000000]">
                                   <span>Flight Total</span>
                                   <span>{fmt(s.amount)}</span>
                                 </div>
@@ -2196,36 +2201,36 @@ export function PublicQuotationPage() {
                         return (
                           <div key={s.id} className="space-y-1">
                             <div className="flex items-center justify-between gap-4 text-sm">
-                              <span className="font-medium text-slate-700">{s.label}</span>
-                              <span className="font-semibold text-slate-900">{fmt(s.amount)}</span>
+                              <span className="font-medium text-[#000000]">{s.label}</span>
+                              <span className="font-semibold text-[#000000]">{fmt(s.amount)}</span>
                             </div>
                             {(s as { description?: string | null }).description ? (
-                              <p className="text-xs text-slate-500">{(s as { description?: string | null }).description}</p>
+                              <p className="text-xs text-[#000000]">{(s as { description?: string | null }).description}</p>
                             ) : null}
                           </div>
                         );
                       })}
                     {(pricing.discountAmount !== 0 || pricing.taxAmount !== 0) && (
-                      <div className="flex items-center justify-between border-t pt-3 text-sm font-semibold text-slate-900">
+                      <div className="flex items-center justify-between border-t pt-3 text-sm font-semibold text-[#000000]">
                         <span>Subtotal</span>
                         <span>{fmt(pricing.sectionTotal)}</span>
                       </div>
                     )}
                     {pricing.discountAmount !== 0 && (
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-600">Discount</span>
+                        <span className="text-[#000000]">Discount</span>
                         <span>-{fmt(pricing.discountAmount)}</span>
                       </div>
                     )}
                     {pricing.taxAmount !== 0 && (
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-600">
+                        <span className="text-[#000000]">
                           Tax{pricing.taxRate ? ` (${pricing.taxRate}%)` : ''}
                         </span>
                         <span>{fmt(pricing.taxAmount)}</span>
                       </div>
                     )}
-                    <div className="flex items-center justify-between border-t-2 border-slate-900 pt-3 text-base font-bold text-slate-900">
+                    <div className="flex items-center justify-between border-t-2 border-slate-900 pt-3 text-base font-bold text-[#000000]">
                       <span>Grand Total</span>
                       <span>{fmt(displayTotal)}</span>
                     </div>
@@ -2238,13 +2243,13 @@ export function PublicQuotationPage() {
           {showSecureBooking && validPaymentLink && (
             <section className="flex flex-col items-start gap-5 rounded-md border border-slate-200 bg-white p-7 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-8">
               <div className="min-w-0">
-                <h2 className="text-2xl font-bold text-slate-800">Secure Your Booking Now</h2>
-                <p className="mt-2 text-base text-slate-700">
+                <h2 className="text-2xl font-bold text-[#000000]">Secure Your Booking Now</h2>
+                <p className="mt-2 text-base text-[#000000]">
                   Make an initial payment of{' '}
-                  <span className="font-semibold text-slate-800">{fmtExact(initialAmount)}</span> to
+                  <span className="font-semibold text-[#000000]">{fmtExact(initialAmount)}</span> to
                   confirm your booking.
                 </p>
-                <p className="mt-1 text-[15px] text-slate-500">
+                <p className="mt-1 text-[15px] text-[#000000]">
                   The remaining balance can be paid as per the payment policy.
                 </p>
               </div>
@@ -2283,7 +2288,7 @@ export function PublicQuotationPage() {
                           className="flex flex-col items-center justify-center gap-3 rounded-lg border border-slate-200 bg-white p-5 text-center shadow-sm"
                         >
                           <Icon className="h-8 w-8 text-emerald-600" aria-hidden="true" />
-                          <span className="font-medium text-slate-800">{service.label}</span>
+                          <span className="font-medium text-[#000000]">{service.label}</span>
                           <CheckCircle2 className="h-5 w-5 text-emerald-600" aria-hidden="true" />
                         </article>
                       );
@@ -2350,7 +2355,7 @@ export function PublicQuotationPage() {
                           imageAlt={hotel.hotelName}
                           className="sm:self-start"
                           placeholder={
-                            <div className="text-center text-slate-400">
+                            <div className="text-center text-[#000000]">
                               <Building2 className="mx-auto h-12 w-12" />
                               <p className="mt-2 text-xs">Hotel image unavailable</p>
                             </div>
@@ -2359,7 +2364,7 @@ export function PublicQuotationPage() {
                         <div className="p-5">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <h3 className="text-xl font-bold leading-tight text-slate-900">
+                              <h3 className="text-xl font-bold leading-tight text-[#000000]">
                                 {hotel.hotelName}
                               </h3>
                               {category > 0 && (
@@ -2394,13 +2399,13 @@ export function PublicQuotationPage() {
                           </div>
 
                           {(hotel.city || presentation?.country) && (
-                            <p className="mt-3 flex items-start gap-1.5 text-sm text-slate-500">
+                            <p className="mt-3 flex items-start gap-1.5 text-sm text-[#000000]">
                               <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
                               {[hotel.city, presentation?.country].filter(Boolean).join(', ')}
                             </p>
                           )}
                           {presentation?.address?.trim() && (
-                            <p className="mt-1.5 text-sm text-slate-500">
+                            <p className="mt-1.5 text-sm text-[#000000]">
                               {presentation.address.trim()}
                             </p>
                           )}
@@ -2415,9 +2420,9 @@ export function PublicQuotationPage() {
                               const multiRoom = roomLines.length > 1;
                               const multiMeal = mealLines.length > 1;
                               const chipClass =
-                                'inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-800';
+                                'inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-[#000000]';
                               const labelClass =
-                                'text-xs font-medium uppercase tracking-wide text-slate-500';
+                                'text-xs font-medium uppercase tracking-wide text-[#000000]';
                               return (
                                 <>
                                   {multiRoom
@@ -2496,10 +2501,10 @@ export function PublicQuotationPage() {
                             })()}
                           </div>
 
-                          <div className="mt-4 grid gap-1.5 text-sm text-slate-600 sm:grid-cols-2">
+                          <div className="mt-4 grid gap-1.5 text-sm text-[#000000] sm:grid-cols-2">
                             {dateShort(hotel.checkInDate) ? (
                               <p>
-                                <strong className="font-semibold text-slate-700">
+                                <strong className="font-semibold text-[#000000]">
                                   Check-in:
                                 </strong>{' '}
                                 {dateShort(hotel.checkInDate)}
@@ -2510,7 +2515,7 @@ export function PublicQuotationPage() {
                             ) : null}
                             {dateShort(hotel.checkOutDate) ? (
                               <p>
-                                <strong className="font-semibold text-slate-700">
+                                <strong className="font-semibold text-[#000000]">
                                   Check-out:
                                 </strong>{' '}
                                 {dateShort(hotel.checkOutDate)}
@@ -2522,7 +2527,7 @@ export function PublicQuotationPage() {
                           </div>
 
                           {hotel.notes && (
-                            <p className="mt-3 text-xs italic text-slate-500">{hotel.notes}</p>
+                            <p className="mt-3 text-xs italic text-[#000000]">{hotel.notes}</p>
                           )}
                           {hotelIndex === 0 && v.hotelDetails?.description && (
                             <div
@@ -2596,24 +2601,24 @@ export function PublicQuotationPage() {
                             label="Vehicle"
                             imageAlt={vehicle.name || presentation?.name || 'Vehicle'}
                             placeholder={
-                              <div className="text-center text-slate-400">
+                              <div className="text-center text-[#000000]">
                                 <CarFront className="mx-auto h-14 w-14" />
                                 <p className="mt-2 text-xs">Vehicle image unavailable</p>
                               </div>
                             }
                           />
                           <div className="space-y-3 p-5">
-                            <h3 className="text-xl font-bold text-slate-800">
+                            <h3 className="text-xl font-bold text-[#000000]">
                               {vehicle.name || presentation?.name || 'Vehicle'}
                             </h3>
-                            <div className="space-y-1 text-sm text-slate-600">
+                            <div className="space-y-1 text-sm text-[#000000]">
                               <p>
-                                <strong className="text-slate-700">Type:</strong>{' '}
+                                <strong className="text-[#000000]">Type:</strong>{' '}
                                 {vehicle.city || presentation?.vehicleType || 'As selected'}
                               </p>
                               {vehicle.notes && (
                                 <p>
-                                  <strong className="text-slate-700">Usage:</strong> {vehicle.notes}
+                                  <strong className="text-[#000000]">Usage:</strong> {vehicle.notes}
                                 </p>
                               )}
                             </div>
@@ -2661,21 +2666,21 @@ export function PublicQuotationPage() {
                             label="Cruise"
                             imageAlt={cruise.name}
                             placeholder={
-                              <div className="flex flex-col items-center justify-center gap-1 text-slate-400">
+                              <div className="flex flex-col items-center justify-center gap-1 text-[#000000]">
                                 <Ship className="h-10 w-10" />
                                 <p className="text-xs">Cruise image unavailable</p>
                               </div>
                             }
                           />
                           <div className="space-y-2 p-5">
-                            <h3 className="text-lg font-bold text-slate-800">{cruise.name}</h3>
+                            <h3 className="text-lg font-bold text-[#000000]">{cruise.name}</h3>
                             {duration && (
-                              <p className="text-sm text-slate-600">
+                              <p className="text-sm text-[#000000]">
                                 <strong>Duration:</strong> {duration}
                               </p>
                             )}
                             {roomType && (
-                              <p className="text-sm text-slate-600">
+                              <p className="text-sm text-[#000000]">
                                 <strong>Room Type:</strong> {roomType}
                               </p>
                             )}
@@ -2703,7 +2708,7 @@ export function PublicQuotationPage() {
                         .trim();
                       return (
                         <article key={service.id} className="rounded-2xl bg-card p-6 shadow-sm">
-                          <h3 className="text-lg font-bold text-slate-800">{service.name}</h3>
+                          <h3 className="text-lg font-bold text-[#000000]">{service.name}</h3>
                           {plainText && (
                             <div className="mt-2">
                               <RichHtml html={service.description ?? ''} />
@@ -2717,16 +2722,16 @@ export function PublicQuotationPage() {
               ) : null;
             nodes['visa'] = showVisa ? (
               <section className="rounded-2xl bg-card p-6 shadow-sm">
-                <h2 className="font-semibold text-slate-800">{v.visaSectionTitle || 'Visa'}</h2>
-                <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                <h2 className="font-semibold text-[#000000]">{v.visaSectionTitle || 'Visa'}</h2>
+                <div className="mt-3 grid gap-2 text-sm text-[#000000] sm:grid-cols-2">
                   {v.visaDestination && (
                     <p>
-                      <span className="text-slate-400">Destination:</span> {v.visaDestination}
+                      <span className="text-[#000000]">Destination:</span> {v.visaDestination}
                     </p>
                   )}
                   {v.visaType && (
                     <p>
-                      <span className="text-slate-400">Visa type:</span> {v.visaType}
+                      <span className="text-[#000000]">Visa type:</span> {v.visaType}
                     </p>
                   )}
                 </div>
@@ -2761,7 +2766,7 @@ export function PublicQuotationPage() {
                               {section.label}
                             </span>
                             <ChevronDown
-                              className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
+                              className={`h-4 w-4 shrink-0 text-[#000000] transition-transform ${
                                 open ? 'rotate-180' : ''
                               }`}
                               aria-hidden="true"
@@ -2770,7 +2775,7 @@ export function PublicQuotationPage() {
                           {open && (
                             <div
                               id={`policy-panel-${section.key}`}
-                              className="border-t py-4 pl-8 pr-4 text-sm text-slate-700"
+                              className="border-t py-4 pl-8 pr-4 text-sm text-[#000000]"
                             >
                               {hasPolicyHtml(section.html) ? (
                                 <RichHtml html={section.html!} />
@@ -2801,7 +2806,7 @@ export function PublicQuotationPage() {
                   </span>
                   <div
                     id="customer-notes-heading"
-                    className="min-w-0 flex-1 text-sm leading-6 text-slate-700"
+                    className="min-w-0 flex-1 text-sm leading-6 text-[#000000]"
                   >
                     <RichHtml html={v.notes!} />
                   </div>

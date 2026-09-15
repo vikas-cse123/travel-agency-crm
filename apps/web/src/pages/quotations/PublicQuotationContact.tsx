@@ -13,7 +13,7 @@ export interface PublicQuotationContactProps {
   leadName: string | null | undefined;
 }
 
-const infoRow = 'flex items-start gap-2 text-sm text-slate-700';
+const infoRow = 'flex items-start gap-2 text-sm text-[#000000]';
 const icon = 'mt-0.5 h-4 w-4 shrink-0 text-emerald-600';
 
 /**
@@ -35,8 +35,6 @@ export function PublicQuotationContact({
 }: PublicQuotationContactProps) {
   const description = buildQuotationDescription(quotationId, quotationTitle, leadName);
   const whatsappPhone = normalizeWhatsAppPhone(phone);
-  const subject = `Quotation Inquiry (ID: ${description})`;
-  const body = `Hello,\n\nI'm interested in the travel quotation (ID: ${description}).\n\nPlease contact me with more information.`;
   const message = `Hello, I'm interested in the travel quotation (ID: ${description})`;
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -46,8 +44,8 @@ export function PublicQuotationContact({
             <div className="flex items-start gap-3 min-w-0 flex-1">
               <span aria-hidden="true" className="mt-1.5 h-6 w-1 shrink-0 rounded bg-emerald-600" />
               <div className="min-w-0 flex-1">
-                <h2 className="text-xl font-bold text-slate-900">Contact Us</h2>
-                <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-slate-500">
+                <h2 className="text-xl font-bold text-[#000000]">Contact Us</h2>
+                <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-[#000000]">
                   Ready to book this amazing journey or have questions? Get in touch with us for more
                   information.
                 </p>
@@ -65,7 +63,7 @@ export function PublicQuotationContact({
           </div>
 
           <div className="space-y-2.5">
-            <p className="text-base font-semibold text-slate-900">{companyName}</p>
+            <p className="text-base font-semibold text-[#000000]">{companyName}</p>
             {contactPerson && (
               <p className={infoRow}>
                 <User className={icon} aria-hidden="true" />
@@ -113,14 +111,6 @@ export function PublicQuotationContact({
                 className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-white px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
               >
                 <MessageCircle className="h-4 w-4" aria-hidden="true" /> WhatsApp
-              </a>
-            )}
-            {email && (
-              <a
-                href={`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`}
-                className="inline-flex items-center gap-2 rounded-lg border border-blue-600 bg-white px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50"
-              >
-                <Mail className="h-4 w-4" aria-hidden="true" /> Email
               </a>
             )}
           </div>
