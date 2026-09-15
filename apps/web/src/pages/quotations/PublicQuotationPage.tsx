@@ -209,7 +209,7 @@ const sanitizeHtml = (html: string) =>
 function RichHtml({ html }: { html: string }) {
   return (
     <div
-      className="weblink-rich-text text-sm leading-relaxed text-slate-600 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
+      className="weblink-rich-text rich-text-content text-sm leading-relaxed text-slate-600 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
       dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
     />
   );
@@ -697,7 +697,7 @@ function FaqSection({ faqs }: { faqs: Array<{ question: string; answer: string }
                 className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
               >
                 <span
-                  className="weblink-rich-text min-w-0 flex-1 whitespace-pre-line break-words text-sm font-semibold text-slate-800 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-0.5 [&_ul]:list-disc [&_ul]:pl-5"
+                  className="weblink-rich-text rich-text-content min-w-0 flex-1 whitespace-pre-line break-words text-sm font-semibold text-slate-800 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(faq.question) }}
                 />
                 <ChevronDown
@@ -708,7 +708,7 @@ function FaqSection({ faqs }: { faqs: Array<{ question: string; answer: string }
               {open && (
                 <div
                   id={`faq-panel-${index}`}
-                  className="weblink-rich-text whitespace-pre-line break-words border-t px-4 py-3 text-sm leading-relaxed text-slate-600 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
+                  className="weblink-rich-text rich-text-content whitespace-pre-line break-words border-t px-4 py-3 text-sm leading-relaxed text-slate-600 [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(faq.answer) }}
                 />
               )}

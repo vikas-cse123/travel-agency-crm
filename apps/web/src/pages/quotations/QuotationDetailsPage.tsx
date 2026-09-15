@@ -1151,7 +1151,7 @@ export function QuotationDetailsPage() {
                 aria-label="WhatsApp summary editor"
                 data-placeholder="Summary will appear here…"
                 onInput={(e) => setWhatsappHtml((e.currentTarget as HTMLDivElement).innerHTML)}
-                className="min-h-[320px] rounded-xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-800 shadow-sm prose prose-sm max-w-none prose-p:my-1.5 prose-headings:mt-6 prose-headings:mb-2 prose-hr:my-5 prose-li:my-1 prose-strong:font-semibold prose-strong:text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-300 [&:empty:before]:content-[attr(data-placeholder)] [&:empty:before]:text-slate-400"
+                className="rich-text-content min-h-[320px] rounded-xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-800 shadow-sm prose prose-sm max-w-none prose-p:my-1.5 prose-headings:mt-6 prose-headings:mb-2 prose-hr:my-5 prose-li:my-1 prose-strong:font-semibold prose-strong:text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-300 [&:empty:before]:content-[attr(data-placeholder)] [&:empty:before]:text-slate-400"
               />
               <p className="mt-3 text-center text-xs text-slate-400">
                 Styled for you — bold, bullets and headings are rendered. Copied as WhatsApp-ready text.

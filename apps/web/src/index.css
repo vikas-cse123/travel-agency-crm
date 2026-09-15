@@ -436,6 +436,21 @@
   text-shadow: none;
   transform: none;
 }
+
+/* Rich-text paragraph rhythm.
+ *
+ * Tailwind's preflight already zeroes `p` margins; we restate it explicitly so
+ * Google Docs' 72pt/36pt values can never leak in AND the CRM never adds an
+ * artificial gap between ordinary paragraphs. Consecutive paragraphs are
+ * separated by the surrounding line-height only, so pressing Enter in the
+ * editors moves to the next line with no extra vertical space. Paragraph
+ * structure is preserved — it is never flattened into a single block. Applied
+ * via `.rich-text-content` on every rich-text surface (shared editors,
+ * quotation view, public weblink, FAQ). */
+.rich-text-content p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
 label[data-image-drop-active='true'],
 input[data-image-drop-active='true'] {
   outline: 3px solid rgb(37 99 235 / 55%);

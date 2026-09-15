@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Bold, Italic, Underline, Link as LinkIcon, List, ListOrdered } from 'lucide-react';
+import { insertNormalizedPaste, ensureBlankParagraphs } from '@/utils/richTextPaste';
 
 interface RichTextEditorProps {
   value: string;
@@ -86,14 +87,33 @@ export function RichTextEditor({ value, onChange, ariaLabel, placeholder }: Rich
     const el = ref.current;
     if (!el) return;
     // External change (initial load, saved content, section switch): display it.
-    const html = richTextToDisplayHtml(next);
+    // Legacy blank paragraphs (`<p></p>`, `<p><span></span></p>`, `<p>&nbsp;</p>`)
+    // become a real blank line so the editor matches the read-only detail view;
+    // leading/trailing clipboard junk is trimmed. Interior blanks are kept.
+    const html = ensureBlankParagraphs(richTextToDisplayHtml(next), { trimEdges: true });
     if (el.innerHTML !== html) el.innerHTML = html;
     lastEmitted.current = next;
   }, [value]);
 
+  useEffect(() => {
+    // Keep Enter's block tag consistent with the `<p>` structure the paste
+    // normalizer stores, instead of the browser-default `<div>` siblings, so
+    // typed and pasted content share one block model. Not a second editor —
+    // just the standard paragraph separator.
+    if (typeof document.execCommand !== 'function') return;
+    try {
+      document.execCommand('defaultParagraphSeparator', false, 'p');
+    } catch {
+      /* unsupported browser: Enter keeps the browser default separator */
+    }
+  }, []);
+
   const emit = () => {
     if (!ref.current) return;
-    const html = ref.current.innerHTML;
+    // Serialize interior blank paragraphs as `<p><br></p>` (never as a bare
+    // `<p></p>` that a read-only render would collapse). No edge trimming here:
+    // the trailing blank the user is currently typing on must be kept.
+    const html = ensureBlankParagraphs(ref.current.innerHTML);
     lastEmitted.current = html;
     onChange(html);
   };
@@ -177,7 +197,8 @@ export function RichTextEditor({ value, onChange, ariaLabel, placeholder }: Rich
         data-placeholder={placeholder}
         onInput={emit}
         onBlur={emit}
-        className="min-h-[8rem] px-3 py-2 text-sm leading-relaxed outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)] [&_a]:text-brand-600 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+        onPaste={(event) => insertNormalizedPaste(event, emit)}
+        className="rich-text-content min-h-[8rem] px-3 py-2 text-sm leading-relaxed outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)] [&_a]:text-brand-600 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
       />
     </div>
   );

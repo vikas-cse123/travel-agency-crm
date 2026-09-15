@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { RichTextEditor as SharedEditor } from './RichTextEditor';
 import { RichTextEditor as MastersEditor } from '../../pages/masters/MasterUi';
@@ -58,6 +58,37 @@ function countInnerHtmlWrites(el: Element) {
     },
   });
   return () => writes;
+}
+
+/**
+ * Google Docs clipboard HTML: hidden `docs-internal-guid` wrapper, paragraph
+ * layout (margin / padding / text-indent / line-height), absolute font styles
+ * and intentional bold + colour.
+ */
+const GOOGLE_DOCS_PASTE_HTML =
+  '<meta charset="utf-8">' +
+  '<b id="docs-internal-guid-1234" style="font-weight:normal;">' +
+  '<p style="margin-left:72pt;padding-left:36pt;text-indent:18pt;line-height:1.38;font-family:Arial;font-size:11pt;">' +
+  '<span style="font-family:Arial;font-size:11pt;color:#000000;font-weight:700;">Safari Adventure Tram Ride</span>' +
+  '</p>' +
+  '<p style="margin-left:72pt;line-height:1.38;">' +
+  '<span style="font-family:Arial;color:rgb(230,0,0);">Spot a variety of fascinating wildlife</span>' +
+  '</p>' +
+  '</b>';
+
+/** Dispatch a paste event carrying a `text/html` clipboard flavour. */
+function pasteHtml(editor: HTMLElement, html: string) {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { getData: (type: string) => (type === 'text/html' ? html : '') },
+  });
+  fireEvent(editor, event);
 }
 
 function suite(
@@ -126,6 +157,151 @@ function suite(
       renderControlled('');
       expect(screen.getByRole('button', { name: /bold/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /italic/i })).toBeInTheDocument();
+    });
+
+    it('normalizes Google Docs HTML on paste while keeping intentional formatting', () => {
+      renderControlled('<p>Existing note</p>');
+      const editor = screen.getByRole('textbox', { name: role.name });
+      pasteHtml(editor, GOOGLE_DOCS_PASTE_HTML);
+
+      const stored = screen.getByTestId('mirror').textContent ?? '';
+      // Intent preserved.
+      expect(stored).toContain('Safari Adventure Tram Ride');
+      expect(stored).toContain('Spot a variety of fascinating wildlife');
+      expect(stored).toContain('<strong>');
+      expect(stored).toMatch(/rgb\(230,\s*0,\s*0\)/);
+      expect(editor.querySelector('strong')?.textContent).toBe('Safari Adventure Tram Ride');
+      // Google Docs layout / typography stripped.
+      expect(stored).not.toMatch(/margin|padding|text-indent|font-family|font-size|line-height/i);
+      expect(stored).not.toContain('docs-internal-guid');
+      // Normal paragraphs must never become list items (previous regression).
+      expect(editor.querySelector('ul')).toBeNull();
+      expect(editor.querySelector('ol')).toBeNull();
+      expect(editor.querySelector('li')).toBeNull();
+      expect(editor.querySelectorAll('p').length).toBeGreaterThanOrEqual(2);
+      // Existing content is untouched.
+      expect(editor.textContent).toContain('Existing note');
+    });
+
+    it('does not create bullets when pasting a Google Docs paragraph wrapper', () => {
+      renderControlled('');
+      const editor = screen.getByRole('textbox', { name: role.name });
+      pasteHtml(
+        editor,
+        '<ul style="margin-left:36pt"><p>Paragraph one</p><p>Paragraph two</p></ul>',
+      );
+      expect(editor.querySelector('ul')).toBeNull();
+      expect(editor.querySelector('li')).toBeNull();
+      expect(
+        Array.from(editor.querySelectorAll('p')).map((p) => p.textContent),
+      ).toEqual(['Paragraph one', 'Paragraph two']);
+    });
+
+    it('configures Enter to create <p> blocks (no empty paragraph gap)', () => {
+      const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
+      const execCommand = vi.fn(() => true);
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: execCommand,
+      });
+      try {
+        renderControlled('');
+        expect(execCommand).toHaveBeenCalledWith('defaultParagraphSeparator', false, 'p');
+      } finally {
+        if (original) Object.defineProperty(document, 'execCommand', original);
+        else Reflect.deleteProperty(document, 'execCommand');
+      }
+    });
+
+    it('a. loads stored HTML with an interior <p><br></p> blank paragraph unchanged', () => {
+      const stored = '<p>Paragraph 1</p><p><br></p><p>Paragraph 2</p>';
+      renderControlled(stored);
+      const editor = screen.getByRole('textbox', { name: role.name });
+      expect(editor.innerHTML).toBe(stored);
+      expect(editor.querySelectorAll('p')).toHaveLength(3);
+      expect(editor.querySelectorAll('p')[1]?.querySelector('br')).not.toBeNull();
+    });
+
+    it('b. normalizes legacy blank paragraphs to <p><br></p> on load', () => {
+      for (const legacy of ['<p></p>', '<p><span></span></p>', '<p>&nbsp;</p>']) {
+        const view = renderControlled(`<p>Paragraph 1</p>${legacy}<p>Paragraph 2</p>`);
+        const editor = screen.getByRole('textbox', { name: role.name });
+        expect(editor.innerHTML).toBe('<p>Paragraph 1</p><p><br></p><p>Paragraph 2</p>');
+        expect(editor.querySelectorAll('p')[1]?.querySelector('br')).not.toBeNull();
+        view.unmount();
+      }
+    });
+
+    it('c. trims leading/trailing blank paragraphs on load', () => {
+      renderControlled('<p></p><p>Only line</p><p><br></p>');
+      expect(screen.getByRole('textbox', { name: role.name }).innerHTML).toBe('<p>Only line</p>');
+    });
+
+    it('d. preserves an interior blank paragraph while editing text before/after it', () => {
+      renderControlled('<p>Paragraph 1</p><p><br></p><p>Paragraph 2</p>');
+      const editor = screen.getByRole('textbox', { name: role.name });
+      const edit = (html: string) => {
+        editor.innerHTML = html;
+        fireEvent.input(editor);
+      };
+
+      edit('<p>Paragraph 1 edited</p><p><br></p><p>Paragraph 2</p>');
+      expect(screen.getByTestId('mirror').textContent).toBe(
+        '<p>Paragraph 1 edited</p><p><br></p><p>Paragraph 2</p>',
+      );
+
+      edit('<p>Paragraph 1 edited</p><p><br></p><p>Paragraph 2 edited</p>');
+      expect(screen.getByTestId('mirror').textContent).toBe(
+        '<p>Paragraph 1 edited</p><p><br></p><p>Paragraph 2 edited</p>',
+      );
+    });
+
+    it('e. serializes a double-Enter blank paragraph as <p><br></p>', () => {
+      // Chrome's double-Enter output is exactly this structure.
+      renderControlled('<p>First</p><p><br></p><p>Second</p>');
+      const editor = screen.getByRole('textbox', { name: role.name });
+      expect(editor.innerHTML).toBe('<p>First</p><p><br></p><p>Second</p>');
+      fireEvent.input(editor);
+      expect(screen.getByTestId('mirror').textContent).toBe(
+        '<p>First</p><p><br></p><p>Second</p>',
+      );
+    });
+
+    it('f. keeps blank paragraphs across save → reload → edit → save', () => {
+      const saved = '<p>Paragraph 1</p><p><br></p><p>Paragraph 2</p>';
+      const first = renderControlled(saved);
+      const editor = screen.getByRole('textbox', { name: role.name });
+      expect(editor.innerHTML).toBe(saved);
+
+      editor.innerHTML = '<p>Paragraph 1</p><p><br></p><p>Paragraph 2 edited</p>';
+      fireEvent.input(editor);
+      const afterSave = screen.getByTestId('mirror').textContent ?? '';
+      expect(afterSave).toBe('<p>Paragraph 1</p><p><br></p><p>Paragraph 2 edited</p>');
+      first.unmount();
+
+      // Reload the saved value — the interior blank paragraph is still there.
+      renderControlled(afterSave);
+      const reloaded = screen.getByRole('textbox', { name: role.name });
+      expect(reloaded.innerHTML).toBe(afterSave);
+
+      reloaded.innerHTML = '<p>Paragraph 1 edited</p><p><br></p><p>Paragraph 2 edited</p>';
+      fireEvent.input(reloaded);
+      expect(screen.getByTestId('mirror').textContent).toBe(
+        '<p>Paragraph 1 edited</p><p><br></p><p>Paragraph 2 edited</p>',
+      );
+    });
+
+    it('keeps real lists as lists and never turns blank paragraphs into bullets', () => {
+      renderControlled(
+        '<p>Paragraph 1</p><p><br></p><p>Paragraph 2</p><ul><li>Item</li></ul><ol><li>First</li></ol>',
+      );
+      const editor = screen.getByRole('textbox', { name: role.name });
+      expect(editor.querySelectorAll('ul')).toHaveLength(1);
+      expect(editor.querySelectorAll('ol')).toHaveLength(1);
+      expect(editor.querySelectorAll('ul > li')).toHaveLength(1);
+      // Blank paragraph is a paragraph, never a list item.
+      expect(editor.querySelectorAll('p')[1]?.textContent).toBe('');
+      expect(editor.querySelectorAll('li')).toHaveLength(2);
     });
   });
 }

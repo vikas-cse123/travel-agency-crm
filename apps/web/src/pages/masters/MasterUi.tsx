@@ -17,6 +17,7 @@ import {
 import { Link } from 'react-router-dom';
 import { SETTINGS_CURRENCIES } from '@interscale/shared';
 import { cn } from '@/utils/cn';
+import { insertNormalizedPaste, ensureBlankParagraphs } from '@/utils/richTextPaste';
 
 export const fieldClass =
   'mt-1 w-full rounded-lg border border-slate-300 bg-card px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100';
@@ -232,12 +233,28 @@ export function RichTextEditor({
     if (next === lastEmitted.current) return;
     if (!editor.current) return;
     // External change (initial load, saved content, section switch): display it.
-    const html = richTextToDisplayHtml(next);
+    // Legacy blank paragraphs (`<p></p>`, `<p><span></span></p>`, `<p>&nbsp;</p>`)
+    // become a real blank line so the editor matches the read-only detail view;
+    // leading/trailing clipboard junk is trimmed. Interior blanks are kept.
+    const html = ensureBlankParagraphs(richTextToDisplayHtml(next), { trimEdges: true });
     if (editor.current.innerHTML !== html) editor.current.innerHTML = html;
     lastEmitted.current = next;
   }, [value]);
+  useEffect(() => {
+    // Match the paste normalizer's `<p>` blocks so typed and pasted content
+    // share one block model and Enter never introduces extra margin.
+    if (typeof document.execCommand !== 'function') return;
+    try {
+      document.execCommand('defaultParagraphSeparator', false, 'p');
+    } catch {
+      /* unsupported browser: Enter keeps the browser default separator */
+    }
+  }, []);
   const emit = () => {
-    const html = editor.current?.innerHTML ?? '';
+    // Serialize interior blank paragraphs as `<p><br></p>` (never as a bare
+    // `<p></p>` that a read-only render would collapse). No edge trimming here:
+    // the trailing blank the user is currently typing on must be kept.
+    const html = ensureBlankParagraphs(editor.current?.innerHTML ?? '');
     lastEmitted.current = html;
     onChange(html);
   };
@@ -405,7 +422,8 @@ export function RichTextEditor({
           suppressContentEditableWarning
           onInput={emit}
           onBlur={emit}
-          className="prose prose-sm min-h-32 max-w-none p-3 outline-none"
+          onPaste={(event) => insertNormalizedPaste(event, emit)}
+          className="rich-text-content prose prose-sm min-h-32 max-w-none p-3 outline-none"
         />
       </div>
     </div>
@@ -422,8 +440,10 @@ export function SafeRichText({
   if (!html?.trim()) return <p className="text-sm text-slate-500">{empty}</p>;
   return (
     <div
-      className="prose prose-sm max-w-none text-slate-700"
-      dangerouslySetInnerHTML={{ __html: richTextToDisplayHtml(html) }}
+      className="rich-text-content prose prose-sm max-w-none text-slate-700"
+      dangerouslySetInnerHTML={{
+        __html: ensureBlankParagraphs(richTextToDisplayHtml(html), { trimEdges: true }),
+      }}
     />
   );
 }
