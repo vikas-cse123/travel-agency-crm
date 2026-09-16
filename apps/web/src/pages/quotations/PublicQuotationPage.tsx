@@ -929,6 +929,19 @@ function normalizeActivityPricing(raw: unknown): Array<{ label: string; price: n
   });
 }
 
+function normalizeDisplayPricing(raw: unknown): Array<{ label: string; price: number }> {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const row = (entry ?? {}) as AnyRecord;
+    if (row.enabled === false) return [];
+    const label = String(row.label ?? '').trim();
+    if (!label || row.price == null || row.price === '') return [];
+    const price = Number(row.price);
+    if (!Number.isFinite(price) || price < 0) return [];
+    return [{ label, price }];
+  });
+}
+
 /**
  * Per-activity price list. Renders nothing — no heading, no spacing — when the
  * activity carries no usable prices, so an unpriced activity looks exactly as
@@ -937,14 +950,16 @@ function normalizeActivityPricing(raw: unknown): Array<{ label: string; price: n
 function ActivityPricing({
   rows,
   fmt,
+  heading = 'PRICING',
 }: {
   rows: Array<{ label: string; price: number }>;
   fmt: (value: number) => string;
+  heading?: string;
 }) {
   if (!rows.length) return null;
   return (
     <div className="mt-4 border-t border-slate-100 pt-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-[#000000]">Pricing</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-[#000000]">{heading}</p>
       <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {rows.map((row, index) => (
           <div
@@ -990,6 +1005,9 @@ function normalizeItineraryDay(raw: unknown, fallbackNumber: number) {
       TRANSFER_CANONICAL[String((entry as AnyRecord).dailyTransfer ?? '').toUpperCase()] ?? null,
     // Absent on activities saved before per-activity pricing existed.
     pricingOptions: normalizeActivityPricing(entry.pricingOptions),
+    displayPricing: normalizeDisplayPricing((entry as AnyRecord).displayPricing),
+    displayPricingHeading:
+      String((entry as AnyRecord).displayPricingHeading ?? '').trim() || 'PRICING',
     sequence: (entry.sequence ?? null) as number | null,
   }));
   const mealsRaw = day.meals;
@@ -1341,6 +1359,7 @@ function SightseeingItineraryView({
                                   {pricingMode === 'SECTION_WISE' && (
                                     <ActivityPricing rows={activity.pricingOptions} fmt={fmt} />
                                   )}
+                                  <ActivityPricing rows={activity.displayPricing} fmt={fmt} heading={activity.displayPricingHeading} />
                                 </div>
                               </div>
                             </div>
@@ -1415,6 +1434,7 @@ function SightseeingItineraryView({
                                       {pricingMode === 'SECTION_WISE' && (
                                         <ActivityPricing rows={activity.pricingOptions} fmt={fmt} />
                                       )}
+                                      <ActivityPricing rows={activity.displayPricing} fmt={fmt} heading={activity.displayPricingHeading} />
                                     </div>
                                   </div>
                                   {!isLast && <hr className="my-3 border-slate-200" />}
@@ -2362,7 +2382,7 @@ export function PublicQuotationPage() {
                           }
                         />
                         <div className="p-5">
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                             <div className="min-w-0">
                               <h3 className="text-xl font-bold leading-tight text-[#000000]">
                                 {hotel.hotelName}
@@ -2386,7 +2406,7 @@ export function PublicQuotationPage() {
                                 href={reviewUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="mt-1 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+                                className="inline-flex items-center gap-1 self-start text-xs font-medium text-blue-600 hover:underline sm:mt-1 sm:shrink-0"
                               >
                                 Hotel Review <ExternalLink className="inline h-3 w-3" />
                                 {showScore && (

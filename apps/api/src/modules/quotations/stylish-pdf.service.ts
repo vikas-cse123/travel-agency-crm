@@ -1718,11 +1718,41 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           bodySize = 8.2;
           measured = measureRichHeight(richDescription, CONTENT_W - 54, bodySize, 1.38);
         }
+        // DISPLAY-ONLY pricing snapshot — never feeds totals
+        const displayPricingRaw = (activity as unknown as { displayPricing?: unknown }).displayPricing as
+          | Array<{ label?: string | null; price?: number | string | null; enabled?: boolean }>
+          | undefined;
+        const displayPricingRows = Array.isArray(displayPricingRaw)
+          ? displayPricingRaw
+              .filter(
+                (r) =>
+                  r.enabled !== false &&
+                  String(r.label ?? '').trim() &&
+                  r.price != null &&
+                  r.price !== '' &&
+                  Number(r.price) >= 0,
+              )
+              .map((r) => ({ label: String(r.label).trim(), price: Number(r.price) }))
+          : [];
+        const displayPricingHeading =
+          String((activity as unknown as { displayPricingHeading?: unknown }).displayPricingHeading ?? '').trim() || 'PRICING';
+        let displayPricingLines: PdfRichTextLine[] = [];
+        let displayPricingMeasured = 0;
+        if (displayPricingRows.length) {
+          const pricingHtml = `<p><strong>${displayPricingHeading}</strong></p><p>${displayPricingRows
+            .map(
+              (r) =>
+                `${r.label}: ₹${r.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            )
+            .join(' · ')}</p>`;
+          displayPricingLines = htmlToRichTextLines(pricingHtml);
+          displayPricingMeasured = measureRichHeight(displayPricingLines, CONTENT_W - 54, bodySize, 1.38);
+        }
         // Dynamic card height = title offset + actual content + bottom padding
         // For "aaa" this is ~67pt; for long rich text it grows naturally; never oversized
         const bodyHeight = Math.min(
           availableHeight,
-          Math.max(ITIN_MIN_CARD_H, ITIN_DESC_OFFSET + measured + ITIN_BOTTOM_PAD),
+          Math.max(ITIN_MIN_CARD_H, ITIN_DESC_OFFSET + measured + displayPricingMeasured + ITIN_BOTTOM_PAD),
         );
         addContentPage(activityPage === 0 ? 'Day Wise Itinerary' : undefined);
         doc
@@ -1846,6 +1876,17 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           INK,
           1.38,
         );
+        if (displayPricingLines.length) {
+          drawRichLines(
+            displayPricingLines,
+            ITIN_TEXT_LEFT,
+            descriptionTop + ITIN_DESC_OFFSET + measured + 8,
+            CONTENT_W - 54,
+            bodySize,
+            INK,
+            1.38,
+          );
+        }
         activityPage += 1;
       }
     }

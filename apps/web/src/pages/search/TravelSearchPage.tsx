@@ -117,6 +117,20 @@ function Stars({ count }: { count: number | undefined }) {
   );
 }
 
+function formatBeds(beds: Array<{ count?: number; type?: string }> | undefined): string | null {
+  if (!Array.isArray(beds) || !beds.length) return null;
+  const parts = beds
+    .map((bed) => {
+      const count = bed.count ?? 1;
+      const type = (bed.type ?? 'bed').trim();
+      const label = count === 1 ? `${count} ${type} bed` : `${count} ${type} beds`;
+      return label;
+    })
+    .filter(Boolean);
+  if (!parts.length) return null;
+  return parts.join(' + ');
+}
+
 function Field({ label, value }: { label: string; value: string | number | undefined }) {
   if (value === undefined || value === null || value === '') return null;
   return (
@@ -2716,7 +2730,7 @@ function RoomOfferCard({
                 {row.logo ? (
                   <img src={row.logo} alt="" className="h-4 w-4 rounded" loading="lazy" />
                 ) : null}
-                {row.source}
+                Provider: {row.source}
                 {row.isOfficial ? (
                   <Badge variant="success" className="ml-1">
                     Official site
@@ -2730,7 +2744,16 @@ function RoomOfferCard({
                 {row.guests} guests
               </span>
             ) : null}
+            {formatBeds(row.beds) ? (
+              <span className="flex items-center gap-1">
+                <BedDouble className="h-3 w-3" aria-hidden="true" />
+                {formatBeds(row.beds)}
+              </span>
+            ) : null}
           </div>
+          {row.description ? (
+            <p className="mt-2 text-sm text-muted-foreground">{row.description}</p>
+          ) : null}
         </div>
       </div>
 
@@ -3333,6 +3356,8 @@ function PropertyDetailPanel({ response }: { response: HotelPropertyResponse | u
     </div>
   );
 }
+// Keep for potential future use / tests — Rooms & Offers drawer no longer shows full property details
+void PropertyDetailPanel;
 
 function HotelRoomsDrawer({
   property,
@@ -3549,7 +3574,6 @@ function HotelRoomsDrawer({
             />
           ) : (
             <>
-              <PropertyDetailPanel response={query.data} />
               {create.isError ? (
                 <Alert tone="error">
                   {create.error instanceof Error && create.error.message

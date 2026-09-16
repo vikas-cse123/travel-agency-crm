@@ -315,6 +315,24 @@ export function pdfActivityPrices(
   });
 }
 
+/**
+ * DISPLAY-ONLY pricing rows copied from the Sightseeing Master.
+ * Only rows with `enabled !== false` are shown, and they never feed totals.
+ */
+export function pdfDisplayPrices(
+  rows: Array<{ label?: string | null; price?: number | string | null; enabled?: boolean }> | null | undefined,
+): Array<{ label: string; price: number }> {
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if ((row as { enabled?: boolean })?.enabled === false) return [];
+    const label = String(row?.label ?? '').trim();
+    if (!label || row?.price == null || row.price === '') return [];
+    const price = Number(row.price);
+    if (!Number.isFinite(price) || price < 0) return [];
+    return [{ label, price }];
+  });
+}
+
 type Img = Buffer | null | undefined;
 
 /** Company data for the repeating footer and page-1 consultant fallback. */
@@ -2327,6 +2345,8 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
           // never collide with the next activity or footer.
           // Hidden when pricingMode is TOTAL — only show in SECTION_WISE.
           const aPrices = isSectionWisePricing ? pdfActivityPrices(a.pricingOptions) : [];
+          // DISPLAY-ONLY pricing snapshot — never feeds totals.
+          const aDisplayPrices = pdfDisplayPrices((a as unknown as { displayPricing?: unknown }).displayPricing);
           const pricingGap = 8;
           const pricingPadX = 8;
           const pricingPadY = 6;
@@ -2358,8 +2378,35 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
           const pricingH = aPrices.length
             ? 10 + hOf('PRICING', 9, contentW, 'Bold') + 4 + pricingGridH
             : 0;
+          // Display pricing grid (always shown when present, regardless of pricingMode)
+          const displayHeading = String((a as unknown as { displayPricingHeading?: unknown }).displayPricingHeading ?? '').trim() || 'PRICING';
+          const displayRows = Array.from(
+            { length: Math.ceil(aDisplayPrices.length / pricingCols) },
+            (_, rowIndex) =>
+              aDisplayPrices.slice(rowIndex * pricingCols, rowIndex * pricingCols + pricingCols),
+          );
+          const displayRowHeights = displayRows.map((row) => {
+            doc.font('Body').fontSize(8.5);
+            const labelsH = row.map((price) =>
+              doc.heightOfString(price.label, { width: pricingInnerW }),
+            );
+            doc.font('Bold').fontSize(10);
+            const pricesH = row.map((price) =>
+              doc.heightOfString(money(price.price), { width: pricingInnerW }),
+            );
+            return (
+              Math.max(...row.map((_, index) => labelsH[index]! + 2 + pricesH[index]!), 0) +
+              pricingPadY * 2
+            );
+          });
+          const displayGridH =
+            displayRowHeights.reduce((sum, height) => sum + height, 0) +
+            Math.max(0, displayRowHeights.length - 1) * pricingGap;
+          const displayPricingH = aDisplayPrices.length
+            ? 10 + hOf(displayHeading, 9, contentW, 'Bold') + 4 + displayGridH
+            : 0;
 
-          const textColH = titleH + descBlock.height + transferH + pricingH;
+          const textColH = titleH + descBlock.height + transferH + pricingH + displayPricingH;
           const blockH = Math.max(imgColH, textColH);
 
           // Shared body drawing: image, start time, title, optional inline
@@ -2434,6 +2481,43 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
                 yy += rowH + pricingGap;
               });
             }
+            if (aDisplayPrices.length) {
+              yy += 10;
+              doc
+                .font('Bold')
+                .fontSize(9)
+                .fillColor(MUTED)
+                .text(displayHeading, contentX, yy, { width: contentW });
+              yy = doc.y + 4;
+              displayRows.forEach((row, rowIndex) => {
+                const rowH = displayRowHeights[rowIndex]!;
+                row.forEach((price, colIndex) => {
+                  const x = contentX + colIndex * (pricingBoxW + pricingGap);
+                  doc
+                    .save()
+                    .roundedRect(x, yy, pricingBoxW, rowH, 3)
+                    .fill('#F7F8FA')
+                    .stroke(BORDER)
+                    .restore();
+                  doc
+                    .font('Body')
+                    .fontSize(8.5)
+                    .fillColor(MUTED)
+                    .text(price.label, x + pricingPadX, yy + pricingPadY, {
+                      width: pricingInnerW,
+                    });
+                  const priceY = doc.y + 2;
+                  doc
+                    .font('Bold')
+                    .fontSize(10)
+                    .fillColor(DARK)
+                    .text(money(price.price), x + pricingPadX, priceY, {
+                      width: pricingInnerW,
+                    });
+                });
+                yy += rowH + pricingGap;
+              });
+            }
             return y0 + height;
           };
 
@@ -2452,7 +2536,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
           // blocks. The header deliberately has NO keepWithNext: chaining it to
           // the first description chunk would overfill the page budget and push
           // bullets below the footer divider.
-          const headerH = Math.max(imgColH, titleH + transferH + pricingH) + 10;
+          const headerH = Math.max(imgColH, titleH + transferH + pricingH + displayPricingH) + 10;
           planner.add({
             height: headerH,
             render: (y0) => drawActivityBody(y0, false, headerH),

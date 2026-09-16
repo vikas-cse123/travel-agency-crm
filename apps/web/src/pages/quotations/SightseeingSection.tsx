@@ -137,6 +137,8 @@ export const emptySightseeingActivity = (): SightActivity => ({
   pricingBasis: null,
   pricingQuantity: null,
   sequence: null,
+  displayPricing: [],
+  displayPricingHeading: 'PRICING',
 });
 
 export const emptySightseeingDay = (dayNumber: number, seed?: Partial<SightDay>): SightDay => ({
@@ -514,6 +516,83 @@ function ActivityPricing({
   );
 }
 
+/** DISPLAY-ONLY master pricing — checkbox controls presentation, never totals. */
+function ActivityDisplayPricing({
+  form,
+  dayIndex,
+  activityIndex,
+  ariaPrefix,
+}: {
+  form: Form;
+  dayIndex: number;
+  activityIndex: number;
+  ariaPrefix: string;
+}) {
+  const fp = (path: string) => path as FieldPath<QuotationVersionInput>;
+  const name =
+    `sightseeingDetails.days.${dayIndex}.activities.${activityIndex}.displayPricing` as const;
+  const rows = (form.watch(name as never) as
+    | Array<{ label: string; price: number | string | null | undefined; enabled?: boolean }>
+    | undefined) ?? [];
+  const headingName =
+    `sightseeingDetails.days.${dayIndex}.activities.${activityIndex}.displayPricingHeading` as const;
+  const headingRaw = form.watch(headingName as never) as unknown as string | null | undefined;
+  if (!rows.length) return null;
+  return (
+    <div className="rounded-lg bg-muted/40 border border-border/40 p-3.5">
+      <p className={subsectionHeading}>Pricing (Display Only)</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Checked prices are shown to the customer in the itinerary. They do not affect totals.
+      </p>
+      <label className={`${labelCls} mt-3 block`}>
+        Pricing Heading
+        <input
+          aria-label={`${ariaPrefix} pricing heading`}
+          className={`${field} mt-1`}
+          placeholder="PRICING"
+          value={headingRaw ?? 'PRICING'}
+          onChange={(event) =>
+            form.setValue(headingName as never, event.target.value as never, {
+              shouldDirty: true,
+            })
+          }
+        />
+      </label>
+      <div className="mt-3 space-y-2">
+        {rows.map((row, index) => {
+          const label = String(row.label ?? '').trim();
+          const price = row.price;
+          const numeric = Number(price);
+          const enabled = row.enabled !== false;
+          return (
+            <label
+              key={`${label}-${index}`}
+              className="flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={enabled}
+                aria-label={`${ariaPrefix} ${label.toLowerCase()} display price`}
+                onChange={(event) =>
+                  form.setValue(fp(`${name}.${index}.enabled`), event.target.checked as never, {
+                    shouldDirty: true,
+                  })
+                }
+              />
+              <span className="flex-1 font-medium text-foreground">{label || '—'}</span>
+              <span className="font-semibold text-foreground">
+                {Number.isFinite(numeric)
+                  ? `₹${numeric.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '—'}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** One day card: title/city + activities + meals + transfer. */
 function DayCard({
   form,
@@ -657,6 +736,8 @@ function DayCard({
     form.setValue(fp(`${abase}.showTime`), false as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.duration`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.sequence`), null as never, { shouldDirty: true });
+    form.setValue(fp(`${abase}.displayPricing`), [] as never, { shouldDirty: true });
+    form.setValue(fp(`${abase}.displayPricingHeading`), 'PRICING' as never, { shouldDirty: true });
   };
 
   const pickSpecial = (abase: string, option: SightseeingSelectOption) => {
@@ -670,6 +751,8 @@ function DayCard({
     form.setValue(fp(`${abase}.startTime`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.showTime`), false as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.duration`), null as never, { shouldDirty: true });
+    form.setValue(fp(`${abase}.displayPricing`), [] as never, { shouldDirty: true });
+    form.setValue(fp(`${abase}.displayPricingHeading`), 'PRICING' as never, { shouldDirty: true });
     const name =
       option.id === 'special:day_at_leisure'
         ? 'Day at Leisure'
@@ -749,6 +832,24 @@ function DayCard({
             form.setValue(fp(`${abase}.pricingOptions.${idx}.label`), row.label as never, { shouldDirty: true });
             form.setValue(fp(`${abase}.pricingOptions.${idx}.price`), row.price as never, { shouldDirty: true, shouldValidate: false });
           });
+        }
+      }
+      // DISPLAY-ONLY: snapshot master pricing for presentation (all enabled by default).
+      // This never feeds totals; checkbox state is stored per-activity in displayPricing.
+      if (picked) {
+        const displayRows = Array.isArray(masterPricing)
+          ? masterPricing
+              .filter((row) => row?.label?.trim() && row?.price != null && Number(row.price) >= 0)
+              .map((row) => ({
+                label: String(row.label).trim(),
+                price: Number(row.price),
+                enabled: true,
+              }))
+          : [];
+        form.setValue(fp(`${abase}.displayPricing`), displayRows as never, { shouldDirty: true });
+        const existingHeading = form.getValues(fp(`${abase}.displayPricingHeading`) as never) as unknown as string | null;
+        if (!existingHeading?.trim()) {
+          form.setValue(fp(`${abase}.displayPricingHeading`), 'PRICING' as never, { shouldDirty: true });
         }
       }
       if (!titleTouched)
@@ -1002,6 +1103,12 @@ function DayCard({
                         />
                       </div>
                     </div>
+                    <ActivityDisplayPricing
+                      form={form}
+                      dayIndex={dayIndex}
+                      activityIndex={aIndex}
+                      ariaPrefix={`Day ${dayIndex + 1} activity ${aIndex + 1}`}
+                    />
                     <ActivityPricing
                       form={form}
                       dayIndex={dayIndex}

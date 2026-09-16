@@ -1083,6 +1083,25 @@ export const sightseeingActivitySchema = z.object({
     z.coerce.number().int().min(0).max(1000).nullable().optional(),
   ),
   sequence: z.number().int().min(1).max(500).nullable().optional(),
+  // DISPLAY-ONLY master pricing snapshot — checked entries are shown in
+  // the itinerary presentation (builder/weblink/PDFs) but never feed
+  // resolveQuotationPricing or any grand total.
+  displayPricing: z.preprocess(
+    (value) => (value === null || value === undefined ? [] : value),
+    z
+      .array(
+        z.object({
+          label: z.string().trim().max(60),
+          price: z.union([z.string(), z.number()]).nullable().optional(),
+          enabled: z.boolean().optional().default(true),
+        }),
+      )
+      .max(20)
+      .optional(),
+  ),
+  // DISPLAY-ONLY heading for the pricing block — customizes the "PRICING"
+  // label shown in weblink/classic/stylish PDFs.
+  displayPricingHeading: optionalText(60),
 });
 
 export type SightseeingPriceOption = { label: string; price: number };
