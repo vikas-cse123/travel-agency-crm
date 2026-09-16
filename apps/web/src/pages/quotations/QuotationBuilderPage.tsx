@@ -1637,6 +1637,26 @@ const newCruiseServiceRow = (sequence: number) => ({
   sequence,
 });
 
+/** A clean, empty Vehicle service row; the section title defaults to "Transportation". */
+const newVehicleServiceRow = (sequence: number) => ({
+  serviceType: 'VEHICLE_TRANSFER' as const,
+  ...CLEARED_SERVICE_MASTERS,
+  name: '',
+  description: null,
+  dayNumber: null,
+  city: null,
+  quantity: 1,
+  internalCost: 0,
+  sellingPrice: 0,
+  pricingBasis: 'PER_DAY' as const,
+  taxCategory: 'Transportation',
+  notes: null,
+  images: [],
+  imageSnapshotPresent: false,
+  pdfImageUrl: null,
+  sequence,
+});
+
 const escapeHtml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -1983,8 +2003,8 @@ export function QuotationBuilderPage() {
   const hotelPreviewImportsRef = useRef<Set<string>>(new Set());
   // Manual cruise cabin-rate overrides per service row index (sellingPrice). Set when user types, cleared on room/cruise change.
   const cruisePriceOverridesRef = useRef<Set<number>>(new Set());
-  // Vehicle description manual override – set when user edits, cleared when vehicle model changes
-  const vehicleDescriptionOverriddenRef = useRef(false);
+  // Vehicle description manual override per vehicle index – set when user edits, cleared when vehicle model changes
+  const vehicleDescriptionOverriddenRef = useRef<Set<number>>(new Set());
   const vehicleMasters = useVehicles(
     useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
   );
@@ -1994,9 +2014,9 @@ export function QuotationBuilderPage() {
   useEffect(() => {
     if (!SHOW_VISA_QUOTATION_TAB && activeTab === 'visa') setActiveTab('vehicle');
   }, [activeTab]);
-  // Cruise starts excluded: the user explicitly enables it (auto-creating the
-  // first entry). Saved quotations with Cruise rows re-enable it on load.
-  const [excluded, setExcluded] = useState<Record<string, boolean>>({ cruise: true });
+  // Cruise and Vehicle start excluded: the user explicitly enables them (auto-creating the
+  // first entry). Saved quotations with rows re-enable on load.
+  const [excluded, setExcluded] = useState<Record<string, boolean>>({ cruise: true, vehicle: true });
   // Local-only expand/collapse for Hotel Stay cards. UI state only — never
   // persisted. Every stay starts collapsed whenever the builder is opened.
   const [expandedHotels, setExpandedHotels] = useState<Record<string, boolean>>({});
@@ -2056,25 +2076,6 @@ export function QuotationBuilderPage() {
   useEffect(() => {
     excludedRef.current = excluded;
   }, [excluded]);
-  const [vehicleDraft, setVehicleDraft] = useState<VehicleDraft>(defaultVehicleDraft);
-  // Auto-fill vehicle description from master when vehicleId exists and description is empty (existing quotation load)
-  useEffect(() => {
-    if (vehicleDescriptionOverriddenRef.current) return;
-    if (!vehicleDraft.vehicleId) return;
-    const currentDesc = vehicleDraft.description ?? '';
-    const isEmpty = !currentDesc || !currentDesc.replace(/<[^>]*>/g, '').trim();
-    if (!isEmpty) return;
-    const master = (vehicleMasters.data?.data ?? []).find((m) => m.id === vehicleDraft.vehicleId);
-    const masterDesc = (master as unknown as { description?: string | null })?.description ?? '';
-    if (!masterDesc) return;
-    setVehicleDraft((current) => {
-      if (current.vehicleId !== vehicleDraft.vehicleId) return current;
-      const curDesc = current.description ?? '';
-      if (curDesc && curDesc.replace(/<[^>]*>/g, '').trim()) return current;
-      if (vehicleDescriptionOverriddenRef.current) return current;
-      return { ...current, description: masterDesc };
-    });
-  }, [vehicleDraft.vehicleId, vehicleDraft.description, vehicleMasters.data]);
   const [invalidFields, setInvalidFields] = useState<string[]>([]);
   const [flightImagePreviewUrls, setFlightImagePreviewUrls] = useState<Record<string, string>>({});
   const [flightImageUploading, setFlightImageUploading] = useState(false);
@@ -2085,7 +2086,7 @@ export function QuotationBuilderPage() {
   const form = useForm<QuotationVersionInput>({
     resolver: async (values, context, options) => {
       // When a section is excluded, its rows must not be required. Hotel rows
-      // and Cruise service rows are normalised away so an empty default row
+      // and Cruise/Vehicle service rows are normalised away so an empty default row
       // never blocks a draft save.
       let prepared: QuotationVersionInput = values;
       if (excludedRef.current.hotel) prepared = { ...prepared, hotels: [] };
@@ -2093,6 +2094,11 @@ export function QuotationBuilderPage() {
         prepared = {
           ...prepared,
           services: (prepared.services ?? []).filter((service) => service.serviceType !== 'CRUISE'),
+        };
+      if (excludedRef.current.vehicle)
+        prepared = {
+          ...prepared,
+          services: (prepared.services ?? []).filter((service) => service.serviceType !== 'VEHICLE_TRANSFER'),
         };
       return zodResolver(quotationVersionInputSchema)(prepared, context, options);
     },
@@ -2610,29 +2616,7 @@ export function QuotationBuilderPage() {
         ],
       },
     };
-    const savedVehicle = version.services.find(
-      (service) => service.serviceType === 'VEHICLE_TRANSFER',
-    );
-    vehicleDescriptionOverriddenRef.current = false;
-    setVehicleDraft({
-      // Keep the reference section visible for a new quotation. A vehicle is
-      // only persisted once a model is selected, so this does not create an
-      // empty service row.
-      include: true,
-      sectionTitle: savedVehicle?.taxCategory?.trim() || 'Transportation',
-      amount: Number(savedVehicle?.unitSellingPrice ?? 0),
-      vehicleType: savedVehicle?.city ?? '',
-      vehicleId: savedVehicle?.vehicleId ?? '',
-      vehicleModel: savedVehicle?.name ?? '',
-      usage: savedVehicle?.notes ?? '',
-      description: savedVehicle?.description ?? '',
-      images: savedVehicle?.images ?? [],
-      imageSnapshotPresent:
-        savedVehicle?.imageSnapshotPresent ?? Boolean(savedVehicle?.images?.length),
-      pdfImageUrl: savedVehicle?.pdfImageUrl ?? null,
-      pricingBasis: savedVehicle?.pricingBasis ?? 'PER_DAY',
-      quantity: Number(savedVehicle?.quantity ?? 1) || 1,
-    });
+    vehicleDescriptionOverriddenRef.current.clear();
     const legacyTitle = version.title.trim().toLowerCase();
     const legacyDestinationTitle =
       `${version.destinationSummary.trim()} travel proposal`.toLowerCase();
@@ -2911,6 +2895,12 @@ export function QuotationBuilderPage() {
       );
       setExcluded((current) => ({ ...current, cruise: !hasSavedCruiseRow }));
     }
+    if (!autoToggleRef.current.has('vehicle')) {
+      const hasSavedVehicleRow = (version.services ?? []).some(
+        (row) => row.serviceType === 'VEHICLE_TRANSFER',
+      );
+      setExcluded((current) => ({ ...current, vehicle: !hasSavedVehicleRow }));
+    }
     // Add-on Services top-level include: a NEW quotation defaults from the
     // Lead's requested services; an existing quotation keeps its saved state.
     // `version.addOnDetails` is null on a brand-new version, so default it once.
@@ -2933,19 +2923,6 @@ export function QuotationBuilderPage() {
     leadRequested,
   ]);
 
-  // Recover the display snapshot for older drafts that only saved a vehicle id.
-  useEffect(() => {
-    if (!vehicleDraft.vehicleId) return;
-    const master = (vehicleMasters.data?.data ?? []).find(
-      (entry) => entry.id === vehicleDraft.vehicleId,
-    );
-    if (!master) return;
-    setVehicleDraft((current) => ({
-      ...current,
-      vehicleType: current.vehicleType || master.vehicleType,
-      vehicleModel: current.vehicleModel || master.name,
-    }));
-  }, [vehicleDraft.vehicleId, vehicleMasters.data]);
   const watchedHotels = useWatch({ control: form.control, name: 'hotels' });
   const watchedServices = useWatch({ control: form.control, name: 'services' });
   const markupMode = useWatch({ control: form.control, name: 'markupMode' });
@@ -3533,46 +3510,14 @@ export function QuotationBuilderPage() {
                 : withDurations(value.flightDetails.returnJourney),
           }
         : value.flightDetails;
-      // The reference Vehicle tab is one structured vehicle configuration. It
-      // is stored as the existing vehicle service snapshot so old quotations,
-      // pricing and master-reference validation continue to work unchanged.
-      const nonVehicleServices = value.services.filter(
-        (service) => service.serviceType !== 'VEHICLE_TRANSFER',
-      );
-      const vehicleService =
-        vehicleDraft.include && vehicleDraft.vehicleModel.trim()
-          ? {
-              serviceType: 'VEHICLE_TRANSFER' as const,
-              ...CLEARED_SERVICE_MASTERS,
-              vehicleId: vehicleDraft.vehicleId || null,
-              name: vehicleDraft.vehicleModel.trim(),
-              description: vehicleDraft.description || null,
-              dayNumber: null,
-              // Vehicle type is the customer-facing snapshot for this section.
-              city: vehicleDraft.vehicleType.trim() || null,
-              // The rate is per pricing basis; quantity is days/hours/transfers.
-              quantity: Math.max(1, Number(vehicleDraft.quantity) || 1),
-              pricingBasis: (vehicleDraft.pricingBasis || 'PER_DAY') as never,
-              internalCost: 0,
-              sellingPrice: Number(vehicleDraft.amount) || 0,
-              // Section title and usage are preserved in the two existing
-              // customer-safe snapshot fields.
-              taxCategory: vehicleDraft.sectionTitle.trim() || 'Transportation',
-              notes: vehicleDraft.usage.trim() || null,
-              images: vehicleDraft.images,
-              imageSnapshotPresent: vehicleDraft.imageSnapshotPresent,
-              pdfImageUrl: vehicleDraft.pdfImageUrl,
-              sequence: nonVehicleServices.length + 1,
-            }
-          : null;
-      const submittedServices = vehicleService
-        ? [...nonVehicleServices, vehicleService]
-        : nonVehicleServices;
-      // Excluded sections are removed from the persisted snapshot (vehicle uses
-      // its draft flag; Cruise uses the tab's include checkbox).
-      const persistedServices = excluded.cruise
-        ? submittedServices.filter((service) => service.serviceType !== 'CRUISE')
-        : submittedServices;
+      const submittedServices = value.services;
+      // Excluded sections are removed from the persisted snapshot.
+      const persistedServices = (() => {
+        let filtered: typeof submittedServices = submittedServices;
+        if (excluded.cruise) filtered = filtered.filter((service) => service.serviceType !== 'CRUISE');
+        if (excluded.vehicle) filtered = filtered.filter((service) => service.serviceType !== 'VEHICLE_TRANSFER');
+        return filtered;
+      })();
       save.mutate(
         {
           ...value,
@@ -3685,9 +3630,14 @@ export function QuotationBuilderPage() {
                 } as unknown as QuotationVersionInput['services'][number];
               })
               .filter((service) => {
-                if ((service as unknown as { serviceType: string })?.serviceType === 'CRUISE') {
+                const t = (service as unknown as { serviceType: string })?.serviceType;
+                if (t === 'CRUISE') {
                   const svc = service as unknown as { name?: string | null; cruiseId?: string | null };
                   return Boolean((svc.name ?? '').trim() || svc.cruiseId);
+                }
+                if (t === 'VEHICLE_TRANSFER') {
+                  const svc = service as unknown as { name?: string | null; vehicleId?: string | null };
+                  return Boolean((svc.name ?? '').trim() || svc.vehicleId);
                 }
                 return true;
               }),
@@ -3970,265 +3920,273 @@ export function QuotationBuilderPage() {
     );
   };
 
-  /** Reference Vehicle tab: one vehicle master with exactly the requested fields. */
+  /** Reference Vehicle tab: one or more vehicle masters, each independently repeatable. */
   const vehicleTab = () => {
+    const vehicleRows = services.fields
+      .map((row, index) => ({ row, index }))
+      .filter(({ index }) => watchedServices?.[index]?.serviceType === 'VEHICLE_TRANSFER');
     const masters = vehicleMasters.data?.data ?? [];
-    const vehicleTypes = [...new Set(masters.map((master) => master.vehicleType).filter(Boolean))]
-      .concat(
-        vehicleDraft.vehicleType && !masters.some((m) => m.vehicleType === vehicleDraft.vehicleType)
-          ? [vehicleDraft.vehicleType]
-          : [],
-      )
-      .sort((a, b) => a.localeCompare(b));
-    const models = vehicleDraft.vehicleType
-      ? masters.filter((master) => master.vehicleType === vehicleDraft.vehicleType)
-      : [];
-
+    const primaryIndex = vehicleRows[0]?.index;
+    const primary = primaryIndex !== undefined ? (watchedServices?.[primaryIndex] as unknown as QuotationVersionInput['services'][number] | undefined) : undefined;
+    const isVehicleSectionWise = (form.watch('pricingMode') as string) === 'SECTION_WISE';
+    const vehicleTotal = vehicleRows.reduce((sum, { index }) => {
+      const svc = watchedServices?.[index] as unknown as { quantity?: number | null; pricingBasis?: string | null; sellingPrice?: number | null } | undefined;
+      const qty = svc?.quantity != null ? Number(svc.quantity) : 1;
+      const basis = String(svc?.pricingBasis ?? 'PER_DAY');
+      const rate = Number((svc as unknown as { sellingPrice?: number | null })?.sellingPrice ?? 0);
+      const mult = basis === 'FIXED' ? 1 : Math.max(1, Math.floor(qty || 1));
+      return sum + rate * mult;
+    }, 0);
     return (
-      <div className="space-y-4">
-        <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-          <input
-            type="checkbox"
-            checked={vehicleDraft.include}
-            onChange={(event) =>
-              setVehicleDraft((current) => ({ ...current, include: event.target.checked }))
-            }
-          />
-          Include Vehicle in Quotation
-        </label>
-
-        {vehicleDraft.include && (
+      <div className="space-y-5">
+        <IncludeBar tabKey="vehicle" label="Vehicle" />
+        {isIncluded('vehicle') && (
           <>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-sm font-semibold text-slate-800">
-                Section Title
-                <input
-                  aria-label="Vehicle section title"
-                  maxLength={80}
-                  value={vehicleDraft.sectionTitle}
-                  onChange={(event) =>
-                    setVehicleDraft((current) => ({
-                      ...current,
-                      sectionTitle: event.target.value,
-                    }))
-                  }
-                  className={`${field} mt-1`}
-                />
-              </label>
-              {(form.watch('pricingMode') as string) === 'SECTION_WISE' && (
-              <label className="text-sm font-semibold text-slate-800">
-                Rate
-                <div className="mt-1 flex rounded-lg border border-slate-300 bg-card focus-within:ring-2 focus-within:ring-brand-500">
-                  <span className="flex items-center border-r px-3 text-sm text-slate-500">
-                    {currency}
-                  </span>
-                  <input
-                    aria-label="Vehicle amount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={vehicleDraft.amount}
-                    onChange={(event) =>
-                      setVehicleDraft((current) => ({
-                        ...current,
-                        amount: Math.max(0, Number(event.target.value) || 0),
-                      }))
-                    }
-                    className="w-full rounded-r-lg bg-transparent px-3 py-2 text-sm outline-none"
-                  />
-                </div>
-              </label>
-              )}
-            </div>
-
-            {(form.watch('pricingMode') as string) === 'SECTION_WISE' && (
-            <div className="grid gap-4 md:grid-cols-3">
-              <label className="text-sm font-semibold text-slate-800">
-                Pricing Basis
-                <select
-                  aria-label="Vehicle pricing basis"
-                  value={vehicleDraft.pricingBasis}
-                  onChange={(event) =>
-                    setVehicleDraft((current) => ({
-                      ...current,
-                      pricingBasis: event.target.value,
-                    }))
-                  }
-                  className={`${field} mt-1`}
-                >
-                  {VEHICLE_PRICING_BASES.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-slate-800">
-                {vehicleDraft.pricingBasis === 'PER_HOUR'
-                  ? 'Hours'
-                  : vehicleDraft.pricingBasis === 'PER_TRANSFER'
-                    ? 'Transfers'
-                    : vehicleDraft.pricingBasis === 'PER_VEHICLE'
-                      ? 'Vehicles'
-                      : 'Days'}
-                <input
-                  aria-label="Vehicle quantity"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={vehicleDraft.quantity}
-                  disabled={vehicleDraft.pricingBasis === 'FIXED'}
-                  onChange={(event) =>
-                    setVehicleDraft((current) => ({
-                      ...current,
-                      quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)),
-                    }))
-                  }
-                  className={`${field} mt-1 disabled:bg-slate-100`}
-                />
-              </label>
-              <div className={`${calculatedCard} text-sm`}>
-                <p className={calculatedLabel}>
-                  Calculation
-                </p>
-                <p className="mt-1 text-slate-700">
-                  {formatMoney(vehicleDraft.amount)} ×{' '}
-                  {vehicleDraft.pricingBasis === 'FIXED' ? 1 : vehicleDraft.quantity} ={' '}
-                  <span className={calculatedValue}>
-                    {formatMoney(
-                      vehicleDraft.amount *
-                        (vehicleDraft.pricingBasis === 'FIXED' ? 1 : vehicleDraft.quantity),
-                    )}
-                  </span>
-                </p>
-              </div>
-            </div>
-            )}
-            {(form.watch('pricingMode') as string) === 'SECTION_WISE' && <div className={`${calculatedCard} flex items-center justify-between`}><span className={calculatedLabel}>Transportation Total</span><span className={calculatedValue}>{formatMoney(vehicleDraft.amount * (vehicleDraft.pricingBasis === 'FIXED' ? 1 : vehicleDraft.quantity))}</span></div>}
-
-            <div>
-              <p className={`${subsectionHeading} mb-3 border-b border-border/50 pb-1`}>Vehicle Details</p>
-              <div className="grid gap-4 md:grid-cols-3">
+            {primaryIndex !== undefined && (
+              <div className="grid gap-4 md:grid-cols-2">
                 <label className="text-sm font-semibold text-slate-800">
-                  Vehicle Type <span className="text-red-500">*</span>
-                <select
-                  aria-label="Vehicle type"
-                  value={vehicleDraft.vehicleType}
-                  onChange={(event) =>
-                    setVehicleDraft((current) => ({
-                      ...current,
-                      vehicleType: event.target.value,
-                      vehicleId: '',
-                      vehicleModel: '',
-                      images: [],
-                      imageSnapshotPresent: false,
-                      pdfImageUrl: null,
-                    }))
-                  }
-                  className={`${field} mt-1`}
-                >
-                  <option value="">Select Vehicle Type</option>
-                  {vehicleTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-slate-800">
-                Vehicle Model <span className="text-red-500">*</span>
-                <select
-                  aria-label="Vehicle model"
-                  value={vehicleDraft.vehicleId}
-                  disabled={!vehicleDraft.vehicleType || vehicleMasters.isPending}
-                  onChange={(event) => {
-                    const master = masters.find((entry) => entry.id === event.target.value);
-                    const snapshot = masterGallerySnapshot(
-                      master?.images,
-                      master?.name ?? 'Vehicle',
-                    );
-                    // Changing vehicle model resets manual description override and auto-fills from master
-                    vehicleDescriptionOverriddenRef.current = false;
-                    setVehicleDraft((current) => {
-                      const masterPrice = (master as unknown as { price?: number | null })?.price;
-                      const isEmpty = current.amount == null || Number(current.amount) === 0;
-                      const shouldPrefill =
-                        masterPrice != null && Number(masterPrice) > 0 && isEmpty;
-                      return {
-                        ...current,
-                        vehicleId: master?.id ?? '',
-                        vehicleModel: master?.name ?? '',
-                        description: master?.description ?? '',
-                        images: snapshot,
-                        imageSnapshotPresent: masterGalleryPresence(master),
-                        pdfImageUrl: snapshot[0]
-                          ? quotationSnapshotImageIdentity(snapshot[0])
-                          : null,
-                        ...(shouldPrefill ? { amount: Number(masterPrice) } : {}),
-                      };
-                    });
-                    if (master)
-                      void importMasterGalleryPreviews(master.id, snapshot, vehicleImageUrl).then(
-                        (images) => {
-                          setVehicleDraft((current) =>
-                            current.vehicleId === master.id
-                              ? {
-                                  ...current,
-                                  images: mergeMasterGalleryPreviews(current.images, images),
-                                }
-                              : current,
-                          );
-                        },
-                      );
-                  }}
-                  className={`${field} mt-1 disabled:bg-slate-100`}
-                >
-                  <option value="">Select Vehicle Model</option>
-                  {models.map((master) => (
-                    <option key={master.id} value={master.id}>
-                      {master.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-slate-800">
-                Usage / Duration
-                <input
-                  aria-label="Vehicle usage or duration"
-                  maxLength={2000}
-                  placeholder="e.g., Airport transfers & sightseeing"
-                  value={vehicleDraft.usage}
-                  onChange={(event) =>
-                    setVehicleDraft((current) => ({ ...current, usage: event.target.value }))
-                  }
-                  className={`${field} mt-1`}
-                />
-              </label>
+                  Section Title
+                  <input
+                    aria-label="Vehicle section title"
+                    maxLength={80}
+                    value={primary?.taxCategory ?? ''}
+                    onChange={(event) =>
+                      applyService(primaryIndex, { taxCategory: event.target.value || null })
+                    }
+                    className={`${field} mt-1`}
+                  />
+                </label>
               </div>
+            )}
+            {isVehicleSectionWise && primary && (
+              <div className={`${calculatedCard} flex items-center justify-between`}>
+                <span className={calculatedLabel}>Transportation Total</span>
+                <span className={calculatedValue}>
+                  {formatMoney(vehicleTotal)} {vehicleRows.length > 1 ? `· ${vehicleRows.length} vehicles` : ''}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => services.append(newVehicleServiceRow(services.fields.length + 1))}
+              >
+                <Plus className="h-4 w-4" /> Add Vehicle
+              </Button>
             </div>
-
-            <div>
-              <h3 className={`${subsectionHeadingMuted} mb-1`}>Description</h3>
-              <RichTextEditor
-                ariaLabel="Vehicle description"
-                value={vehicleDraft.description}
-                onChange={(html) => {
-                  vehicleDescriptionOverriddenRef.current = true;
-                  setVehicleDraft((current) => ({ ...current, description: html }));
-                }}
-              />
+            {vehicleRows.length === 0 && (
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-slate-500">
+                No vehicle added yet. Add the first vehicle below.
+              </p>
+            )}
+            <div className="space-y-4">
+              {vehicleRows.map(({ row, index }) => {
+                const vehicle = watchedServices?.[index] as unknown as QuotationVersionInput['services'][number] | undefined;
+                const vehicleType = (vehicle as unknown as { city?: string | null })?.city ?? '';
+                const vehicleId = (vehicle as unknown as { vehicleId?: string | null })?.vehicleId ?? '';
+                const vehicleModel = (vehicle as unknown as { name?: string | null })?.name ?? '';
+                const usage = (vehicle as unknown as { notes?: string | null })?.notes ?? '';
+                const description = (vehicle as unknown as { description?: string | null })?.description ?? '';
+                const amount = Number((vehicle as unknown as { sellingPrice?: number | null })?.sellingPrice ?? 0);
+                const pricingBasis = String((vehicle as unknown as { pricingBasis?: string | null })?.pricingBasis ?? 'PER_DAY');
+                const quantity = Number((vehicle as unknown as { quantity?: number | null })?.quantity ?? 1);
+                const sectionTitle = (vehicle as unknown as { taxCategory?: string | null })?.taxCategory ?? '';
+                const vehicleTypes = [...new Set(masters.map((m) => m.vehicleType).filter(Boolean) as string[])]
+                  .concat(
+                    vehicleType && !masters.some((m) => m.vehicleType === vehicleType) ? [vehicleType] : [],
+                  )
+                  .sort((a, b) => a.localeCompare(b));
+                const models = vehicleType ? masters.filter((m) => m.vehicleType === vehicleType) : [];
+                return (
+                  <article
+                    key={row.id}
+                    className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
+                  >
+                    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3">
+                      <h4 className={`${subsectionHeading} text-slate-800 normal-case tracking-normal`}>Vehicle</h4>
+                      <Button size="sm" variant="ghost" onClick={() => services.remove(index)}>
+                        <Trash2 className="h-4 w-4 text-red-600" /> Remove
+                      </Button>
+                    </header>
+                    <div className="space-y-4 p-4">
+                      {isVehicleSectionWise && (
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <label className="text-sm font-semibold text-slate-800">
+                            Rate
+                            <div className="mt-1 flex rounded-lg border border-slate-300 bg-card focus-within:ring-2 focus-within:ring-brand-500">
+                              <span className="flex items-center border-r px-3 text-sm text-slate-500">{currency}</span>
+                              <input
+                                aria-label={`Vehicle ${index + 1} amount`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={amount}
+                                onChange={(event) =>
+                                  applyService(index, { sellingPrice: Math.max(0, Number(event.target.value) || 0), unitSellingPrice: Math.max(0, Number(event.target.value) || 0) })
+                                }
+                                className="w-full rounded-r-lg bg-transparent px-3 py-2 text-sm outline-none"
+                              />
+                            </div>
+                          </label>
+                          <label className="text-sm font-semibold text-slate-800">
+                            Pricing Basis
+                            <select
+                              aria-label={`Vehicle ${index + 1} pricing basis`}
+                              value={pricingBasis}
+                              onChange={(event) => applyService(index, { pricingBasis: event.target.value })}
+                              className={`${field} mt-1`}
+                            >
+                              {VEHICLE_PRICING_BASES.map(([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="text-sm font-semibold text-slate-800">
+                            {pricingBasis === 'PER_HOUR'
+                              ? 'Hours'
+                              : pricingBasis === 'PER_TRANSFER'
+                                ? 'Transfers'
+                                : pricingBasis === 'PER_VEHICLE'
+                                  ? 'Vehicles'
+                                  : 'Days'}
+                            <input
+                              aria-label={`Vehicle ${index + 1} quantity`}
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={quantity}
+                              disabled={pricingBasis === 'FIXED'}
+                              onChange={(event) =>
+                                applyService(index, { quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) })
+                              }
+                              className={`${field} mt-1 disabled:bg-slate-100`}
+                            />
+                          </label>
+                        </div>
+                      )}
+                      {isVehicleSectionWise && (
+                        <div className={`${calculatedCard} text-sm`}>
+                          <p className={calculatedLabel}>Calculation</p>
+                          <p className="mt-1 text-slate-700">
+                            {formatMoney(amount)} × {pricingBasis === 'FIXED' ? 1 : quantity} ={' '}
+                            <span className={calculatedValue}>{formatMoney(amount * (pricingBasis === 'FIXED' ? 1 : quantity))}</span>
+                          </p>
+                        </div>
+                      )}
+                      <div>
+                        <p className={`${subsectionHeading} mb-3 border-b border-border/50 pb-1`}>Vehicle Details</p>
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <label className="text-sm font-semibold text-slate-800">
+                            Vehicle Type <span className="text-red-500">*</span>
+                            <select
+                              aria-label={`Vehicle ${index + 1} type`}
+                              value={vehicleType}
+                              onChange={(event) => {
+                                const newType = event.target.value;
+                                applyService(index, {
+                                  city: newType || null,
+                                  vehicleId: null,
+                                  name: '',
+                                  images: [],
+                                  imageSnapshotPresent: false,
+                                  pdfImageUrl: null,
+                                });
+                                vehicleDescriptionOverriddenRef.current.delete(index);
+                              }}
+                              className={`${field} mt-1`}
+                            >
+                              <option value="">Select Vehicle Type</option>
+                              {vehicleTypes.map((type) => (
+                                <option key={type} value={type}>
+                                  {type}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="text-sm font-semibold text-slate-800">
+                            Vehicle Model <span className="text-red-500">*</span>
+                            <select
+                              aria-label={`Vehicle ${index + 1} model`}
+                              value={vehicleId}
+                              disabled={!vehicleType || vehicleMasters.isPending}
+                              onChange={(event) => {
+                                const master = masters.find((e) => e.id === event.target.value);
+                                const snapshot = masterGallerySnapshot(master?.images, master?.name ?? 'Vehicle');
+                                vehicleDescriptionOverriddenRef.current.delete(index);
+                                const masterPrice = (master as unknown as { price?: number | null })?.price;
+                                const isEmpty = amount == null || Number(amount) === 0;
+                                const shouldPrefill = masterPrice != null && Number(masterPrice) > 0 && isEmpty;
+                                applyService(index, {
+                                  vehicleId: master?.id ?? null,
+                                  name: master?.name ?? '',
+                                  description: master?.description ?? null,
+                                  images: snapshot,
+                                  imageSnapshotPresent: masterGalleryPresence(master),
+                                  pdfImageUrl: snapshot[0] ? quotationSnapshotImageIdentity(snapshot[0]) : null,
+                                  ...(shouldPrefill ? { sellingPrice: Number(masterPrice), unitSellingPrice: Number(masterPrice) } : {}),
+                                });
+                                if (master)
+                                  void importMasterGalleryPreviews(master.id, snapshot, vehicleImageUrl).then((images) => {
+                                    if (form.getValues(`services.${index}.vehicleId`) !== master.id) return;
+                                    applyService(index, {
+                                      images: mergeMasterGalleryPreviews(
+                                        form.getValues(`services.${index}.images`) as QuotationImage[],
+                                        images,
+                                      ),
+                                    });
+                                  });
+                              }}
+                              className={`${field} mt-1 disabled:bg-slate-100`}
+                            >
+                              <option value="">Select Vehicle Model</option>
+                              {models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="text-sm font-semibold text-slate-800">
+                            Usage / Duration
+                            <input
+                              aria-label={`Vehicle ${index + 1} usage or duration`}
+                              maxLength={2000}
+                              placeholder="e.g., Airport transfers & sightseeing"
+                              value={usage}
+                              onChange={(event) => applyService(index, { notes: event.target.value || null })}
+                              className={`${field} mt-1`}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className={`${subsectionHeadingMuted} mb-1`}>Description</h3>
+                        <RichTextEditor
+                          ariaLabel={`Vehicle ${index + 1} description`}
+                          value={description}
+                          onChange={(html) => {
+                            vehicleDescriptionOverriddenRef.current.add(index);
+                            applyService(index, { description: html || null });
+                          }}
+                        />
+                      </div>
+                      <QuotationImageManager
+                        label="Vehicle Images"
+                        ariaPrefix={`vehicle-${index}`}
+                        images={(vehicle?.images ?? []) as QuotationImage[]}
+                        pdfImageUrl={vehicle?.pdfImageUrl}
+                        onMove={(imageIndex, direction) => moveServiceImage(index, imageIndex, direction)}
+                        onRemove={(imageIndex) => removeServiceImage(index, imageIndex)}
+                        onSelectPdf={(identity) => setServicePdfImage(index, identity)}
+                      />
+                    </div>
+                  </article>
+                );
+              })}
             </div>
-            <QuotationImageManager
-              label="Vehicle Images"
-              ariaPrefix="vehicle"
-              images={vehicleDraft.images}
-              pdfImageUrl={vehicleDraft.pdfImageUrl}
-              onMove={moveVehicleImage}
-              onRemove={removeVehicleImage}
-              onSelectPdf={(identity) =>
-                setVehicleDraft((current) => ({ ...current, pdfImageUrl: identity }))
-              }
-            />
           </>
         )}
       </div>
