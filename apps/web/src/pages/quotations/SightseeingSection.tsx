@@ -1151,9 +1151,9 @@ function DayCard({
                         <div className="flex flex-wrap gap-4 text-sm">
                           {(
                             [
+                              ['PRIVATE', 'Private Transfer'],
+                              ['SHARED', 'Shared Transfer'],
                               ['NO_TRANSFER', 'No Transfer'],
-                              ['INCLUDE_AT_HOTEL', 'Include At Hotel'],
-                              ['WITH_TRANSFER', 'With Transfer'],
                             ] as const
                           ).map(([value, label]) => (
                             <label key={value} className="flex items-center gap-2">

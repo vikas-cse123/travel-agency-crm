@@ -2398,12 +2398,6 @@ export function PublicQuotationPage() {
                             )}
                           </div>
 
-                          {(hotel.city || presentation?.country) && (
-                            <p className="mt-3 flex items-start gap-1.5 text-sm text-[#000000]">
-                              <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
-                              {[hotel.city, presentation?.country].filter(Boolean).join(', ')}
-                            </p>
-                          )}
                           {presentation?.address?.trim() && (
                             <p className="mt-1.5 text-sm text-[#000000]">
                               {presentation.address.trim()}
