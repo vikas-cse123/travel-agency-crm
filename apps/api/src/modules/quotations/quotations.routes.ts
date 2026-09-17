@@ -225,4 +225,10 @@ router.delete(
   validateRequest({ params: id }),
   asyncHandler(controller.archive),
 );
+router.delete(
+  '/:quotationId/permanent',
+  requirePermission(PERMISSIONS.QUOTATIONS_DELETE),
+  validateRequest({ params: id }),
+  asyncHandler(controller.permanentDelete),
+);
 export { router as quotationsRoutes };

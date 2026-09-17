@@ -21,9 +21,10 @@ import {
   TicketCheck,
   CarFront,
   RotateCcw,
+  Trash2,
   X,
 } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { labelForLookup, PERMISSIONS, validateQuotationPricing } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/Tooltip';
@@ -35,6 +36,9 @@ import {
   useQuotationAction,
   useSendQuotation,
 } from '@/features/quotations/quotations.api';
+import { apiClient } from '@/api/client';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { quotationKeys } from '@/features/quotations/quotations.api';
 import { WeblinkVisitors } from '@/features/quotations/WeblinkVisitors';
 import { resolveTravelDates } from '@/features/quotations/travel-dates';
 import { formatDateTime12Hour } from '@/utils/dateTime';
@@ -57,11 +61,26 @@ function downloadPdf(url: string, fileName?: string) {
 const field = 'w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm';
 export function QuotationDetailsPage() {
   const { quotationId = '' } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { hasPermission, user } = useAuth();
   const query = useQuotation(quotationId);
   const action = useQuotationAction(quotationId);
   const generatePdf = useGenerateQuotationPdf(quotationId);
   const send = useSendQuotation(quotationId);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const deleteMutation = useMutation({
+    mutationFn: () => apiClient.delete(`/quotations/${quotationId}/permanent`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: quotationKeys.quotations });
+      void queryClient.invalidateQueries({ queryKey: quotationKeys.quotation(quotationId) });
+      navigate('/quotations', { state: { successMessage: 'Quotation permanently deleted.' } });
+    },
+    onError: (error: unknown) => {
+      setDeleteError(error instanceof Error && error.message ? error.message : 'Unable to delete quotation. Please try again.');
+    },
+  });
   const [sendOpen, setSendOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [includePdf, setIncludePdf] = useState(true);
@@ -453,8 +472,29 @@ export function QuotationDetailsPage() {
               Send
             </Button>
           )}
+          {hasPermission(PERMISSIONS.QUOTATIONS_DELETE) && (
+            <Button
+              variant="secondary"
+              className="text-red-700 hover:bg-red-50 hover:text-red-800"
+              onClick={() => {
+                setDeleteError('');
+                setDeleteConfirmOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete quotation
+            </Button>
+          )}
         </div>
       </header>
+      {deleteError && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          {deleteError}
+        </div>
+      )}
       {actionError && (
         <div
           role="alert"
@@ -1187,6 +1227,44 @@ export function QuotationDetailsPage() {
                   </Tooltip>
                 </TooltipProvider>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-quotation-title"
+            className="w-full max-w-lg rounded-xl bg-card p-6 shadow-xl"
+          >
+            <h2 id="delete-quotation-title" className="text-lg font-semibold text-red-700">
+              Delete quotation permanently?
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              This will permanently delete quotation <strong>{q.quotationNumber}</strong> and all its versions, documents and files from storage. This action cannot be undone.
+            </p>
+            <p className="mt-2 text-sm font-medium text-red-700">Deletion is permanent. This cannot be undone.</p>
+            {deleteError && (
+              <p role="alert" className="mt-3 text-sm text-red-700">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="secondary" disabled={deleteMutation.isPending} onClick={() => setDeleteConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="secondary"
+                className="bg-red-600 text-white hover:bg-red-700"
+                isLoading={deleteMutation.isPending}
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate()}
+              >
+                <Trash2 className="h-4 w-4" />
+                {deleteMutation.isPending ? 'Deleting…' : 'Delete permanently'}
+              </Button>
             </div>
           </div>
         </div>

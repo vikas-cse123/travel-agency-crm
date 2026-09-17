@@ -1,5 +1,5 @@
 import { FilePlus2, Search } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { Pagination } from '@/components/ui/Pagination';
@@ -10,6 +10,8 @@ const field = 'h-10 rounded-lg border border-slate-300 bg-card px-3 text-sm';
 export function QuotationsPage() {
   const { hasPermission } = useAuth();
   const [params, setParams] = useSearchParams();
+  const location = useLocation() as { state?: { successMessage?: string } };
+  const successMessage = location.state?.successMessage;
   const list = useQuotations(params);
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -26,6 +28,11 @@ export function QuotationsPage() {
   };
   return (
     <div className="space-y-5">
+      {successMessage && (
+        <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {successMessage}
+        </div>
+      )}
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Customer quotations</h1>

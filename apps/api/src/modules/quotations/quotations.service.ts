@@ -65,6 +65,7 @@ import {
   type StoredMasterImage,
 } from '../masters/master-images.js';
 import { getSystemCompanyId } from '../masters/master-visibility.js';
+import { logger } from '../../config/logger.js';
 
 const userSelect = { id: true, fullName: true, username: true } as const;
 
@@ -2515,6 +2516,87 @@ export const quotationsService = {
       });
     });
     return { id, archived: true };
+  },
+
+  async permanentDelete(auth: AuthContext, id: string, context: RequestContext) {
+    // Idempotency: if already hard-deleted, return success
+    const existing = await prisma.quotation.findFirst({
+      where: { id, companyId: auth.companyId },
+      include: { booking: { select: { id: true } } },
+    });
+    if (!existing) {
+      return { id, deleted: true, alreadyDeleted: true };
+    }
+    // Prevent deletion if linked booking exists – data safety
+    if (existing.booking) {
+      throw new ConflictError('Cannot delete quotation with an associated booking.');
+    }
+    // Also block accepted quotations for safety, mirroring archive
+    if (existing.status === 'ACCEPTED') {
+      throw new ConflictError('Accepted quotations cannot be deleted.');
+    }
+
+    // Collect all S3 objectKeys for this quotation (exact ownership)
+    const documents = await prisma.quotationDocument.findMany({
+      where: { companyId: auth.companyId, quotationId: id },
+      select: { objectKey: true, bucket: true },
+    });
+    const s3Keys = documents
+      .map((doc) => doc.objectKey?.trim())
+      .filter((key): key is string => Boolean(key))
+      // Safety: only delete keys that are strictly under this quotation's prefix
+      .filter((key) => key.startsWith(`companies/${auth.companyId}/quotations/${id}/`));
+
+    // Attempt S3 deletions first – if any fail, abort and keep DB intact
+    const s3Failures: string[] = [];
+    for (const key of s3Keys) {
+      try {
+        await storageService.deleteObject(key);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error({ key, reason: message, quotationId: id }, 'S3 delete failed during permanent quotation deletion');
+        s3Failures.push(key);
+      }
+    }
+    if (s3Failures.length > 0) {
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Quotation not deleted. Please retry.`,
+      );
+    }
+
+    // All S3 succeeded – proceed to hard-delete DB records in correct FK order
+    const versionIds = (
+      await prisma.quotationVersion.findMany({
+        where: { companyId: auth.companyId, quotationId: id },
+        select: { id: true },
+      })
+    ).map((v) => v.id);
+
+    await prisma.$transaction(async (tx) => {
+      // Child tables first
+      if (versionIds.length > 0) {
+        await tx.quotationVersionItineraryDay.deleteMany({ where: { quotationVersionId: { in: versionIds } } });
+        await tx.quotationVersionHotelOption.deleteMany({ where: { quotationVersionId: { in: versionIds } } });
+        await tx.quotationVersionService.deleteMany({ where: { quotationVersionId: { in: versionIds } } });
+        await tx.quotationVersionInclusion.deleteMany({ where: { quotationVersionId: { in: versionIds } } });
+        await tx.quotationVersionExclusion.deleteMany({ where: { quotationVersionId: { in: versionIds } } });
+        await tx.quotationVersionTerm.deleteMany({ where: { quotationVersionId: { in: versionIds } } });
+      }
+      await tx.quotationWeblinkView.deleteMany({ where: { companyId: auth.companyId, quotationId: id } });
+      await tx.quotationEmailLog.deleteMany({ where: { companyId: auth.companyId, quotationId: id } });
+      await tx.quotationDocument.deleteMany({ where: { companyId: auth.companyId, quotationId: id } });
+      await tx.queryFollowUp.deleteMany({ where: { companyId: auth.companyId, quotationId: id } });
+      await tx.quotationVersion.deleteMany({ where: { companyId: auth.companyId, quotationId: id } });
+      await tx.quotation.delete({ where: { id } });
+      await tx.activityLog.create({
+        data: quotationAudit(auth, 'QUOTATION_DELETED', 'Quotation', id, context),
+      });
+    });
+
+    // Post-transaction: ensure any remaining documents are hard-deleted (already done)
+    // No further S3 work – all keys already removed
+
+    return { id, deleted: true };
   },
 
   async versions(auth: AuthContext, id: string) {

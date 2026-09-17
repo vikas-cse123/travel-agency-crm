@@ -41,6 +41,13 @@ export const quotationsController = {
       'Quotation archived.',
     );
   },
+  async permanentDelete(req: Request, res: Response) {
+    sendSuccess(
+      res,
+      await quotationsService.permanentDelete(auth(req), req.params.quotationId!, context(req)),
+      'Quotation permanently deleted.',
+    );
+  },
   async versions(req: Request, res: Response) {
     sendSuccess(res, await quotationsService.versions(auth(req), req.params.quotationId!));
   },

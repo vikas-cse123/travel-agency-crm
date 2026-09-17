@@ -2104,9 +2104,11 @@ export function QuotationBuilderPage() {
     enabledByAuto: false,
   });
   const hotelPreviewImportsRef = useRef<Set<string>>(new Set());
-  // Automatic vehicle prefill runs once per version (new quotations only), so
-  // a removed prefilled vehicle never comes back on its own.
-  const vehiclePrefillDoneRef = useRef<string | null>(null);
+  // Automatic vehicle prefill: for NEW quotations, each selected destination's
+  // active vehicles are added once (per destination per version), without
+  // duplicates and without re-adding a manually removed vehicle for that
+  // same destination. Adding a new destination later still prefills its vehicles.
+  const vehiclePrefillProcessedRef = useRef<Map<string, Set<string>>>(new Map());
   const [vehiclePrefillDest, setVehiclePrefillDest] = useState('');
   // Manual cruise cabin-rate overrides per service row index (sellingPrice). Set when user types, cleared on room/cruise change.
   const cruisePriceOverridesRef = useRef<Set<number>>(new Set());
@@ -2361,6 +2363,43 @@ export function QuotationBuilderPage() {
     }
     return ids;
   }, [destinationMasters.data?.data, quotation.data?.query?.itinerary]);
+  // Vehicle prefill must react to destinations selected in the *quotation builder*
+  // itself (itinerary / hotels / destinationSummary), not only the static lead.
+  // This powers "select destination → vehicles appear" without manual Add.
+  const watchedFormItinerary = useWatch({ control: form.control, name: 'itinerary' });
+  const watchedFormHotels = useWatch({ control: form.control, name: 'hotels' });
+  const watchedDestinationSummary = useWatch({ control: form.control, name: 'destinationSummary' });
+  const vehicleEffectiveDestinationIds = useMemo(() => {
+    const ids = new Set<string>(destinationIdSet);
+    if (!destinationMasters.data?.data) return ids;
+    const byName = new Map<string, string>();
+    for (const dest of destinationMasters.data.data)
+      byName.set(dest.name.trim().toLowerCase(), dest.id);
+    for (const row of (watchedFormItinerary ?? []) as Array<Record<string, unknown>>) {
+      for (const raw of [(row as { country?: string })?.country, (row as { destination?: string })?.destination]) {
+        const key = String(raw ?? '').trim().toLowerCase();
+        if (!key) continue;
+        const id = byName.get(key);
+        if (id) ids.add(id);
+      }
+    }
+    for (const row of (watchedFormHotels ?? []) as Array<Record<string, unknown>>) {
+      const key = String((row as { city?: string })?.city ?? '').trim().toLowerCase();
+      if (!key) continue;
+      const id = byName.get(key);
+      if (id) ids.add(id);
+    }
+    const summary = String(watchedDestinationSummary ?? '').trim();
+    if (summary) {
+      for (const part of summary.split(/[•,>/→|-]+/)) {
+        const key = part.trim().toLowerCase();
+        if (!key) continue;
+        const id = byName.get(key);
+        if (id) ids.add(id);
+      }
+    }
+    return ids;
+  }, [destinationIdSet, destinationMasters.data?.data, watchedFormItinerary, watchedFormHotels, watchedDestinationSummary]);
   // Resolved Master Destination name (country) from the lead itinerary — the
   // sightseeing feed resolves activities by destination, while the quotation's
   // destinationSummary often holds the city (e.g. "Kuala Lumpur").
@@ -3344,21 +3383,34 @@ export function QuotationBuilderPage() {
     if (placeMissingVehicles(missing) > 0) setVehiclePrefillDest('');
   };
 
-  // Automatic vehicle prefill for brand-new quotations: one independent row
-  // per vehicle assigned to each lead destination. Saved vehicle rows are
-  // never rewritten, and removals stick (one attempt per version).
+  // Automatic vehicle prefill for brand-new quotations: every matching ACTIVE
+  // vehicle for each selected destination is added automatically, without
+  // requiring the "Vehicles for destination…" picker or "Add". Incremental:
+  // adding a new destination later still prefills its vehicles, without
+  // duplicating existing ones and without re-adding a manually removed row
+  // for an already-processed destination.
   useEffect(() => {
     if (!version) return;
-    if (vehiclePrefillDoneRef.current === version.id) return;
     if (!vehicleMasters.data || !destinationMasters.data) return;
     const savedVehicleCount = (version.services ?? []).filter(
       (service) => service.serviceType === 'VEHICLE_TRANSFER',
     ).length;
     if (!shouldAutoPrefillVehicles(savedVehicleCount)) {
-      vehiclePrefillDoneRef.current = version.id;
+      // Existing saved quotation (has vehicles) – never auto-prefill.
+      // Record that this version has been evaluated so we don't retry.
+      const set = vehiclePrefillProcessedRef.current.get(version.id) ?? new Set<string>();
+      for (const id of vehicleEffectiveDestinationIds) set.add(id);
+      vehiclePrefillProcessedRef.current.set(version.id, set);
       return;
     }
     if (initializedFormVersionId !== version.id) return;
+    // Preserve hidden-section behavior: don't prefill while the Vehicle
+    // section is still excluded. Defer until the user enables it; do not
+    // mark destinations as processed while hidden.
+    if (excluded.vehicle) return;
+    const processed = vehiclePrefillProcessedRef.current.get(version.id) ?? new Set<string>();
+    const newDestinationIds = [...vehicleEffectiveDestinationIds].filter((id) => !processed.has(id));
+    if (!newDestinationIds.length) return;
     const masters = (vehicleMasters.data?.data ?? []) as PrefillVehicleMaster[];
     const present = new Set(
       (
@@ -3372,7 +3424,7 @@ export function QuotationBuilderPage() {
     );
     const missing: PrefillVehicleMaster[] = [];
     const seen = new Set(present);
-    for (const destinationId of destinationIdSet) {
+    for (const destinationId of newDestinationIds) {
       for (const master of matchVehiclesForDestination(destinationId, masters)) {
         if (seen.has(master.id)) continue;
         seen.add(master.id);
@@ -3380,9 +3432,13 @@ export function QuotationBuilderPage() {
       }
     }
     if (missing.length) placeMissingVehicles(missing);
-    vehiclePrefillDoneRef.current = version.id;
+    // Mark these destinationIds as processed regardless of whether they had
+    // vehicles – a manually removed vehicle for that destination must not
+    // reappear automatically.
+    for (const id of newDestinationIds) processed.add(id);
+    vehiclePrefillProcessedRef.current.set(version.id, processed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, initializedFormVersionId, vehicleMasters.data, destinationMasters.data, destinationIdSet, form]);
+  }, [version, initializedFormVersionId, vehicleMasters.data, destinationMasters.data, vehicleEffectiveDestinationIds, excluded.vehicle, form]);
 
   const createHotelRow = (
     sequence: number,
@@ -3979,6 +4035,56 @@ export function QuotationBuilderPage() {
     }
     if (key === 'vehicle') {
       if (!next) {
+        // Turning Vehicle ON: for NEW quotations (no saved vehicles) automatically
+        // prefill every matching ACTIVE vehicle for the currently selected
+        // destinations, without requiring the "Vehicles for destination…" picker.
+        // Incremental: only new destinationIds not yet processed for this version.
+        const savedVehicleCountForToggle = (version?.services ?? []).filter(
+          (service) => service.serviceType === 'VEHICLE_TRANSFER',
+        ).length;
+        const isNewForPrefill = shouldAutoPrefillVehicles(savedVehicleCountForToggle);
+        if (isNewForPrefill && vehicleMasters.data && destinationMasters.data) {
+          const effectiveIds = [...vehicleEffectiveDestinationIds];
+          if (effectiveIds.length) {
+            const versionId = version?.id ?? null;
+            const processed = versionId
+              ? (vehiclePrefillProcessedRef.current.get(versionId) ?? new Set<string>())
+              : new Set<string>();
+            const newIds = effectiveIds.filter((id) => !processed.has(id));
+            // First enable after deferral: processed is empty, so newIds == effectiveIds.
+            const idsToProcess = newIds.length ? newIds : [];
+            if (idsToProcess.length) {
+              const masters = (vehicleMasters.data?.data ?? []) as PrefillVehicleMaster[];
+              const present = new Set(
+                (
+                  ((form.getValues('services') ?? []) as Array<{
+                    serviceType?: string;
+                    vehicleId?: string | null;
+                  }>) ?? []
+                )
+                  .filter((row) => row.serviceType === 'VEHICLE_TRANSFER' && row.vehicleId)
+                  .map((row) => row.vehicleId as string),
+              );
+              const missing: PrefillVehicleMaster[] = [];
+              const seen = new Set(present);
+              for (const destinationId of idsToProcess) {
+                for (const master of matchVehiclesForDestination(destinationId, masters)) {
+                  if (seen.has(master.id)) continue;
+                  seen.add(master.id);
+                  missing.push(master);
+                }
+              }
+              if (missing.length) {
+                placeMissingVehicles(missing);
+                for (const id of idsToProcess) processed.add(id);
+                if (versionId) vehiclePrefillProcessedRef.current.set(versionId, processed);
+                return;
+              }
+              for (const id of idsToProcess) processed.add(id);
+              if (versionId) vehiclePrefillProcessedRef.current.set(versionId, processed);
+            }
+          }
+        }
         const vehicleIndexes = (services.fields ?? [])
           .map((_, index) => index)
           .filter((index) => watchedServices?.[index]?.serviceType === 'VEHICLE_TRANSFER');

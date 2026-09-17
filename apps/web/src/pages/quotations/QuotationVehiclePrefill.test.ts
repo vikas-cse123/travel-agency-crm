@@ -150,4 +150,32 @@ describe('buildVehiclePrefillRows', () => {
   it('returns [] for no destinations', () => {
     expect(buildVehiclePrefillRows([], [innova()], 1, new Set())).toEqual([]);
   });
+
+  it('REGRESSION: select Singapore → A+B appear without Add, then add Dubai → C appears without duplicating A/B', () => {
+    const SINGAPORE = 'dest-singapore';
+    const DUBAI = 'dest-dubai';
+    const vehicleA = master('v-a', 'Vehicle A', [SINGAPORE]);
+    const vehicleB = master('v-b', 'Vehicle B', [SINGAPORE]);
+    const vehicleC = master('v-c', 'Vehicle C', [DUBAI]);
+    const masters = [vehicleA, vehicleB, vehicleC];
+
+    // Step 1: NEW quotation, select Singapore → A and B must appear automatically
+    const firstBatch = buildVehiclePrefillRows([SINGAPORE], masters, 1, new Set());
+    expect(firstBatch.map((r) => r.vehicleId).sort()).toEqual(['v-a', 'v-b']);
+    expect(firstBatch.map((r) => r.name).sort()).toEqual(['Vehicle A', 'Vehicle B']);
+    // Vehicle C must NOT appear for Singapore
+    expect(firstBatch.some((r) => r.vehicleId === 'v-c')).toBe(false);
+    // No manual Add was required – rows are produced purely from destination selection
+
+    // Step 2: Add Dubai as another destination → C must appear, A/B must not duplicate
+    const presentAfterFirst = new Set(firstBatch.map((r) => r.vehicleId as string));
+    const secondBatch = buildVehiclePrefillRows([SINGAPORE, DUBAI], masters, 3, presentAfterFirst);
+    expect(secondBatch.map((r) => r.vehicleId)).toEqual(['v-c']);
+    expect(secondBatch[0]?.name).toBe('Vehicle C');
+
+    // Final state: all three vehicles present exactly once
+    const allIds = [...presentAfterFirst, ...secondBatch.map((r) => r.vehicleId as string)];
+    expect(new Set(allIds).size).toBe(3);
+    expect(allIds.sort()).toEqual(['v-a', 'v-b', 'v-c']);
+  });
 });
