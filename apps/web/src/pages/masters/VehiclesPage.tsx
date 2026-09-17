@@ -236,6 +236,11 @@ export function VehiclesPage() {
                       <td className="px-4 py-3 font-semibold text-slate-900">
                         {vehicle.name}
                         {vehicle.isGlobal && <GlobalBadge />}
+                        {(vehicle.destinations?.length ?? 0) > 0 && (
+                          <span className="mt-1 block text-xs font-normal text-slate-500">
+                            {(vehicle.destinations ?? []).map((d) => d.name).join(' · ')}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{vehicle.vehicleType}</td>
                       <td className="px-4 py-3 text-slate-700">
@@ -311,6 +316,11 @@ export function VehiclesPage() {
                     <p className="text-xs text-slate-500">
                       {vehicle.vehicleType}
                       {vehicle.capacity != null ? ` · ${vehicle.capacity} persons` : ''}
+                      {(vehicle.destinations?.length ?? 0) > 0 && (
+                        <span className="block">
+                          {(vehicle.destinations ?? []).map((d) => d.name).join(' · ')}
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">

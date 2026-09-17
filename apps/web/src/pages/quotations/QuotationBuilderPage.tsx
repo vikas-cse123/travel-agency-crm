@@ -774,7 +774,7 @@ export function resolveCruiseCabinPrice(
   return room.price != null ? Number(room.price) : null;
 }
 
-type HotelInputRow = QuotationVersionInput['hotels'][number];
+export type HotelInputRow = QuotationVersionInput['hotels'][number];
 type HotelRoomLineInput = HotelInputRow['roomLines'][number];
 type HotelMealPlanLineInput = HotelInputRow['mealPlanLines'][number];
 
@@ -1527,19 +1527,35 @@ const isHotelStay = (city: string | null | undefined): boolean => {
   return key.length > 0 && !NON_HOTEL_CITIES.has(key);
 };
 
-/** The active default hotel matching a row's city/destination, if any. */
-const matchDefaultHotel = (rowCity: string, masters: DefaultHotelMaster[]) => {
+/**
+ * Defaults are destination-scoped (up to 10 per destination). Returns every
+ * active default hotel for a row's city/destination: exact city matches first,
+ * then destination matches, de-duplicated and sorted by name for a stable
+ * order. Matching is always exact (never substring) so hotels from other
+ * destinations are never mixed in.
+ */
+export function matchDefaultHotels(rowCity: string, masters: DefaultHotelMaster[]) {
   const city = rowCity.trim().toLowerCase();
-  if (!city) return undefined;
+  if (!city) return [];
   const defaults = masters.filter((hotel) => hotel.status === 'ACTIVE' && hotel.isDefaultForCity);
-  // Prefer an exact city match, then destination match — never a substring match
-  // that could pick a default hotel from a different city.
-  return (
-    defaults.find((hotel) => hotel.city.name.trim().toLowerCase() === city) ??
-    defaults.find((hotel) => hotel.destination.name.trim().toLowerCase() === city) ??
-    undefined
-  );
-};
+  const byId = new Map<string, DefaultHotelMaster>();
+  for (const hotel of defaults) {
+    if (hotel.city.name.trim().toLowerCase() === city) byId.set(hotel.id, hotel);
+  }
+  for (const hotel of defaults) {
+    if (hotel.destination.name.trim().toLowerCase() === city) byId.set(hotel.id, hotel);
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Automatic default-hotel prefill applies to brand-new quotations only.
+ * Saved snapshots are never rewritten: editing, reopening or loading an
+ * existing quotation must not inject newly-marked defaults.
+ */
+export function shouldAutoPrefillHotels(savedHotelCount: number): boolean {
+  return savedHotelCount === 0;
+}
 
 /** The best available active hotel for a city (first by name). */
 const matchBestCityHotel = (city: string, masters: DefaultHotelMaster[]) => {
@@ -1553,39 +1569,155 @@ const matchBestCityHotel = (city: string, masters: DefaultHotelMaster[]) => {
   return active[0];
 };
 
+/** Map one stay row onto one default hotel master (same mapping as manual selection). */
+function mapRowToDefaultHotel(
+  row: HotelInputRow,
+  selected: DefaultHotelMaster | undefined,
+): HotelInputRow {
+  const cityName = (row.city ?? '').trim();
+  const images = masterGallerySnapshot(selected?.images, selected?.name ?? 'Hotel');
+  return {
+    ...row,
+    hotelId: selected?.id ?? null,
+    hotelRoomTypeId: null,
+    hotelMealPlanId: null,
+    hotelName: selected?.name ?? row.hotelName ?? '',
+    city: selected ? selected.city.name : cityName,
+    category: selected?.starCategory ? `${selected.starCategory} Star` : null,
+    images,
+    imageSnapshotPresent: masterGalleryPresence(selected),
+    pdfImageUrl: images[0] ? quotationSnapshotImageIdentity(images[0]) : null,
+  };
+}
+
 /**
- * Map lead-generated hotel rows through their destination's default hotel,
- * then fall back to the best available hotel for each city. Rows with no hotel
- * in the city keep their city/dates but have no hotel selected.
+ * Expand lead-generated hotel rows through their destinations' default
+ * hotels: one stay row per default hotel (up to 10 per destination), each
+ * inheriting the stay's dates/nights/rooms. Rows for destinations without
+ * defaults keep the legacy single-row behavior (best hotel or empty), and a
+ * destination already covered by an earlier row falls back to a single
+ * mapping so stays are never dropped and hotels never duplicated.
  */
-const autoPrefillLeadRows = (
+export function expandDefaultHotelRows(
   rows: HotelInputRow[],
   masters: DefaultHotelMaster[],
-): HotelInputRow[] => {
+): HotelInputRow[] {
   if (!rows.length) return rows;
+  const addedHotelIds = new Set<string>();
+  for (const row of rows) {
+    if (row.hotelId) addedHotelIds.add(row.hotelId);
+  }
   const built: HotelInputRow[] = [];
   for (const row of rows) {
     const cityName = (row.city ?? '').trim();
     if (!cityName) continue;
-    const defaultHotel = matchDefaultHotel(cityName, masters);
-    const bestHotel = defaultHotel ?? matchBestCityHotel(cityName, masters);
-    const selected = bestHotel;
-    const images = masterGallerySnapshot(selected?.images, selected?.name ?? 'Hotel');
-    built.push({
-      ...row,
-      hotelId: selected?.id ?? null,
-      hotelRoomTypeId: null,
-      hotelMealPlanId: null,
-      hotelName: selected?.name ?? row.hotelName ?? '',
-      city: selected ? selected.city.name : cityName,
-      category: selected?.starCategory ? `${selected.starCategory} Star` : null,
-      images,
-      imageSnapshotPresent: masterGalleryPresence(selected),
-      pdfImageUrl: images[0] ? quotationSnapshotImageIdentity(images[0]) : null,
-    });
+    const defaults = matchDefaultHotels(cityName, masters);
+    const missing = defaults.filter((hotel) => !addedHotelIds.has(hotel.id));
+    if (missing.length) {
+      for (const hotel of missing) {
+        addedHotelIds.add(hotel.id);
+        built.push(mapRowToDefaultHotel(row, hotel));
+      }
+      continue;
+    }
+    if (defaults.length) {
+      built.push(mapRowToDefaultHotel(row, defaults[0]));
+      continue;
+    }
+    const bestHotel = matchBestCityHotel(cityName, masters);
+    built.push(mapRowToDefaultHotel(row, bestHotel));
   }
   return built;
-};
+}
+
+/** Vehicle master shape needed for destination prefill (subset of useVehicles rows). */
+export interface PrefillVehicleMaster {
+  id: string;
+  name: string;
+  status: string;
+  vehicleType: string;
+  description: string | null;
+  price?: number | null;
+  images: MasterImageMeta[];
+  destinations?: Array<{ id: string; name: string }>;
+}
+
+/**
+ * Every active vehicle assigned to a destination (stable destination-ID
+ * match), sorted by name. No limit on matches: the 10-cap constrains
+ * assignments per vehicle, never vehicles per destination.
+ */
+export function matchVehiclesForDestination(
+  destinationId: string,
+  masters: PrefillVehicleMaster[],
+): PrefillVehicleMaster[] {
+  if (!destinationId) return [];
+  return masters
+    .filter(
+      (master) =>
+        master.status === 'ACTIVE' &&
+        (master.destinations ?? []).some((destination) => destination.id === destinationId),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Vehicle prefill applies to brand-new quotations; saved rows are never rewritten. */
+export function shouldAutoPrefillVehicles(savedVehicleCount: number): boolean {
+  return savedVehicleCount === 0;
+}
+
+/** Patch mapping one vehicle master onto a service row (same as manual selection). */
+function vehicleRowPatch(master: PrefillVehicleMaster): Record<string, unknown> {
+  const images = masterGallerySnapshot(master.images, master.name);
+  return {
+    city: master.vehicleType || null,
+    vehicleId: master.id,
+    name: master.name,
+    description: master.description ?? null,
+    images,
+    imageSnapshotPresent: masterGalleryPresence(master),
+    pdfImageUrl: images[0] ? quotationSnapshotImageIdentity(images[0]) : null,
+    ...(master.price != null && Number(master.price) > 0
+      ? { sellingPrice: Number(master.price) }
+      : {}),
+  };
+}
+
+/** One independent prefilled vehicle entry for a destination's section. */
+export function mapMasterToVehicleRow(
+  master: PrefillVehicleMaster,
+  sequence: number,
+): QuotationVersionInput['services'][number] {
+  return {
+    ...newVehicleServiceRow(sequence),
+    ...vehicleRowPatch(master),
+  } as QuotationVersionInput['services'][number];
+}
+
+/**
+ * Build prefill rows for destinations in order: every matching vehicle not
+ * already present (stable vehicle-ID dedupe across destinations, so a vehicle
+ * assigned to several selected destinations appears once). Existing rows are
+ * never touched.
+ */
+export function buildVehiclePrefillRows(
+  destinationIds: string[],
+  masters: PrefillVehicleMaster[],
+  startSequence: number,
+  existingVehicleIds: Set<string>,
+): QuotationVersionInput['services'][number][] {
+  const rows: QuotationVersionInput['services'][number][] = [];
+  const seen = new Set(existingVehicleIds);
+  let sequence = startSequence;
+  for (const destinationId of destinationIds) {
+    for (const master of matchVehiclesForDestination(destinationId, masters)) {
+      if (seen.has(master.id)) continue;
+      seen.add(master.id);
+      rows.push(mapMasterToVehicleRow(master, sequence++));
+    }
+  }
+  return rows;
+}
 
 /** A clean, empty Cruise service row; the section title defaults to "Cruise Details". */
 const newCruiseServiceRow = (sequence: number) => ({
@@ -1972,6 +2104,10 @@ export function QuotationBuilderPage() {
     enabledByAuto: false,
   });
   const hotelPreviewImportsRef = useRef<Set<string>>(new Set());
+  // Automatic vehicle prefill runs once per version (new quotations only), so
+  // a removed prefilled vehicle never comes back on its own.
+  const vehiclePrefillDoneRef = useRef<string | null>(null);
+  const [vehiclePrefillDest, setVehiclePrefillDest] = useState('');
   // Manual cruise cabin-rate overrides per service row index (sellingPrice). Set when user types, cleared on room/cruise change.
   const cruisePriceOverridesRef = useRef<Set<number>>(new Set());
   // Vehicle description manual override per vehicle index – set when user edits, cleared when vehicle model changes
@@ -2733,7 +2869,7 @@ export function QuotationBuilderPage() {
         ...row,
         date: row.date ? new Date(row.date) : null,
       })),
-      hotels: version.hotels.length
+      hotels: !shouldAutoPrefillHotels(version.hotels.length)
         ? version.hotels.map((row, index) => {
             const matchingStay =
               leadHotelRows.find(
@@ -2781,7 +2917,9 @@ export function QuotationBuilderPage() {
                 (version.hotels.length === 1 ? (version.hotelDetails?.pdfImageUrl ?? null) : null),
             } as unknown as HotelInputRow);
           })
-        : autoPrefillLeadRows(leadHotelRows, hotelMasters.data?.data ?? []).map(withSynthesizedLines),
+        : expandDefaultHotelRows(leadHotelRows, hotelMasters.data?.data ?? []).map(
+            withSynthesizedLines,
+          ),
       services: version.services.map((row) => {
         const base = {
           serviceType: row.serviceType as ServiceType,
@@ -2845,8 +2983,8 @@ export function QuotationBuilderPage() {
     // section included unless the user explicitly turned it off. A saved
     // quotation's `hotelDetails.include` is authoritative (an explicitly
     // excluded hotel stays excluded).
-    const prefilledHotelRows = !version.hotels.length
-      ? autoPrefillLeadRows(leadHotelRows, hotelMasters.data?.data ?? [])
+    const prefilledHotelRows = shouldAutoPrefillHotels(version.hotels.length)
+      ? expandDefaultHotelRows(leadHotelRows, hotelMasters.data?.data ?? [])
       : [];
     const savedHotelInclude = version.hotelDetails?.include ?? true;
     if (savedHotelInclude && !autoHotelRef.current.userToggledHotel) {
@@ -3065,33 +3203,25 @@ export function QuotationBuilderPage() {
     form.setValue(`services.${serviceIndex}.pdfImageUrl`, identity, { shouldDirty: true });
 
   // Prefill default hotels for untouched hotel rows that appear after
-  // initialization (e.g. "Add Hotel"), without ever touching a row the user
-  // has selected or edited.
+  // initialization (e.g. "Add Hotel" for a newly added destination), without
+  // ever touching a row the user has selected or edited. Every default hotel
+  // of the destination gets its own stay; rows already carrying one are left
+  // alone so hotels are never duplicated.
   useEffect(() => {
     const state = autoHotelRef.current;
     if (state.userToggledHotel) return;
     if (!hotelMasters.data) return;
     // Automatic prefill only applies to brand-new quotations; saved snapshots
     // are never rewritten.
-    if ((version?.hotels?.length ?? 0) > 0) return;
+    if (!shouldAutoPrefillHotels(version?.hotels?.length ?? 0)) return;
     const rows = watchedHotels ?? [];
+    const masters = hotelMasters.data?.data ?? [];
     let matched = false;
-    rows.forEach((row, index) => {
-      if (row.hotelId || row.hotelName?.trim()) return;
-      // A hotel for this destination already exists → no duplicate default.
-      const city = (row.city ?? '').trim().toLowerCase();
-      const covered = city
-        ? rows.some(
-            (other, otherIndex) =>
-              otherIndex !== index &&
-              Boolean(other.hotelId) &&
-              (other.city ?? '').trim().toLowerCase() === city,
-          )
-        : false;
-      if (covered) return;
-      const defaultHotel = matchDefaultHotel(row.city ?? '', hotelMasters.data?.data ?? []);
-      if (!defaultHotel) return;
-      matched = true;
+    let nextSequence = hotels.fields.length + 1;
+    const presentHotelIds = new Set(
+      rows.map((row) => row.hotelId).filter((id): id is string => Boolean(id)),
+    );
+    const fillRowWithDefault = (index: number, row: HotelInputRow, defaultHotel: DefaultHotelMaster) => {
       const images = masterGallerySnapshot(defaultHotel.images, defaultHotel.name);
       const matchedRate = hotelRateForDate(defaultHotel as never, row.checkInDate);
       const price = matchedRate != null && Number(matchedRate) > 0 ? Number(matchedRate) : null;
@@ -3118,12 +3248,141 @@ export function QuotationBuilderPage() {
         if (sectionEmpty)
           form.setValue('hotelDetails.amount', price as never, { shouldDirty: true });
       }
+      presentHotelIds.add(defaultHotel.id);
+    };
+    rows.forEach((row, index) => {
+      if (row.hotelId || row.hotelName?.trim()) return;
+      const cityName = (row.city ?? '').trim();
+      if (!cityName) return;
+      const defaults = matchDefaultHotels(cityName, masters);
+      if (!defaults.length) return;
+      // A default hotel for this destination already exists → no duplicates.
+      if (defaults.some((hotel) => presentHotelIds.has(hotel.id))) return;
+      matched = true;
+      fillRowWithDefault(index, row, defaults[0]!);
+      // Remaining defaults become their own stays cloned from this row's
+      // dates/nights/rooms. They arrive pre-filled, so re-runs skip them.
+      for (const hotel of defaults.slice(1)) {
+        if (presentHotelIds.has(hotel.id)) continue;
+        presentHotelIds.add(hotel.id);
+        const images = masterGallerySnapshot(hotel.images, hotel.name);
+        const matchedRate = hotelRateForDate(hotel as never, row.checkInDate);
+        const price = matchedRate != null && Number(matchedRate) > 0 ? Number(matchedRate) : null;
+        hotels.append({
+          ...row,
+          hotelId: hotel.id,
+          hotelRoomTypeId: null,
+          hotelMealPlanId: null,
+          hotelName: hotel.name,
+          city: hotel.city.name,
+          category: hotel.starCategory ? `${hotel.starCategory} Star` : null,
+          images,
+          imageSnapshotPresent: masterGalleryPresence(hotel),
+          pdfImageUrl: images[0] ? quotationSnapshotImageIdentity(images[0]) : null,
+          ...(price != null ? { sellingPrice: price } : {}),
+          sequence: nextSequence++,
+          selected: true,
+        });
+      }
     });
     if (matched && !state.enabledByAuto) {
       state.enabledByAuto = true;
       setExcluded((current) => ({ ...current, hotel: false }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchedHotels, hotelMasters.data, version, form]);
+
+  /**
+   * Fill the first empty vehicle row (if any) and append the remaining
+   * matches as independent entries. Returns how many vehicles were placed.
+   * Never touches rows the user already filled; masters are never modified.
+   */
+  const placeMissingVehicles = (missing: PrefillVehicleMaster[]): number => {
+    if (!missing.length) return 0;
+    const rows = (form.getValues('services') ?? []) as Array<{
+      serviceType?: string;
+      vehicleId?: string | null;
+      name?: string | null;
+    }>;
+    const queue = [...missing];
+    const emptyIndex = rows.findIndex(
+      (row) =>
+        row.serviceType === 'VEHICLE_TRANSFER' && !row.vehicleId && !(row.name ?? '').trim(),
+    );
+    if (emptyIndex >= 0) {
+      const first = queue.shift()!;
+      for (const [key, patchValue] of Object.entries(vehicleRowPatch(first))) {
+        form.setValue(`services.${emptyIndex}.${key}` as 'services.0.name', patchValue as never, {
+          shouldDirty: true,
+        });
+      }
+    }
+    let sequence = services.fields.length + 1;
+    for (const master of queue) {
+      services.append(mapMasterToVehicleRow(master, sequence++) as never);
+    }
+    return missing.length;
+  };
+
+  /** Explicit per-destination vehicle prefill (section picker). Deduped, works any time. */
+  const addVehiclesForDestination = (destinationId: string) => {
+    if (!destinationId) return;
+    const masters = (vehicleMasters.data?.data ?? []) as PrefillVehicleMaster[];
+    const present = new Set(
+      (
+        ((form.getValues('services') ?? []) as Array<{
+          serviceType?: string;
+          vehicleId?: string | null;
+        }>) ?? []
+      )
+        .filter((row) => row.serviceType === 'VEHICLE_TRANSFER' && row.vehicleId)
+        .map((row) => row.vehicleId as string),
+    );
+    const missing = matchVehiclesForDestination(destinationId, masters).filter(
+      (master) => !present.has(master.id),
+    );
+    if (placeMissingVehicles(missing) > 0) setVehiclePrefillDest('');
+  };
+
+  // Automatic vehicle prefill for brand-new quotations: one independent row
+  // per vehicle assigned to each lead destination. Saved vehicle rows are
+  // never rewritten, and removals stick (one attempt per version).
+  useEffect(() => {
+    if (!version) return;
+    if (vehiclePrefillDoneRef.current === version.id) return;
+    if (!vehicleMasters.data || !destinationMasters.data) return;
+    const savedVehicleCount = (version.services ?? []).filter(
+      (service) => service.serviceType === 'VEHICLE_TRANSFER',
+    ).length;
+    if (!shouldAutoPrefillVehicles(savedVehicleCount)) {
+      vehiclePrefillDoneRef.current = version.id;
+      return;
+    }
+    if (initializedFormVersionId !== version.id) return;
+    const masters = (vehicleMasters.data?.data ?? []) as PrefillVehicleMaster[];
+    const present = new Set(
+      (
+        ((form.getValues('services') ?? []) as Array<{
+          serviceType?: string;
+          vehicleId?: string | null;
+        }>) ?? []
+      )
+        .filter((row) => row.serviceType === 'VEHICLE_TRANSFER' && row.vehicleId)
+        .map((row) => row.vehicleId as string),
+    );
+    const missing: PrefillVehicleMaster[] = [];
+    const seen = new Set(present);
+    for (const destinationId of destinationIdSet) {
+      for (const master of matchVehiclesForDestination(destinationId, masters)) {
+        if (seen.has(master.id)) continue;
+        seen.add(master.id);
+        missing.push(master);
+      }
+    }
+    if (missing.length) placeMissingVehicles(missing);
+    vehiclePrefillDoneRef.current = version.id;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, initializedFormVersionId, vehicleMasters.data, destinationMasters.data, destinationIdSet, form]);
 
   const createHotelRow = (
     sequence: number,
@@ -3943,7 +4202,32 @@ export function QuotationBuilderPage() {
                 </span>
               </div>
             )}
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  aria-label="Prefill vehicles for destination"
+                  value={vehiclePrefillDest}
+                  onChange={(event) => setVehiclePrefillDest(event.target.value)}
+                  className={`${field} w-auto text-sm`}
+                >
+                  <option value="">Vehicles for destination…</option>
+                  {(destinationMasters.data?.data ?? [])
+                    .filter((destination) => destination.status === 'ACTIVE')
+                    .map((destination) => (
+                      <option key={destination.id} value={destination.id}>
+                        {destination.name}
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!vehiclePrefillDest}
+                  onClick={() => addVehiclesForDestination(vehiclePrefillDest)}
+                >
+                  <Plus className="h-4 w-4" /> Add
+                </Button>
+              </div>
               <Button
                 size="sm"
                 variant="secondary"

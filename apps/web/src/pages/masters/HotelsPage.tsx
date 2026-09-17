@@ -232,7 +232,7 @@ export function HotelsPage() {
                     </span>
                     {defaults > 0 && (
                       <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-xs font-semibold text-white">
-                        {defaults} default
+                        {defaults} / 10 default
                       </span>
                     )}
                     <div className="ml-auto flex gap-2">

@@ -376,6 +376,12 @@ export const cruiseImageUploadSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const vehicleBaseSchema = z.object({
+  /**
+   * Assigned destination IDs (0–10, order preserved). The 10-cap is enforced
+   * with a domain message in the service; IDs must reference destinations
+   * visible to the company.
+   */
+  destinationIds: z.array(z.string().uuid()).optional(),
   name: z.string().trim().min(2, 'Vehicle name is required.').max(200),
   // Free text in the reference; the list filter is derived from used values.
   vehicleType: z.string().trim().min(1, 'Vehicle type is required.').max(120),

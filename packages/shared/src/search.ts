@@ -905,8 +905,12 @@ export function hotelFingerprint(
 
 /** Stable identity for a room/rate under a hotel – prevents duplicate children. */
 export function hotelRoomSelectionKey(selection: HotelRoomSelection): string {
-  // At minimum: roomName + supplier + guests + totalPrice + beforeTaxes + beds signature
-  const bedsSig = (selection.beds ?? []).map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
+  // At minimum: roomName + supplier + guests + totalPrice + beforeTaxes + beds signature.
+  // Stored snapshots vary by provider shape: only map beds when it is an array.
+  const bedsSig = (Array.isArray(selection.beds) ? selection.beds : [])
+    .map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`)
+    .sort()
+    .join('|');
   const normName = (selection.roomName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
   return [
     normName || '__provider__',

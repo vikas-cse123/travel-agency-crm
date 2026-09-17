@@ -1052,6 +1052,8 @@ export interface Vehicle extends MasterVisibilityMeta {
   name: string;
   vehicleType: string;
   capacity: number | null;
+  /** Assigned destinations (0–10), in selection order. Absent on legacy payloads. */
+  destinations?: Array<{ id: string; name: string }>;
   description: string | null;
   price?: number | null;
   currency?: string | null;

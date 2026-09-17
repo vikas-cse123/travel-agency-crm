@@ -14,11 +14,12 @@ import {
   Plane,
   Star,
   Users,
-  Wifi,
+  X,
 } from 'lucide-react';
 import type {
   FlightBookmarkSnapshot,
   HotelBookmarkSnapshot,
+  HotelRoomSelection,
   LiveSearchBookmark,
   LiveSearchBookmarkType,
 } from '@interscale/shared';
@@ -193,7 +194,7 @@ function BookmarkImages({
   const single = validImages.length <= 1;
 
   return (
-    <div className="relative h-44 w-full overflow-hidden bg-muted sm:h-40 md:h-full">
+    <div className="relative h-full w-full overflow-hidden bg-muted">
       {currentUrl ? (
         <img
           key={currentUrl}
@@ -481,17 +482,311 @@ function FlightBookmarkDetails({ flight }: { flight: FlightBookmarkSnapshot }) {
   );
 }
 
-/** Collapsed "API Response" dropdown revealing the complete saved raw JSON. */
-function ApiResponseDropdown({ bookmark }: { bookmark: LiveSearchBookmark }) {
+/** Format a saved numeric room price using the bookmark currency. Never invents values. */
+function formatRoomPrice(value: number | null | undefined, currency: string): string | null {
+  if (value === null || value === undefined) return null;
+  try {
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(value);
+  } catch {
+    return `${currency} ${value.toLocaleString('en-IN')}`;
+  }
+}
+
+/** Compact bed summary, e.g. "2 beds" or "1 king bed". Returns null when unknown. */
+function formatSavedBeds(
+  beds: Array<{ count?: number; type?: string }> | null | undefined,
+): string | null {
+  if (!Array.isArray(beds) || !beds.length) return null;
+  const parts = beds
+    .map((bed) => {
+      const count = bed.count ?? 1;
+      const type = (bed.type ?? '').trim();
+      if (!type) return count === 1 ? '1 bed' : `${count} beds`;
+      return count === 1 ? `${count} ${type} bed` : `${count} ${type} beds`;
+    })
+    .filter(Boolean);
+  if (!parts.length) return null;
+  return parts.join(' + ');
+}
+
+/** Stay range from the saved search params, e.g. "26 Sep – 10 Oct". Null when unsaved. */
+function formatStayRange(searchParams: Record<string, unknown>): string | null {
+  const checkIn = typeof searchParams.check_in_date === 'string' ? searchParams.check_in_date : null;
+  const checkOut =
+    typeof searchParams.check_out_date === 'string' ? searchParams.check_out_date : null;
+  const fmt = (iso: string, withYear: boolean) => {
+    const d = new Date(`${iso}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      ...(withYear ? { year: 'numeric' as const } : {}),
+    });
+  };
+  if (checkIn && checkOut) {
+    const crossYear = checkIn.slice(0, 4) !== checkOut.slice(0, 4);
+    return `${fmt(checkIn, crossYear)} – ${fmt(checkOut, true)}`;
+  }
+  if (checkIn) return `From ${fmt(checkIn, true)}`;
+  if (checkOut) return `Until ${fmt(checkOut, true)}`;
+  return null;
+}
+
+/** One saved room/rate selection with the bookmark that owns it. */
+interface SavedRoomItem {
+  room: HotelRoomSelection;
+  bookmarkId: string;
+  bookmarkCode: string;
+}
+
+/** Every saved room on a hotel snapshot: hierarchical `rooms[]`, else legacy `selectedRoom`. */
+function collectSavedRooms(
+  hotel: HotelBookmarkSnapshot,
+  fallback: { bookmarkId: string; bookmarkCode: string },
+): SavedRoomItem[] {
+  if (hotel.rooms?.length) {
+    return hotel.rooms.map((room) => ({
+      room,
+      bookmarkId: fallback.bookmarkId,
+      bookmarkCode: fallback.bookmarkCode,
+    }));
+  }
+  if (hotel.selectedRoom) {
+    return [
+      {
+        room: hotel.selectedRoom,
+        bookmarkId: fallback.bookmarkId,
+        bookmarkCode: fallback.bookmarkCode,
+      },
+    ];
+  }
+  return [];
+}
+
+/** Compact saved-price block: prominent total, secondary per-night, saved label. */
+function BookmarkPriceBlock({
+  total,
+  perNight,
+  beforeTaxes,
+  currency,
+  compact,
+}: {
+  total: string | null;
+  perNight: string | null;
+  beforeTaxes: boolean;
+  currency: string;
+  compact?: boolean;
+}) {
+  void currency;
+  if (!total && !perNight) {
+    return (
+      <div>
+        <p className={compact ? 'text-sm font-semibold text-foreground' : 'text-base font-semibold text-foreground'}>
+          Price unavailable
+        </p>
+        <p className="text-xs text-muted-foreground">Saved price</p>
+      </div>
+    );
+  }
   return (
-    <details className="mt-3 rounded-lg border border-border bg-card p-2">
-      <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
-        API Response ▼
-      </summary>
-      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">
-        {JSON.stringify(bookmark.snapshot, null, 2)}
-      </pre>
-    </details>
+    <div>
+      {total ? (
+        <p className={compact ? 'text-sm font-semibold text-foreground' : 'text-lg font-bold text-foreground'}>
+          <span>{total}</span>{' '}
+          <span className="text-xs font-normal text-muted-foreground">total</span>
+          {beforeTaxes ? (
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">Before taxes</span>
+          ) : null}
+        </p>
+      ) : null}
+      {perNight ? (
+        <p className="text-xs text-muted-foreground">
+          <span>{perNight}</span>
+          <span>/night</span>
+          {beforeTaxes && !total ? ' · Before taxes' : null}
+        </p>
+      ) : null}
+      <p className="text-xs text-muted-foreground">Saved price</p>
+    </div>
+  );
+}
+
+/**
+ * "Add to Quotation" for a saved bookmark. The quotation builder loads hotels
+ * via its Hotel Bookmark ID field (DB only), so this copies the code and
+ * confirms — quotation logic itself is untouched.
+ */
+function AddToQuotationButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!code) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Clipboard unavailable; still show the code hint below.
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    }
+  };
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <Button size="sm" variant="secondary" onClick={copy} title="Copy bookmark code for the quotation builder" className="h-7 px-2 text-xs">
+        {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+        {copied ? 'Code copied' : 'Add to Quotation'}
+      </Button>
+      {copied ? (
+        <span className="text-[11px] text-muted-foreground">
+          Paste <span className="font-medium text-foreground">{code}</span> as Hotel Bookmark ID
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** True when the saved room text explicitly mentions breakfast. Never invented. */
+function roomMentionsBreakfast(room: HotelRoomSelection): boolean {
+  const hay = [room.roomDescription ?? '', ...(room.roomAmenities ?? [])].join(' ').toLowerCase();
+  return hay.includes('breakfast');
+}
+
+/** Compact commercial card for one saved room/rate. Never invents a room name. */
+function SavedRoomCard({
+  item,
+  currency,
+  onRemove,
+  removing,
+}: {
+  item: SavedRoomItem;
+  currency: string;
+  onRemove: (id: string) => void;
+  removing: boolean;
+}) {
+  const { room } = item;
+  const name = (room.roomName ?? '').trim();
+  const isProviderOnly = !name;
+  const total = formatRoomPrice(room.totalPrice ?? room.totalPriceBeforeTaxes, currency);
+  const perNight = formatRoomPrice(room.pricePerNight ?? room.pricePerNightBeforeTaxes, currency);
+  const beds = formatSavedBeds(room.beds);
+  const freeUntil = room.freeCancellationUntil?.date
+    ? [room.freeCancellationUntil.date, room.freeCancellationUntil.time].filter(Boolean).join(', ')
+    : null;
+
+  return (
+    <article className="rounded-lg border border-border bg-card-2 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {isProviderOnly ? 'Provider Rate' : 'Room'}
+          </p>
+          {!isProviderOnly ? (
+            <h4 className="mt-0.5 break-words text-sm font-semibold text-foreground">{name}</h4>
+          ) : null}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {room.supplier ? (
+              <span className="flex items-center gap-1 font-medium text-foreground">
+                {room.supplierLogo ? (
+                  <img src={room.supplierLogo} alt="" className="h-4 w-4 rounded" loading="lazy" />
+                ) : null}
+                {isProviderOnly ? `Supplier: ${room.supplier}` : room.supplier}
+                {room.isOfficial ? (
+                  <Badge variant="outline" className="ml-1">
+                    Official site
+                  </Badge>
+                ) : null}
+              </span>
+            ) : null}
+            {room.guests ? (
+              <span className="flex items-center gap-1">
+                <Users className="h-3 w-3" aria-hidden="true" />
+                {room.guests} guests
+              </span>
+            ) : null}
+            {beds ? <span>{beds}</span> : null}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {roomMentionsBreakfast(room) ? <Badge variant="secondary">Breakfast included</Badge> : null}
+            {room.freeCancellation ? (
+              <Badge variant="outline" className="text-emerald-700">
+                {freeUntil ? `Free cancellation until ${freeUntil}` : 'Free cancellation'}
+              </Badge>
+            ) : room.freeCancellation === false ? (
+              <Badge variant="secondary">Room only</Badge>
+            ) : null}
+          </div>
+          {room.roomDescription ? (
+            <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{room.roomDescription}</p>
+          ) : null}
+        </div>
+        <div className="text-right">
+          {total ? (
+            <p className="text-sm font-semibold text-foreground">
+              <span>{total}</span>{' '}
+              <span className="text-xs font-normal text-muted-foreground">total</span>
+            </p>
+          ) : null}
+          {perNight ? (
+            <p className="text-xs text-muted-foreground">
+              <span>{perNight}</span>
+              <span>/night</span>
+            </p>
+          ) : null}
+          {!total && !perNight ? (
+            <p className="text-xs text-muted-foreground">Price unavailable</p>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
+        {room.offerLink ? (
+          <a
+            href={room.offerLink}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            View offer <ArrowRight className="h-3 w-3" aria-hidden="true" />
+          </a>
+        ) : null}
+        <span className="ml-auto flex items-center gap-2">
+          <AddToQuotationButton code={item.bookmarkCode} />
+          <Button
+            size="sm"
+            variant="ghost"
+            isLoading={removing}
+            onClick={() => onRemove(item.bookmarkId)}
+            aria-label={`Remove bookmark ${item.bookmarkCode}`}
+            title="Remove bookmark"
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-red-600"
+          >
+            Remove
+          </Button>
+        </span>
+      </div>
+    </article>
+  );
+}
+
+/** Collapsed developer-only view of the stored snapshot. Data is preserved, never shown by default. */
+function BookmarkDeveloperDetails({ bookmark }: { bookmark: LiveSearchBookmark }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex cursor-pointer select-none items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+      >
+        Developer details
+        <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+      </button>
+      {open ? (
+        <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-2 text-xs leading-relaxed text-muted-foreground">
+          {JSON.stringify(bookmark.snapshot, null, 2)}
+        </pre>
+      ) : null}
+    </div>
   );
 }
 
@@ -533,340 +828,329 @@ function buildGroupedBookmarks(list: LiveSearchBookmark[]) {
   return items;
 }
 
-/** One bookmarked room inside a grouped hotel card, retaining its own data. */
-function HotelRoomBookmarkRow({ bookmark }: { bookmark: LiveSearchBookmark }) {
-  const hotel = bookmark.snapshot.hotel;
-  const room = hotel?.selectedRoom;
+/** Compact hotel identity block: name, rating, location, type, truncated description. */
+function HotelIdentity({
+  hotel,
+  descriptionLines = 2,
+}: {
+  hotel: HotelBookmarkSnapshot;
+  descriptionLines?: 2 | 3;
+}) {
   return (
-    <div className="pr-24">
-      <p className="text-sm font-semibold text-foreground">{room?.roomName ?? 'Room'}</p>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        {room?.supplier ? <span>Supplier: {room.supplier}</span> : null}
-        {room?.pricePerNight ? <span>Per night: {room.pricePerNight}</span> : null}
-        {room?.totalPrice ? <span>Total: {room.totalPrice}</span> : null}
-        {room?.freeCancellation ? <span className="text-emerald-600">Free cancellation</span> : null}
-        {room?.offerLink ? (
-          <a
-            href={room.offerLink}
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-primary hover:underline"
-          >
-            Booking link <ArrowRight className="h-3 w-3" aria-hidden="true" />
-          </a>
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-base font-semibold text-foreground">{hotel.name}</h3>
+        {hotel.propertyType ? <Badge variant="secondary">{hotel.propertyType}</Badge> : null}
+        {hotel.deal ? (
+          <Badge variant="success">
+            <Flame className="h-3 w-3" aria-hidden="true" />
+            {hotel.deal}
+          </Badge>
         ) : null}
       </div>
-      <SavedTimestamp createdAt={bookmark.createdAt} className="mt-2" />
-      <ApiResponseDropdown bookmark={bookmark} />
-      <CompleteApiDetails bookmark={bookmark} />
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {hotel.rating ? (
+          <span className="flex items-center gap-1">
+            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-hidden="true" />
+            <span className="font-medium text-foreground">{hotel.rating}</span>
+            {hotel.reviews ? (
+              <span className="text-muted-foreground/80">({hotel.reviews.toLocaleString()})</span>
+            ) : null}
+          </span>
+        ) : null}
+        {hotel.city ? (
+          <span className="flex items-center gap-1">
+            <MapPin className="h-3 w-3" aria-hidden="true" />
+            {hotel.city}
+            {hotel.country ? `, ${hotel.country}` : ''}
+          </span>
+        ) : null}
+      </div>
+      {hotel.description ? (
+        <p className={cn('mt-1.5 text-sm text-muted-foreground', descriptionLines === 2 ? 'line-clamp-2' : 'line-clamp-3')}>
+          {hotel.description}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-/** One hotel rendered once, with every bookmarked room grouped underneath. */
+/** Stay context row from the saved search params: dates + guests. Renders nothing when unsaved. */
+function StayContext({
+  searchParams,
+  fallbackGuests,
+}: {
+  searchParams: Record<string, unknown>;
+  fallbackGuests?: number | null;
+}) {
+  const range = formatStayRange(searchParams);
+  const adults = typeof searchParams.adults === 'number' ? searchParams.adults : null;
+  const guests = adults ?? fallbackGuests ?? null;
+  if (!range && guests === null) return null;
+  return (
+    <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+      {range ? (
+        <span className="flex items-center gap-1 font-medium text-foreground">
+          <Clock className="h-3 w-3" aria-hidden="true" />
+          Stay: {range}
+        </span>
+      ) : null}
+      {guests !== null ? (
+        <span className="flex items-center gap-1">
+          <Users className="h-3 w-3" aria-hidden="true" />
+          {guests} guest{guests === 1 ? '' : 's'}
+        </span>
+      ) : null}
+    </p>
+  );
+}
+
+/** Full hotel information in a modal: overview, saved rooms, pricing, actions. */
+function HotelDetailsModal({
+  bookmarks,
+  onClose,
+  onRemove,
+  removing,
+}: {
+  bookmarks: LiveSearchBookmark[];
+  onClose: () => void;
+  onRemove: (id: string) => void;
+  removing: boolean;
+}) {
+  const first = bookmarks[0]!;
+  const hotel = first.snapshot.hotel;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose]);
+  if (!hotel) return null;
+  const items = bookmarks.flatMap((b) =>
+    collectSavedRooms(b.snapshot.hotel ?? hotel, { bookmarkId: b.id, bookmarkCode: b.bookmarkCode }),
+  );
+  const currency = first.currency || 'INR';
+  const pricePerNight = resolveHotelPrice(hotel.pricePerNight);
+  const totalPrice = resolveHotelPrice(hotel.totalPrice);
+  const fallbackGuests = items[0]?.room.guests ?? null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-black/50 p-2 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Saved details for ${hotel.name}`}
+        className="my-auto flex max-h-[90vh] min-h-0 w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-card shadow-xl supports-[height:100dvh]:max-h-[90dvh]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border p-4">
+          <HotelIdentity hotel={hotel} descriptionLines={3} />
+          <button
+            type="button"
+            aria-label="Close saved details"
+            onClick={onClose}
+            className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch]">
+          <section>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Hotel overview
+            </h4>
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              <Field label="Type" value={hotel.propertyType} />
+              <Field
+                label="Location"
+                value={hotel.city ? `${hotel.city}${hotel.country ? `, ${hotel.country}` : ''}` : undefined}
+              />
+              {hotel.address ? <Field label="Address" value={hotel.address} /> : null}
+              <Field
+                label="Check-in / Check-out"
+                value={`${hotel.checkInTime ?? '—'} / ${hotel.checkOutTime ?? '—'}`}
+              />
+            </div>
+            {hotel.amenities?.length ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {hotel.amenities.map((amenity) => (
+                  <Chip key={amenity}>{amenity}</Chip>
+                ))}
+              </div>
+            ) : null}
+          </section>
+          {items.length ? (
+            <section>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Saved rooms & offers ({items.length})
+              </h4>
+              <div className="space-y-2">
+                {items.map((item) => (
+                  <SavedRoomCard
+                    key={`${item.bookmarkId}-${item.room.roomName ?? 'provider'}-${item.room.supplier ?? ''}`}
+                    item={item}
+                    currency={currency}
+                    onRemove={onRemove}
+                    removing={removing}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+          <section>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Saved pricing
+            </h4>
+            <BookmarkPriceBlock
+              total={totalPrice.main}
+              perNight={pricePerNight.main}
+              beforeTaxes={totalPrice.beforeTaxes || pricePerNight.beforeTaxes}
+              currency={currency}
+            />
+            <StayContext searchParams={first.searchParams} fallbackGuests={fallbackGuests} />
+          </section>
+          <section className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <AddToQuotationButton code={first.bookmarkCode} />
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+          </section>
+          <BookmarkDeveloperDetails bookmark={first} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One hotel rendered once, with every saved room as a compact commercial card. */
 function HotelBookmarkGroup({
   group,
   onRemove,
+  removing,
 }: {
   group: LiveSearchBookmark[];
   onRemove: (id: string) => void;
+  removing: boolean;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const first = group[0]!;
   const hotel = first.snapshot.hotel;
   if (!hotel) return null;
+  const items = group.flatMap((b) =>
+    collectSavedRooms(b.snapshot.hotel ?? hotel, { bookmarkId: b.id, bookmarkCode: b.bookmarkCode }),
+  );
+  const currency = first.currency || 'INR';
+  const earliest = group.reduce((a, b) => (a.createdAt < b.createdAt ? a : b));
+  const pricePerNight = resolveHotelPrice(hotel.pricePerNight);
+  const totalPrice = resolveHotelPrice(hotel.totalPrice);
+  const fallbackGuests = items[0]?.room.guests ?? null;
+
   return (
     <Card>
-      <div className="grid md:grid-cols-[220px_1fr]">
-        <BookmarkImages images={hotel.images} />
-        <div className="flex flex-col p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-base font-semibold text-foreground">{hotel.name}</h3>
-              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                {hotel.rating ? (
-                  <span className="flex items-center gap-1">
-                    <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-hidden="true" />
-                    <span className="font-medium text-foreground">{hotel.rating}</span>
-                    {hotel.reviews ? (
-                      <span className="text-muted-foreground/80">({hotel.reviews.toLocaleString()})</span>
-                    ) : null}
-                  </span>
-                ) : null}
-                {hotel.city ? (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="h-3 w-3" aria-hidden="true" />
-                    {hotel.city}
-                    {hotel.country ? `, ${hotel.country}` : ''}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          {hotel.description ? (
-            <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{hotel.description}</p>
+      <div className="grid md:grid-cols-[240px_1fr]">
+        <div className="relative h-44 w-full overflow-hidden bg-muted sm:h-48 md:h-full md:max-h-[340px] md:min-h-[200px]">
+          <BookmarkImages images={hotel.images} />
+          {items.length ? (
+            <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-xs font-medium text-white">
+              Saved rooms: {items.length}
+            </span>
           ) : null}
-          <div className="mt-3 space-y-2">
-            {group.map((bookmark) => (
-              <div key={bookmark.id} className="relative rounded-lg border border-border p-3">
-                <HotelRoomBookmarkRow bookmark={bookmark} />
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="absolute right-3 top-3 z-10"
-                  onClick={() => onRemove(bookmark.id)}
-                >
-                  <Bookmark className="h-4 w-4" aria-hidden="true" />
-                  Remove bookmark
-                </Button>
-              </div>
-            ))}
+        </div>
+        <div className="flex min-w-0 flex-col p-4">
+          <HotelIdentity hotel={hotel} />
+          <StayContext searchParams={first.searchParams} fallbackGuests={fallbackGuests} />
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-border pt-3">
+            <BookmarkPriceBlock
+              total={totalPrice.main}
+              perNight={pricePerNight.main}
+              beforeTaxes={totalPrice.beforeTaxes || pricePerNight.beforeTaxes}
+              currency={currency}
+              compact
+            />
+            <SavedTimestamp createdAt={earliest.createdAt} />
           </div>
+          {items.length ? (
+            <div className="mt-3 space-y-2">
+              {items.map((item) => (
+                <SavedRoomCard
+                  key={`${item.bookmarkId}-${item.room.roomName ?? 'provider'}-${item.room.supplier ?? ''}`}
+                  item={item}
+                  currency={currency}
+                  onRemove={onRemove}
+                  removing={removing}
+                />
+              ))}
+            </div>
+          ) : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setDetailsOpen(true)}>
+              View Details
+            </Button>
+            <AddToQuotationButton code={first.bookmarkCode} />
+          </div>
+          <BookmarkDeveloperDetails bookmark={first} />
         </div>
       </div>
+      {detailsOpen ? (
+        <HotelDetailsModal
+          bookmarks={group}
+          onClose={() => setDetailsOpen(false)}
+          onRemove={onRemove}
+          removing={removing}
+        />
+      ) : null}
     </Card>
   );
 }
 
-/** Readable label for a snake_case API key, e.g. "price_before_taxes" → "Price before taxes". */
-function apiLabel(key: string): string {
-  const spaced = key.replace(/[_-]+/g, ' ').trim();
-  if (!spaced) return key;
-  const labeled = spaced.charAt(0).toUpperCase() + spaced.slice(1);
-  return labeled.replace(/\b(api|id|url|gps|otp|pdf|inr|usd|gst|vat)\b/gi, (m) => m.toUpperCase());
-}
-
-function apiIsUrl(value: unknown): value is string {
-  return typeof value === 'string' && /^https?:\/\//i.test(value);
-}
-
-function apiIsImageUrl(url: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg|avif)(\?|#|$)/i.test(url) || /(gstatic|ggpht|scontent)/i.test(url);
-}
-
-/** Friendly heading for known response sections; falls back to the label. */
-function apiSectionTitle(key: string): string {
-  const map: Record<string, string> = {
-    response: 'Property API Response',
-    property: 'Property Information',
-    detail: 'Property Information',
-    nearby_places: 'Nearby Places',
-    images: 'Images',
-    featured_offers: 'Offers',
-    all_offers: 'All Offers',
-    review_results: 'Review Results',
-    reviews_breakdown: 'Review Breakdown',
-    reviews_histogram: 'Reviews Histogram',
-    search_metadata: 'Search Metadata',
-    search_parameters: 'Search Parameters',
-    people_also_viewed: 'Nearby / Recommended Hotels',
-    vacation_rentals_nearby: 'Vacation Rentals Nearby',
-    top_things_to_know: 'Top Things To Know',
-    price_per_night: 'Price Per Night',
-    total_price: 'Total Price',
-    gps_coordinates: 'GPS Coordinates',
-    free_cancellation_until: 'Free Cancellation Until',
-  };
-  return map[key] ?? apiLabel(key);
-}
-
-function ApiPrimitiveValue({ value }: { value: unknown }) {
-  if (value === null || value === undefined) {
-    return <span className="italic text-muted-foreground">Not provided</span>;
-  }
-  if (typeof value === 'boolean') return <span>{value ? 'Yes' : 'No'}</span>;
-  const text = String(value);
-  if (apiIsUrl(value)) {
-    return (
-      <span className="inline-flex items-center gap-2">
-        {apiIsImageUrl(value) ? (
-          <img src={value} alt="" className="h-6 w-6 rounded object-cover" loading="lazy" />
-        ) : null}
-        <a href={value} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline">
-          Open ↗
-        </a>
-      </span>
-    );
-  }
-  return <span className="break-words">{text}</span>;
-}
-
-/** Recursively render every field of the stored API response as readable UI. */
-function RecursiveApiFields({ data, depth = 0 }: { data: unknown; depth?: number }) {
-  if (data === null || data === undefined) return <ApiPrimitiveValue value={data} />;
-  if (Array.isArray(data)) {
-    if (data.length === 0) return <span className="text-sm text-muted-foreground">—</span>;
-    return (
-      <div className="space-y-2">
-        {data.map((item, index) => {
-          const name =
-            item !== null &&
-            typeof item === 'object' &&
-            typeof (item as Record<string, unknown>).name === 'string'
-              ? String((item as Record<string, unknown>).name)
-              : null;
-          return (
-            <div key={index} className="rounded-lg border border-border bg-muted/30 p-2">
-              <p className="mb-1 text-sm font-semibold text-foreground">{name ?? `Item ${index + 1}`}</p>
-              {typeof item === 'object' && item !== null ? (
-                <RecursiveApiFields data={item} depth={depth + 1} />
-              ) : (
-                <ApiPrimitiveValue value={item} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-  if (typeof data === 'object') {
-    return (
-      <dl className="space-y-1.5">
-        {Object.entries(data as Record<string, unknown>).map(([key, value]) => {
-          if (value !== null && typeof value === 'object') {
-            return (
-              <div key={key} className="rounded-lg border border-border bg-card p-2">
-                <p className="text-sm font-semibold text-foreground">{apiSectionTitle(key)}</p>
-                <div className="mt-1">
-                  <RecursiveApiFields data={value} depth={depth + 1} />
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div key={key} className="flex items-baseline justify-between gap-3 py-0.5">
-              <dt className="text-sm text-muted-foreground">{apiSectionTitle(key)}</dt>
-              <dd className="text-right">
-                <ApiPrimitiveValue value={value} />
-              </dd>
-            </div>
-          );
-        })}
-      </dl>
-    );
-  }
-  return <ApiPrimitiveValue value={data} />;
-}
-
-/** Dedicated, always-visible "Complete API Details" section for a saved hotel. */
-function CompleteApiDetails({ bookmark }: { bookmark: LiveSearchBookmark }) {
-  const raw = bookmark.snapshot.raw as { response?: unknown } | null | undefined;
-  const data = raw?.response ?? raw ?? null;
-  if (data === null || data === undefined) return null;
-  return (
-    <section aria-label="Complete API Details" className="mt-4 rounded-xl border border-border bg-card p-4">
-      <h4 className="text-sm font-semibold uppercase tracking-wide text-foreground">
-        Complete API Details
-      </h4>
-      <div className="mt-3">
-        <RecursiveApiFields data={data} />
-      </div>
-    </section>
-  );
-}
-
-/** A hotel bookmark card rendered entirely from the saved snapshot. */
-function HotelBookmarkCard({ bookmark }: { bookmark: LiveSearchBookmark }) {
+/** A compact hotel bookmark card rendered entirely from the saved snapshot. */
+function HotelBookmarkCard({
+  bookmark,
+  onRemove,
+  removing,
+}: {
+  bookmark: LiveSearchBookmark;
+  onRemove: (id: string) => void;
+  removing: boolean;
+}) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const hotel = bookmark.snapshot.hotel;
   if (!hotel) return null;
-  const primaryAmenities = (hotel.amenities ?? []).slice(0, 6);
+  const items = collectSavedRooms(hotel, { bookmarkId: bookmark.id, bookmarkCode: bookmark.bookmarkCode });
+  const currency = bookmark.currency || 'INR';
   const pricePerNight = resolveHotelPrice(hotel.pricePerNight);
   const totalPrice = resolveHotelPrice(hotel.totalPrice);
+  const fallbackGuests = items[0]?.room.guests ?? null;
 
   return (
     <Card>
-      <div className="grid md:grid-cols-[220px_1fr]">
-        <BookmarkImages images={hotel.images} />
-        <div className="flex flex-col p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-base font-semibold text-foreground">{hotel.name}</h3>
-              <div className="mt-1">
-                <BookmarkCode code={bookmark.bookmarkCode} />
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                {hotel.rating ? (
-                  <span className="flex items-center gap-1">
-                    <Star
-                      className="h-3.5 w-3.5 fill-amber-400 text-amber-400"
-                      aria-hidden="true"
-                    />
-                    <span className="font-medium text-foreground">{hotel.rating}</span>
-                    {hotel.reviews ? (
-                      <span className="text-muted-foreground/80">
-                        ({hotel.reviews.toLocaleString()})
-                      </span>
-                    ) : null}
-                  </span>
-                ) : null}
-                {hotel.city ? (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="h-3 w-3" aria-hidden="true" />
-                    {hotel.city}
-                    {hotel.country ? `, ${hotel.country}` : ''}
-                  </span>
-                ) : null}
-                {hotel.propertyType ? (
-                  <Badge variant="secondary">{hotel.propertyType}</Badge>
-                ) : null}
-              </div>
-            </div>
-            {hotel.deal ? (
-              <Badge variant="success">
-                <Flame className="h-3 w-3" aria-hidden="true" />
-                {hotel.deal}
-              </Badge>
-            ) : null}
+      <div className="grid md:grid-cols-[240px_1fr]">
+        <div className="relative h-44 w-full overflow-hidden bg-muted sm:h-48 md:h-full md:max-h-[340px] md:min-h-[200px]">
+          <BookmarkImages images={hotel.images} />
+        </div>
+        <div className="flex min-w-0 flex-col p-4">
+          <HotelIdentity hotel={hotel} />
+          <div className="mt-1">
+            <BookmarkCode code={bookmark.bookmarkCode} />
           </div>
-
-          {hotel.description ? (
-            <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{hotel.description}</p>
-          ) : null}
-
-          {primaryAmenities.length ? (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {primaryAmenities.map((amenity) => (
-                <Chip key={amenity}>{amenity}</Chip>
-              ))}
-              {hotel.amenities && hotel.amenities.length > primaryAmenities.length ? (
-                <Chip>{`+${hotel.amenities.length - primaryAmenities.length} more`}</Chip>
-              ) : null}
-            </div>
-          ) : null}
-
+          <StayContext searchParams={bookmark.searchParams} fallbackGuests={fallbackGuests} />
           <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-border pt-3">
-            <div className="flex flex-wrap gap-x-6 gap-y-2">
-              <div>
-                <p className="text-xs text-muted-foreground">Per night (saved)</p>
-                {pricePerNight.main ? (
-                  <p className="text-base font-semibold text-foreground">
-                    {pricePerNight.main}
-                    {pricePerNight.beforeTaxes ? (
-                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                        Before taxes
-                      </span>
-                    ) : null}
-                  </p>
-                ) : (
-                  <p className="text-base font-semibold text-foreground">Price unavailable</p>
-                )}
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Total (saved)</p>
-                {totalPrice.main ? (
-                  <p className="text-base font-semibold text-foreground">
-                    {totalPrice.main}
-                    {totalPrice.beforeTaxes ? (
-                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                        Before taxes
-                      </span>
-                    ) : null}
-                  </p>
-                ) : (
-                  <p className="text-base font-semibold text-foreground">Price unavailable</p>
-                )}
-              </div>
-            </div>
+            <BookmarkPriceBlock
+              total={totalPrice.main}
+              perNight={pricePerNight.main}
+              beforeTaxes={totalPrice.beforeTaxes || pricePerNight.beforeTaxes}
+              currency={currency}
+              compact
+            />
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" aria-hidden="true" />
@@ -875,183 +1159,47 @@ function HotelBookmarkCard({ bookmark }: { bookmark: LiveSearchBookmark }) {
             </div>
           </div>
           <SavedTimestamp createdAt={bookmark.createdAt} className="mt-2" />
-          <ApiResponseDropdown bookmark={bookmark} />
-      <CompleteApiDetails bookmark={bookmark} />
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-4">
-              {hotel.providerLink ? (
-                <a
-                  href={hotel.providerLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-                >
-                  View on provider <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                </a>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setDetailsOpen((v) => !v)}
-                aria-expanded={detailsOpen}
-                className="flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                {detailsOpen ? 'View less' : 'View details'}
-                <ChevronDown
-                  className={cn('h-4 w-4 transition-transform', detailsOpen && 'rotate-180')}
-                  aria-hidden="true"
+          {items.length ? (
+            <div className="mt-3 space-y-2">
+              {items.map((item) => (
+                <SavedRoomCard
+                  key={`${item.bookmarkId}-${item.room.roomName ?? 'provider'}-${item.room.supplier ?? ''}`}
+                  item={item}
+                  currency={currency}
+                  onRemove={onRemove}
+                  removing={removing}
                 />
-              </button>
+              ))}
             </div>
+          ) : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setDetailsOpen(true)}>
+              View Details
+            </Button>
+            <AddToQuotationButton code={bookmark.bookmarkCode} />
+            <Button
+              size="sm"
+              variant="ghost"
+              isLoading={removing}
+              onClick={() => onRemove(bookmark.id)}
+              className="text-muted-foreground hover:text-red-600"
+            >
+              <Bookmark className="h-4 w-4" aria-hidden="true" />
+              Remove bookmark
+            </Button>
           </div>
+          <BookmarkDeveloperDetails bookmark={bookmark} />
         </div>
       </div>
-      {detailsOpen ? <HotelBookmarkDetails hotel={hotel} /> : null}
-    </Card>
-  );
-}
-
-function HotelBookmarkDetails({ hotel }: { hotel: HotelBookmarkSnapshot }) {
-  const pricePerNight = resolveHotelPrice(hotel.pricePerNight);
-  const totalPrice = resolveHotelPrice(hotel.totalPrice);
-  return (
-    <div className="grid gap-4 border-t border-border p-4 md:grid-cols-2 lg:grid-cols-3">
-      <div className="space-y-1.5">
-        {hotel.propertyType ? <Field label="Accommodation" value={hotel.propertyType} /> : null}
-        <Field label="Check-in" value={hotel.checkInTime ?? undefined} />
-        <Field label="Check-out" value={hotel.checkOutTime ?? undefined} />
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">Per night (saved)</p>
-          {pricePerNight.main ? (
-            <p className="text-sm text-foreground">
-              {pricePerNight.main}
-              {pricePerNight.beforeTaxes ? (
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                  Before taxes
-                </span>
-              ) : null}
-            </p>
-          ) : (
-            <p className="text-sm text-foreground">Price unavailable</p>
-          )}
-        </div>
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">Total (saved)</p>
-          {totalPrice.main ? (
-            <p className="text-sm text-foreground">
-              {totalPrice.main}
-              {totalPrice.beforeTaxes ? (
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                  Before taxes
-                </span>
-              ) : null}
-            </p>
-          ) : (
-            <p className="text-sm text-foreground">Price unavailable</p>
-          )}
-        </div>
-        {hotel.coordinates ? (
-          <Field
-            label="Coordinates"
-            value={`${hotel.coordinates.latitude}, ${hotel.coordinates.longitude}`}
-          />
-        ) : null}
-        {hotel.essentialInfo?.length ? (
-          <>
-            <p className="pt-1 text-xs font-medium text-muted-foreground">Room & property</p>
-            <div className="flex flex-wrap gap-1.5">
-              {hotel.essentialInfo.map((info) => (
-                <Chip key={info}>{info}</Chip>
-              ))}
-            </div>
-          </>
-        ) : null}
-      </div>
-
-      <div>
-        {hotel.amenities?.length ? (
-          <>
-            <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-              <Wifi className="h-3 w-3" aria-hidden="true" /> All amenities
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {hotel.amenities.map((amenity) => (
-                <Chip key={amenity}>{amenity}</Chip>
-              ))}
-            </div>
-          </>
-        ) : null}
-        {hotel.excludedAmenities?.length ? (
-          <>
-            <p className="mb-1.5 mt-3 text-xs font-medium text-muted-foreground">Not available</p>
-            <div className="flex flex-wrap gap-1.5">
-              {hotel.excludedAmenities.map((amenity) => (
-                <span
-                  key={amenity}
-                  className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground/70 line-through"
-                >
-                  {amenity}
-                </span>
-              ))}
-            </div>
-          </>
-        ) : null}
-      </div>
-
-      <div>
-        {hotel.nearbyPlaces?.length ? (
-          <>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Nearby places</p>
-            <div className="space-y-1">
-              {hotel.nearbyPlaces.map((place) => (
-                <div key={place.name} className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="font-medium text-foreground">{place.name}</span>
-                  {(place.transportations ?? []).map((transport, index) => (
-                    <span key={`${place.name}-${index}`} className="text-muted-foreground/80">
-                      {transport.type}: {transport.duration}
-                    </span>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </>
-        ) : null}
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <Field label="Location rating" value={hotel.locationRating} />
-          <Field label="Transit rating" value={hotel.transitRating} />
-          <Field label="Things to do" value={hotel.thingsToDoRating} />
-          <Field label="Airport access" value={hotel.airportAccessRating} />
-        </div>
-      </div>
-
-      {hotel.reviewsHistogram && Object.keys(hotel.reviewsHistogram).length ? (
-        <div className="rounded-lg border border-border p-3 md:col-span-2 lg:col-span-3">
-          <p className="mb-2 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-            <Users className="h-3 w-3" aria-hidden="true" /> Review histogram
-          </p>
-          <div className="space-y-1.5">
-            {[5, 4, 3, 2, 1].map((star) => {
-              const count = hotel.reviewsHistogram?.[String(star)] ?? 0;
-              const total = hotel.reviews ?? 1;
-              return (
-                <div key={star} className="flex items-center gap-2 text-xs">
-                  <span className="w-6 shrink-0 text-muted-foreground">{star}★</span>
-                  <div className="h-1.5 flex-1 overflow-hidden rounded bg-muted">
-                    <div
-                      className="h-full rounded bg-amber-400"
-                      style={{ width: `${Math.max(0, Math.min(100, (count / total) * 100))}%` }}
-                    />
-                  </div>
-                  <span className="w-10 shrink-0 text-right text-muted-foreground">
-                    {count.toLocaleString()}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {detailsOpen ? (
+        <HotelDetailsModal
+          bookmarks={[bookmark]}
+          onClose={() => setDetailsOpen(false)}
+          onRemove={onRemove}
+          removing={removing}
+        />
       ) : null}
-    </div>
+    </Card>
   );
 }
 
@@ -1148,8 +1296,8 @@ export function BookmarksPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Saved travel options"
-        description="Saved prices and details reflect the time they were bookmarked. Viewing saved items does not refresh live prices."
+        title="Bookmarks"
+        description="Saved hotels, rooms and offers. Prices reflect the time they were bookmarked — viewing saved items does not refresh live prices."
       />
 
       <div
@@ -1260,24 +1408,18 @@ export function BookmarksPage() {
                 </Button>
               </div>
             ) : item.group.length === 1 ? (
-              <div key={item.key} className="relative">
-                <HotelBookmarkCard bookmark={item.group[0]!} />
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="absolute right-3 top-3 z-10"
-                  isLoading={remove.isPending}
-                  onClick={() => remove.mutate(item.group[0]!.id)}
-                >
-                  <Bookmark className="h-4 w-4" aria-hidden="true" />
-                  Remove bookmark
-                </Button>
-              </div>
+              <HotelBookmarkCard
+                key={item.key}
+                bookmark={item.group[0]!}
+                onRemove={(id) => remove.mutate(id)}
+                removing={remove.isPending}
+              />
             ) : (
               <HotelBookmarkGroup
                 key={item.key}
                 group={item.group}
                 onRemove={(id) => remove.mutate(id)}
+                removing={remove.isPending}
               />
             ),
           )}

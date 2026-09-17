@@ -592,11 +592,13 @@ export function LeadForm({
                 ))}
               </select>
             </Field>
-            <div className="md:col-span-2 lg:col-span-3">
-              <Field label="Birth Date">
-                <input className={inputClass} type="date" {...register('dateOfBirth')} />
-              </Field>
-            </div>
+            {lead ? (
+              <div className="md:col-span-2 lg:col-span-3">
+                <Field label="Birth Date">
+                  <input className={inputClass} type="date" {...register('dateOfBirth')} />
+                </Field>
+              </div>
+            ) : null}
           </div>
         </Section>
         <Section title="Travel Details" tone="teal">

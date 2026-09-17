@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -28,6 +28,7 @@ import {
   useDestination,
   useDestinations,
   useHotel,
+  useHotels,
   useUpdateHotel,
 } from '@/features/masters/masters.api';
 import { fieldClass, MasterHeader, RichTextEditor } from './MasterUi';
@@ -36,6 +37,9 @@ import { emptyPlanDraft, HotelPlanDraftPanel, type PlanDraft } from './HotelPlan
 import { MasterImageGalleryField, useMasterImageGallery } from './MasterImageGallery';
 
 const LARGE = new URLSearchParams('pageSize=100&status=ACTIVE');
+
+/** Maximum default hotels per destination (mirrors the server-side cap). */
+const MAX_DEFAULT_HOTELS_PER_DESTINATION = 10;
 
 const HOTEL_HEADER = 'bg-gradient-to-r from-brand-700 to-blue-600';
 const ROOM_HEADER = 'bg-emerald-600';
@@ -128,6 +132,23 @@ export function HotelFormPage() {
   const form = useForm<FormValues>({ defaultValues: empty });
   const destinationId = form.watch('destinationId');
   const destinationDetail = useDestination(destinationId || undefined);
+  // Live count of default hotels for the selected destination (for the
+  // "N / 10" display and the client-side cap guard; the server enforces it).
+  const defaultCountParams = useMemo(() => {
+    const params = new URLSearchParams({
+      status: 'ACTIVE',
+      pageSize: '1',
+      isDefaultForCity: 'true',
+    });
+    if (destinationId) params.set('destinationId', destinationId);
+    return params;
+  }, [destinationId]);
+  const defaultCountQuery = useHotels(defaultCountParams);
+  const defaultCount = destinationId
+    ? (defaultCountQuery.data?.pagination?.total ?? 0)
+    : 0;
+  const currentlyDefault = hotel.data?.isDefaultForCity ?? false;
+  const defaultLimitReached = Boolean(destinationId) && !currentlyDefault && defaultCount >= MAX_DEFAULT_HOTELS_PER_DESTINATION;
   const refreshImageQueries = useRefreshMasterImageQueries('hotels');
   const imageGallery = useMasterImageGallery({
     masterId: hotelId,
@@ -272,6 +293,15 @@ export function HotelFormPage() {
       form.setError('starRating', { message: 'Enter a rating from 0 to 5.' });
       return;
     }
+    if (values.isDefaultForCity && defaultLimitReached) {
+      form.setError('isDefaultForCity', {
+        message: `This destination already has ${MAX_DEFAULT_HOTELS_PER_DESTINATION} default hotels. Unmark an existing default hotel first.`,
+      });
+      setFormError(
+        `This destination already has ${MAX_DEFAULT_HOTELS_PER_DESTINATION} default hotels. Unmark an existing default hotel first.`,
+      );
+      return;
+    }
     const base = {
       destinationId: values.destinationId,
       cityId: values.cityId,
@@ -368,19 +398,34 @@ export function HotelFormPage() {
                     {...form.register('name')}
                   />
                 </Field>
-                <label className="flex items-start gap-2 rounded-lg border bg-slate-50 p-3 text-sm">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    {...form.register('isDefaultForCity')}
-                  />
-                  <span>
-                    <span className="font-medium">Set as default hotel for this city</span>
-                    <span className="block text-xs text-slate-500">
-                      Only one hotel can be default per city.
+                <div className="rounded-lg border bg-slate-50 p-3 text-sm">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      {...form.register('isDefaultForCity')}
+                    />
+                    <span>
+                      <span className="font-medium">Default hotel for this destination</span>
+                      <span className="block text-xs text-slate-500">
+                        Up to {MAX_DEFAULT_HOTELS_PER_DESTINATION} default hotels per destination.
+                        Defaults prefill automatically in new quotations.
+                      </span>
                     </span>
-                  </span>
-                </label>
+                  </label>
+                  {destinationId ? (
+                    <p className="mt-2 text-xs text-slate-500" aria-live="polite">
+                      Default hotels: {defaultCountQuery.isLoading ? '…' : defaultCount} /{' '}
+                      {MAX_DEFAULT_HOTELS_PER_DESTINATION}
+                      {currentlyDefault ? ' (including this hotel)' : ''}
+                    </p>
+                  ) : null}
+                  {errors.isDefaultForCity?.message ? (
+                    <p role="alert" className="mt-1 text-xs text-red-600">
+                      {errors.isDefaultForCity.message}
+                    </p>
+                  ) : null}
+                </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Star Category">
                     <select className={fieldClass} {...form.register('starCategory')}>

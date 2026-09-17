@@ -69,6 +69,7 @@ import {
   getOfferGuestCounts,
   cheapestInGroup,
   countUniqueRooms,
+  resolvePropertyDetails,
   type HotelOfferOption,
   type HotelOfferGroup,
   type HotelOfferSort,
@@ -2981,7 +2982,7 @@ function HotelGallery({ images }: { images: SearchApiImage[] | undefined }) {
   return (
     <SectionCard title="Hotel Images">
       {url ? (
-        <img src={url} alt="Hotel" className="h-56 w-full rounded-lg object-cover" loading="lazy" />
+        <img src={url} alt="Hotel" className="h-40 max-h-[28vh] w-full rounded-lg object-cover sm:h-48" loading="lazy" />
       ) : null}
       {list.length > 1 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -3411,7 +3412,26 @@ function HotelRoomsDrawer({
   const [hotelDetailsOpen, setHotelDetailsOpen] = useState(true);
   const [devOpen, setDevOpen] = useState(false);
 
-  const detail = query.data?.property;
+  // Resolve the real runtime shape: canonical `{ property: {...} }`, with a
+  // fallback to the response itself when it already carries offer keys.
+  // Never assumes featured/all – see hotel-offer-model extractors.
+  const detail = useMemo(() => resolvePropertyDetails(query.data), [query.data]);
+  if (import.meta.env.DEV && query.data) {
+    try {
+      const root = query.data as unknown as Record<string, unknown>;
+      const prop = (root.property ?? root) as Record<string, unknown>;
+      console.debug('[HotelRoomsDrawer] property response shape', {
+        hasProperty: root.property !== undefined,
+        keys: Object.keys(prop ?? {}),
+        featured: Array.isArray(prop?.featured_offers) ? (prop.featured_offers as unknown[]).length : 0,
+        all: Array.isArray(prop?.all_offers) ? (prop.all_offers as unknown[]).length : 0,
+        offers: Array.isArray(prop?.offers) ? (prop.offers as unknown[]).length : 0,
+        topRooms: Array.isArray(prop?.rooms) ? (prop.rooms as unknown[]).length : 0,
+      });
+    } catch {
+      // logging must never break rendering
+    }
+  }
   const currency =
     typeof searchParams.currency === 'string' ? searchParams.currency : SEARCH_DEFAULT_CURRENCY;
 
@@ -3468,12 +3488,14 @@ function HotelRoomsDrawer({
         ? [snap.hotel!.selectedRoom]
         : [];
     const key = (() => {
-      const bedsSig = (opt.beds ?? []).map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
+      const optBeds = Array.isArray(opt.beds) ? opt.beds : [];
+      const bedsSig = optBeds.map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
       const norm = (opt.roomName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
       return [norm || '__provider__', opt.source ?? '', String(opt.guests ?? ''), bedsSig, String(opt.totalPrice?.extracted_price ?? ''), String(opt.totalPrice?.extracted_price_before_taxes ?? ''), String(opt.pricePerNight?.extracted_price ?? ''), opt.cancellation ? 'fc' : 'nfc'].join('\u0000');
     })();
     return (rooms as unknown as Array<Record<string, unknown>>).some((r) => {
-      const b = (r as unknown as { beds?: Array<{ count?: number; type?: string }> })?.beds ?? [];
+      const rawBeds = (r as unknown as { beds?: Array<{ count?: number; type?: string }> })?.beds;
+      const b = Array.isArray(rawBeds) ? rawBeds : [];
       const bs = b.map((bb) => `${bb.count ?? 1}-${(bb.type ?? '').toLowerCase()}`).sort().join('|');
       const n = String((r as unknown as { roomName?: string })?.roomName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
       const rk = [n || '__provider__', String((r as unknown as { supplier?: string })?.supplier ?? ''), String((r as unknown as { guests?: number })?.guests ?? ''), bs, String((r as unknown as { totalPrice?: number })?.totalPrice ?? ''), String((r as unknown as { totalPriceBeforeTaxes?: number })?.totalPriceBeforeTaxes ?? ''), String((r as unknown as { pricePerNight?: number })?.pricePerNight ?? ''), (r as unknown as { freeCancellation?: boolean })?.freeCancellation ? 'fc' : 'nfc'].join('\u0000');
@@ -3488,6 +3510,15 @@ function HotelRoomsDrawer({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Lock the page behind the modal so scrolling happens inside the drawer only.
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
 
   const handleBookmark = (opt: HotelOfferOption) => {
     if (create.isPending) return;
@@ -3563,17 +3594,17 @@ function HotelRoomsDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-black/50 p-2 sm:p-4"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Rooms and offers at ${property.name ?? 'property'}`}
-        className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-card shadow-xl"
+        className="my-auto flex max-h-[90vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-card shadow-xl supports-[height:100dvh]:max-h-[90dvh]"
         onClick={(event) => event.stopPropagation()}
       >
-        {/* HEADER – hotel + stay context */}
+        {/* HEADER – compact hotel + stay context, always visible */}
         <div className="shrink-0 border-b border-border p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -3634,8 +3665,11 @@ function HotelRoomsDrawer({
             {hotelDetailsOpen ? 'Hide hotel details' : 'Hotel details'}
             <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', hotelDetailsOpen && 'rotate-180')} />
           </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
           {hotelDetailsOpen ? (
-            <div className="mt-3 grid gap-3">
+            <div className="grid gap-3 p-4 pb-0">
               <h3 className="text-sm font-semibold text-foreground">Hotel Overview</h3>
               {property.images?.length ? <HotelGallery images={property.images} /> : null}
               <div className="grid gap-3 sm:grid-cols-2">
@@ -3656,9 +3690,7 @@ function HotelRoomsDrawer({
               ) : null}
             </div>
           ) : null}
-        </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
           {query.isPending ? (
             <div className="space-y-3 p-4">
               <p className="flex items-center gap-2 text-sm text-muted-foreground">

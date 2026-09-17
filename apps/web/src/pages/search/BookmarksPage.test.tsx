@@ -787,15 +787,149 @@ describe('BookmarksPage', () => {
     expect(screen.getByText('Basic 8 Bed Mixed Dorm')).toBeInTheDocument();
     expect(screen.getByText('Standard 12 Bed Mixed Dorm')).toBeInTheDocument();
     expect(screen.getByText('Deluxe Room')).toBeInTheDocument();
-    // Each grouped room keeps its own supplier + API Response dropdown + total.
-    expect(screen.getByText('Supplier: Booking.com')).toBeInTheDocument();
-    expect(screen.getByText('Supplier: Agoda')).toBeInTheDocument();
-    expect(screen.getAllByText('API Response ▼').length).toBeGreaterThanOrEqual(3);
-    expect(screen.getAllByText('Total: 4763').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Total: 5040').length).toBeGreaterThan(0);
+    // Each grouped room keeps its own supplier + formatted total.
+    expect(screen.getByText('Booking.com')).toBeInTheDocument();
+    expect(screen.getByText('Agoda')).toBeInTheDocument();
+    expect(screen.getByText('Expedia')).toBeInTheDocument();
+    expect(screen.getByText(/₹4,763/)).toBeInTheDocument();
+    expect(screen.getByText(/₹5,040/)).toBeInTheDocument();
+    // Raw API data is collapsed behind a single developer control per hotel.
+    expect(screen.getByText('Developer details')).toBeInTheDocument();
+    expect(screen.queryByText(/Item 1/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Complete API Details')).not.toBeInTheDocument();
   });
 
-  it('renders the complete stored API response as readable Complete API Details', async () => {
+  describe('Redesigned hotel cards', () => {
+    const impactBookmark = {
+      ...hotelBookmark,
+      id: 'bm-impact',
+      bookmarkCode: 'HTL-000777',
+      title: 'Hotel Impact',
+      currency: 'INR',
+      createdAt: '2026-09-01T10:00:00.000Z',
+      searchParams: {
+        destination: 'Lucknow',
+        check_in_date: '2026-09-26',
+        check_out_date: '2026-10-02',
+        adults: 2,
+        currency: 'INR',
+      },
+      snapshot: {
+        hotel: {
+          name: 'Hotel Impact',
+          propertyType: 'hotel',
+          city: 'Gomti Nagar',
+          country: 'Lucknow',
+          rating: 4.5,
+          reviews: 1504,
+          description:
+            'A comfortable business hotel with modern rooms, a multi-cuisine restaurant and conference facilities for corporate travellers.',
+          pricePerNight: { price: '₹1,710', extracted_price: 1710 },
+          totalPrice: { price: '₹23,934', extracted_price: 23934 },
+          images: [
+            { thumbnail: 'https://img.example.com/i1.jpg', original: 'https://img.example.com/i1-o.jpg' },
+            { thumbnail: 'https://img.example.com/i2.jpg' },
+          ],
+          checkInTime: '2:00 PM',
+          checkOutTime: '12:00 PM',
+          rooms: [
+            {
+              roomName: 'Large Double Room',
+              supplier: 'Booking.com',
+              guests: 2,
+              beds: [{ count: 2 }],
+              roomDescription: 'Breakfast included',
+              pricePerNight: 3166,
+              totalPrice: 19000,
+              freeCancellation: true,
+              offerLink: 'https://book.example/large',
+            },
+            {
+              roomName: 'Deluxe King Room',
+              supplier: 'Agoda',
+              guests: 2,
+              pricePerNight: 3500,
+              totalPrice: 21500,
+              freeCancellation: false,
+              offerLink: 'https://book.example/deluxe',
+            },
+            {
+              roomName: null,
+              supplier: 'Yatra',
+              guests: 2,
+              totalPrice: 23934,
+              offerLink: 'https://book.example/yatra',
+            },
+          ],
+        },
+      },
+    };
+
+    it('shows a compact sales summary: hotel, stay, rooms, suppliers and prices', async () => {
+      stubBookmarkFetch([impactBookmark], []);
+      renderPage();
+
+      await screen.findByText('Hotel Impact');
+      // Hierarchy: rating + reviews, location, stay context.
+      expect(screen.getByText('4.5')).toBeInTheDocument();
+      expect(screen.getByText(/1,504/)).toBeInTheDocument();
+      expect(screen.getByText(/Gomti Nagar/)).toBeInTheDocument();
+      expect(screen.getByText(/26 Sep/)).toBeInTheDocument();
+      // Saved hotel pricing is prominent.
+      expect(screen.getByText('₹23,934')).toBeInTheDocument();
+      expect(screen.getByText('₹1,710')).toBeInTheDocument();
+      // Room vs provider-rate distinction, no invented rooms.
+      expect(screen.getByText('Large Double Room')).toBeInTheDocument();
+      expect(screen.getByText('Deluxe King Room')).toBeInTheDocument();
+      expect(screen.getByText('Provider Rate')).toBeInTheDocument();
+      expect(screen.getByText('Supplier: Yatra')).toBeInTheDocument();
+      // Room-level commercial facts.
+      expect(screen.getByText('2 beds')).toBeInTheDocument();
+      expect(screen.getAllByText('Breakfast included').length).toBeGreaterThan(0);
+      expect(screen.getByText('Free cancellation')).toBeInTheDocument();
+      expect(screen.getByText('Room only')).toBeInTheDocument();
+      expect(screen.getByText('Booking.com')).toBeInTheDocument();
+      expect(screen.getByText(/₹19,000/)).toBeInTheDocument();
+      // No raw API viewer in the normal UI.
+      expect(screen.queryByText('Complete API Details')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Item 1/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Data ID')).not.toBeInTheDocument();
+    });
+
+    it('opens View Details in a modal with rooms, pricing and actions', async () => {
+      stubBookmarkFetch([impactBookmark], []);
+      const { user } = renderPage();
+
+      await screen.findByText('Hotel Impact');
+      await user.click(screen.getByRole('button', { name: 'View Details' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent('Saved rooms & offers (3)');
+      expect(dialog).toHaveTextContent('₹23,934');
+      expect(dialog).toHaveTextContent('Large Double Room');
+      // Raw snapshot stays collapsed inside the modal too.
+      const { within } = await import('@testing-library/react');
+      expect(within(dialog).queryByText(/Item 1/)).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Close saved details' }));
+      await screen.findByText('Hotel Impact');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('Add to Quotation copies the bookmark code without any API call', async () => {
+      const calls: string[] = [];
+      stubBookmarkFetch([impactBookmark], calls);
+      const { user } = renderPage();
+
+      await screen.findByText('Hotel Impact');
+      const callsBefore = calls.length;
+      await user.click(screen.getAllByRole('button', { name: 'Add to Quotation' })[0]!);
+      expect(await screen.findAllByText('Code copied')).toHaveLength(1);
+      expect(screen.getByText(/Hotel Bookmark ID/)).toBeInTheDocument();
+      expect(calls.length).toBe(callsBefore);
+    });
+  });
+
+  it('keeps the stored API response behind a collapsed Developer details control', async () => {
     const saved = {
       ...hotelBookmark,
       id: 'complete-1',
@@ -854,24 +988,24 @@ describe('BookmarksPage', () => {
     };
     const calls: string[] = [];
     stubBookmarkFetch([saved], calls);
-    renderPage();
-    await screen.findByText('Complete API Details');
-    expect(screen.getAllByText('Hotel Golden Deluxe').length).toBeGreaterThan(0);
-    // Readable sections from the stored response.
-    expect(screen.getByText('Search Metadata')).toBeInTheDocument();
-    expect(screen.getByText('Search Parameters')).toBeInTheDocument();
-    expect(screen.getByText('Property Information')).toBeInTheDocument();
-    expect(screen.getByText('Nearby Places')).toBeInTheDocument();
-    expect(screen.getByText('Nearby / Recommended Hotels')).toBeInTheDocument();
-    // Nested data is not omitted: prices, ratings, reviews histogram, offers.
-    expect(screen.getAllByText('Price Per Night').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('₹4,500').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Location rating').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Reviews Histogram').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Offers').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Deluxe Room').length).toBeGreaterThan(0);
-    // Unknown nested field renders automatically (data-driven).
-    expect(screen.getAllByText('Future API field').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('test value').length).toBeGreaterThan(0);
+    const { user } = renderPage();
+    // Normal UI shows the commercial snapshot — never the raw API viewer.
+    await screen.findByText('Taj Exotica Goa');
+    expect(screen.queryByText('Complete API Details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Search Metadata')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Item 1/)).not.toBeInTheDocument();
+    expect(screen.queryByText('GPS Coordinates')).not.toBeInTheDocument();
+    // Saved commercial data still renders (raw-only ₹4,500 stays hidden).
+    expect(screen.getAllByText('₹25,000').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('₹50,000').length).toBeGreaterThan(0);
+    expect(screen.queryByText('₹4,500')).not.toBeInTheDocument();
+    // The full stored response is one collapsed control away.
+    await user.click(screen.getByRole('button', { name: 'Developer details' }));
+    const raw = await screen.findByText(/search_metadata/);
+    expect(raw.textContent).toContain('Hotel Golden Deluxe');
+    expect(raw.textContent).toContain('Deluxe Room');
+    expect(raw.textContent).toContain('future_api_field');
+    expect(raw.textContent).toContain('test value');
+    expect(raw.textContent).toContain('people_also_viewed');
   });
 });

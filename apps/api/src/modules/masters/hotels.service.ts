@@ -389,18 +389,39 @@ function hotelWriteData(input: HotelInput | HotelUpdateInput, canManageCosting: 
   };
 }
 
-/** Within a transaction, make one hotel the sole active default for its city. */
-async function applyDefault(
+/**
+ * Maximum default hotels per destination. Multiple hotels may share default
+ * status within one destination; the flag is destination-scoped (a hotel's
+ * destinationId decides which quota it counts against).
+ */
+export const MAX_DEFAULT_HOTELS_PER_DESTINATION = 10;
+
+/**
+ * Enforce the per-destination default cap inside the caller's transaction.
+ * Counts other active, non-deleted defaults in the destination — existing
+ * defaults are never unmarked or altered here.
+ */
+async function assertDefaultHotelLimit(
   tx: Prisma.TransactionClient,
   companyId: string,
-  cityId: string,
-  hotelId: string,
+  destinationId: string,
+  excludeHotelId?: string,
 ) {
-  await tx.hotel.updateMany({
-    where: { companyId, cityId, isDefaultForCity: true, id: { not: hotelId } },
-    data: { isDefaultForCity: false },
+  const existing = await tx.hotel.count({
+    where: {
+      companyId,
+      destinationId,
+      isDefaultForCity: true,
+      status: 'ACTIVE',
+      deletedAt: null,
+      ...(excludeHotelId ? { id: { not: excludeHotelId } } : {}),
+    },
   });
-  await tx.hotel.update({ where: { id: hotelId }, data: { isDefaultForCity: true } });
+  if (existing >= MAX_DEFAULT_HOTELS_PER_DESTINATION) {
+    throw new ValidationError(
+      `This destination already has the maximum of ${MAX_DEFAULT_HOTELS_PER_DESTINATION} default hotels. Unmark an existing default hotel first.`,
+    );
+  }
 }
 
 export const hotelsService = {
@@ -530,6 +551,8 @@ export const hotelsService = {
     const makeDefault = Boolean(input.isDefaultForCity) && input.status !== 'ARCHIVED';
     try {
       const hotel = await prisma.$transaction(async (tx) => {
+        if (makeDefault)
+          await assertDefaultHotelLimit(tx, auth.companyId, input.destinationId);
         const created = await tx.hotel.create({
           data: {
             companyId: auth.companyId,
@@ -540,10 +563,9 @@ export const hotelsService = {
             status: input.status,
             createdById: auth.userId,
             ...hotelWriteData(input, canManageCosting),
-            isDefaultForCity: false,
+            isDefaultForCity: makeDefault,
           },
         });
-        if (makeDefault) await applyDefault(tx, auth.companyId, created.cityId, created.id);
         await tx.activityLog.create({
           data: audit(auth, 'HOTEL_CREATED', 'Hotel', created.id, context, {
             cityId: created.cityId,
@@ -585,6 +607,8 @@ export const hotelsService = {
     const defaultActive = wantsDefault && !archived;
     try {
       const hotel = await prisma.$transaction(async (tx) => {
+        if (defaultActive)
+          await assertDefaultHotelLimit(tx, auth.companyId, destinationId, current.id);
         await tx.hotel.update({
           where: { id: current.id },
           data: {
@@ -594,10 +618,9 @@ export const hotelsService = {
             ...(input.status
               ? { status: input.status, deletedAt: archived ? new Date() : null }
               : {}),
-            ...(defaultActive ? {} : { isDefaultForCity: false }),
+            isDefaultForCity: defaultActive,
           },
         });
-        if (defaultActive) await applyDefault(tx, auth.companyId, cityId, current.id);
         await tx.activityLog.create({
           data: audit(auth, 'HOTEL_UPDATED', 'Hotel', current.id, context, {
             changedFields: Object.keys(input),
@@ -610,6 +633,7 @@ export const hotelsService = {
           await tx.activityLog.create({
             data: audit(auth, 'HOTEL_DEFAULT_CHANGED', 'Hotel', current.id, context, {
               cityId,
+              destinationId,
               isDefaultForCity: defaultActive,
             }),
           });

@@ -218,7 +218,7 @@ export function HotelDetailsPage() {
                 <StatusBadge value={value.status} />
                 {value.isDefaultForCity && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">
-                    <Star className="h-3 w-3" /> Default for city
+                    <Star className="h-3 w-3" /> Default hotel
                   </span>
                 )}
               </div>

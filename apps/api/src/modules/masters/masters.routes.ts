@@ -744,6 +744,7 @@ router.patch(
 const vehicleList = z.object({
   ...commonList,
   vehicleType: z.string().trim().max(120).optional(),
+  destinationId: z.string().uuid().optional(),
   sortBy: z.enum(['name', 'capacity', 'createdAt', 'updatedAt']).optional(),
 });
 

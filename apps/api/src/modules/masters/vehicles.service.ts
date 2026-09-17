@@ -51,9 +51,16 @@ const has = (auth: AuthContext, permission: string) =>
 const blankToNull = (value: string | null | undefined): string | null => value?.trim() || null;
 const PRESIGN_TTL = env.MASTER_MEDIA_PRESIGNED_URL_EXPIRY_SECONDS;
 
+/** Maximum destinations assignable to one vehicle (0–10). */
+export const MAX_DESTINATIONS_PER_VEHICLE = 10;
+
 const vehicleInclude = {
   createdBy: { select: userSelect },
   updatedBy: { select: userSelect },
+  destinations: {
+    orderBy: { sequence: 'asc' },
+    select: { destination: { select: { id: true, name: true } } },
+  },
 } as const;
 
 function audit(
@@ -73,6 +80,54 @@ function audit(
     userAgent: context.userAgent,
     ...(metadata === undefined ? {} : { metadata }),
   };
+}
+
+/**
+ * Validate + normalize a vehicle's destination assignment: deduped (order
+ * preserved), at most MAX_DESTINATIONS_PER_VEHICLE, every id referencing a
+ * destination visible to this company. IDs stay authoritative; names are
+ * always resolved through the link.
+ */
+async function resolveVehicleDestinationIds(
+  auth: AuthContext,
+  destinationIds: unknown,
+): Promise<string[]> {
+  const ids = [
+    ...new Set(
+      (Array.isArray(destinationIds) ? destinationIds : []).filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      ),
+    ),
+  ];
+  if (ids.length > MAX_DESTINATIONS_PER_VEHICLE) {
+    throw new ValidationError(
+      `A vehicle can be assigned to at most ${MAX_DESTINATIONS_PER_VEHICLE} destinations.`,
+    );
+  }
+  if (!ids.length) return [];
+  const scope = await resolveMasterScope(auth, MASTER_TYPE.DESTINATION);
+  const rows = await prisma.destination.findMany({
+    where: { id: { in: ids }, deletedAt: null, ...buildVisibleWhere(scope) },
+    select: { id: true },
+  });
+  if (rows.length !== ids.length) {
+    throw new ValidationError('One or more selected destinations are invalid.');
+  }
+  return ids;
+}
+
+/** Flatten the ordered destination links for API responses. */
+function presentVehicleDestinations(row: Record<string, unknown>): Array<{ id: string; name: string }> {
+  const links = row.destinations;
+  if (!Array.isArray(links)) return [];
+  return links.flatMap((link) => {
+    const destination = (link as Record<string, unknown>)?.destination as
+      | { id?: unknown; name?: unknown }
+      | undefined;
+    return typeof destination?.id === 'string' && typeof destination?.name === 'string'
+      ? [{ id: destination.id, name: destination.name }]
+      : [];
+  });
 }
 
 /** Drop tenant internals and raw storage keys before the row leaves the API. */
@@ -110,6 +165,7 @@ function presentVehicle<T extends Record<string, unknown>>(row: T, scope: Master
     price: num((safe as Record<string, unknown>).price),
     hasImage: Boolean(imageObjectKey && row.imageConfirmedAt),
     images: presentMasterImages(row as unknown as Parameters<typeof presentMasterImages>[0]),
+    destinations: presentVehicleDestinations(row as Record<string, unknown>),
   };
 }
 
@@ -171,6 +227,8 @@ export const vehiclesService = {
     const search = typeof query.search === 'string' ? query.search.trim() : '';
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const vehicleType = typeof query.vehicleType === 'string' ? query.vehicleType.trim() : '';
+    const destinationId =
+      typeof query.destinationId === 'string' && query.destinationId ? query.destinationId : undefined;
     const where: Prisma.VehicleWhereInput = {
       ...buildVisibleWhere(scope),
       ...(canManageVehicles
@@ -179,6 +237,7 @@ export const vehiclesService = {
           : { deletedAt: null, ...(status ? { status } : {}) }
         : { status: 'ACTIVE', deletedAt: null }),
       ...(vehicleType ? { vehicleType: { equals: vehicleType, mode: 'insensitive' } } : {}),
+      ...(destinationId ? { destinations: { some: { destinationId } } } : {}),
       ...(search
         ? {
             OR: [
@@ -251,9 +310,25 @@ export const vehiclesService = {
       },
       orderBy: { name: 'asc' },
       take: 100,
-      select: { id: true, name: true, vehicleType: true, capacity: true, price: true, currency: true },
+      select: {
+        id: true,
+        name: true,
+        vehicleType: true,
+        capacity: true,
+        price: true,
+        currency: true,
+        destinations: {
+          orderBy: { sequence: 'asc' },
+          select: { destination: { select: { id: true, name: true } } },
+        },
+      },
     });
-    return { vehicles };
+    return {
+      vehicles: vehicles.map((vehicle) => ({
+        ...vehicle,
+        destinations: presentVehicleDestinations(vehicle as unknown as Record<string, unknown>),
+      })),
+    };
   },
 
   async details(auth: AuthContext, vehicleId: string) {
@@ -266,6 +341,8 @@ export const vehiclesService = {
 
   async create(auth: AuthContext, input: VehicleInput, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.VEHICLE);
+    const destinationIds =
+      'destinationIds' in input ? await resolveVehicleDestinationIds(auth, input.destinationIds) : [];
     try {
       const vehicle = await prisma.$transaction(async (tx) => {
         const created = await tx.vehicle.create({
@@ -278,16 +355,29 @@ export const vehiclesService = {
             createdById: auth.userId,
             ...writeData(input),
           },
-          include: vehicleInclude,
         });
+        if (destinationIds.length) {
+          await tx.vehicleDestination.createMany({
+            data: destinationIds.map((destinationId, index) => ({
+              companyId: auth.companyId,
+              vehicleId: created.id,
+              destinationId,
+              sequence: index,
+            })),
+          });
+        }
         await tx.activityLog.create({
           data: audit(auth, 'VEHICLE_CREATED', created.id, context, {
             vehicleType: created.vehicleType,
             capacity: created.capacity,
             sourceGlobal: scope.isSystemAdmin,
+            ...('destinationIds' in input ? { destinationIds } : {}),
           }),
         });
-        return created;
+        return tx.vehicle.findUniqueOrThrow({
+          where: { id: created.id },
+          include: vehicleInclude,
+        });
       });
       return presentVehicle(vehicle as unknown as Record<string, unknown>, scope);
     } catch (error) {
@@ -304,9 +394,11 @@ export const vehiclesService = {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.VEHICLE);
     const current = await getVehicle(auth, vehicleId, scope, true);
     assertCanModifyMaster(current, scope);
+    const destinationIds =
+      'destinationIds' in input ? await resolveVehicleDestinationIds(auth, input.destinationIds) : undefined;
     try {
       const vehicle = await prisma.$transaction(async (tx) => {
-        const updated = await tx.vehicle.update({
+        await tx.vehicle.update({
           where: { id: current.id },
           data: {
             ...writeData(input),
@@ -315,14 +407,29 @@ export const vehiclesService = {
               ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
               : {}),
           },
-          include: vehicleInclude,
         });
+        if (destinationIds !== undefined) {
+          await tx.vehicleDestination.deleteMany({ where: { vehicleId: current.id } });
+          if (destinationIds.length) {
+            await tx.vehicleDestination.createMany({
+              data: destinationIds.map((destinationId, index) => ({
+                companyId: auth.companyId,
+                vehicleId: current.id,
+                destinationId,
+                sequence: index,
+              })),
+            });
+          }
+        }
         await tx.activityLog.create({
           data: audit(auth, 'VEHICLE_UPDATED', current.id, context, {
             changedFields: Object.keys(input),
           }),
         });
-        return updated;
+        return tx.vehicle.findUniqueOrThrow({
+          where: { id: current.id },
+          include: vehicleInclude,
+        });
       });
       return presentVehicle(vehicle as unknown as Record<string, unknown>, scope);
     } catch (error) {

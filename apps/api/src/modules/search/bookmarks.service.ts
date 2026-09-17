@@ -651,9 +651,12 @@ export const bookmarksService = {
       delete (incomingHotel as unknown as Record<string, unknown>).__master;
       delete (snapshot as unknown as Record<string, unknown>).__isHierarchicalRoomAppend;
 
-      // Helper to get room key for duplicate detection – mirrors shared hotelRoomSelectionKey
+      // Helper to get room key for duplicate detection – mirrors shared hotelRoomSelectionKey.
+      // Provider snapshots vary: beds must be an array before mapping, otherwise
+      // a single malformed entry would 500 every future bookmark for the hotel.
       const roomKey = (r: Record<string, unknown>): string => {
-        const beds = (r.beds as Array<{ count?: number; type?: string }> | null) ?? [];
+        const rawBeds = r.beds as Array<{ count?: number; type?: string }> | null | undefined;
+        const beds = Array.isArray(rawBeds) ? rawBeds : [];
         const bedsSig = beds.map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
         const normName = String(r.roomName ?? '')
           .trim()

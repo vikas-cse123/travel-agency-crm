@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { Save, X } from 'lucide-react';
@@ -12,6 +12,7 @@ import {
   reorderVehicleImages,
   useRefreshMasterImageQueries,
   useCreateVehicle,
+  useDestinations,
   useUpdateVehicle,
   useVehicle,
   useVehicleTypes,
@@ -30,7 +31,11 @@ interface FormValues {
   price: string;
   currency: string;
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  destinationIds: string[];
 }
+
+/** Maximum destinations assignable to one vehicle (mirrors the server cap). */
+const MAX_DESTINATIONS_PER_VEHICLE = 10;
 
 /**
  * Create/edit Vehicle — a single two-column card, matching the reference.
@@ -51,8 +56,36 @@ export function VehicleFormPage() {
   const [formError, setFormError] = useState('');
 
   const form = useForm<FormValues>({
-    defaultValues: { name: '', vehicleType: '', capacity: '', description: '', price: '', currency: 'INR', status: 'ACTIVE' },
+    defaultValues: { name: '', vehicleType: '', capacity: '', description: '', price: '', currency: 'INR', status: 'ACTIVE', destinationIds: [] },
   });
+  const destinations = useDestinations(
+    useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
+  );
+  const selectedDestinationIds = form.watch('destinationIds') ?? [];
+  const [destinationError, setDestinationError] = useState('');
+
+  const addDestination = (destinationId: string) => {
+    if (!destinationId) return;
+    const current = form.getValues('destinationIds') ?? [];
+    if (current.includes(destinationId)) return;
+    if (current.length >= MAX_DESTINATIONS_PER_VEHICLE) {
+      setDestinationError(
+        `A vehicle can be assigned to at most ${MAX_DESTINATIONS_PER_VEHICLE} destinations.`,
+      );
+      return;
+    }
+    setDestinationError('');
+    form.setValue('destinationIds', [...current, destinationId], { shouldDirty: true });
+  };
+
+  const removeDestination = (destinationId: string) => {
+    setDestinationError('');
+    form.setValue(
+      'destinationIds',
+      (form.getValues('destinationIds') ?? []).filter((id) => id !== destinationId),
+      { shouldDirty: true },
+    );
+  };
   const refreshImageQueries = useRefreshMasterImageQueries('vehicles');
   const imageGallery = useMasterImageGallery({
     masterId: vehicleId,
@@ -80,6 +113,7 @@ export function VehicleFormPage() {
       price: value.price != null ? String(value.price) : '',
       currency: value.currency ?? 'INR',
       status: value.status as FormValues['status'],
+      destinationIds: (value.destinations ?? []).map((destination) => destination.id),
     });
   }, [vehicle.data, form]);
 
@@ -88,6 +122,12 @@ export function VehicleFormPage() {
 
   const submit = form.handleSubmit(async (values) => {
     setFormError('');
+    if (values.destinationIds.length > MAX_DESTINATIONS_PER_VEHICLE) {
+      setDestinationError(
+        `A vehicle can be assigned to at most ${MAX_DESTINATIONS_PER_VEHICLE} destinations.`,
+      );
+      return;
+    }
     const payload = {
       name: values.name.trim(),
       vehicleType: values.vehicleType.trim(),
@@ -96,6 +136,7 @@ export function VehicleFormPage() {
       price: values.price === '' ? null : Number(values.price),
       currency: values.currency || 'INR',
       status: values.status,
+      destinationIds: values.destinationIds,
     };
     try {
       const saved = vehicleId
@@ -232,6 +273,72 @@ export function VehicleFormPage() {
                   <option value="ARCHIVED">ARCHIVED</option>
                 </select>
               </label>
+
+              <div>
+                <span className="block text-sm font-medium text-slate-700">Destinations</span>
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  Assign up to {MAX_DESTINATIONS_PER_VEHICLE} destinations for automatic
+                  quotation prefill.
+                </span>
+                {selectedDestinationIds.length > 0 && (
+                  <span className="mt-2 flex flex-wrap gap-1.5">
+                    {selectedDestinationIds.map((destinationId) => {
+                      const match = (destinations.data?.data ?? []).find(
+                        (destination) => destination.id === destinationId,
+                      );
+                      return (
+                        <span
+                          key={destinationId}
+                          className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"
+                        >
+                          {match?.name ?? 'Destination'}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${match?.name ?? 'destination'}`}
+                            onClick={() => removeDestination(destinationId)}
+                            className="rounded p-0.5 text-brand-400 hover:bg-brand-100 hover:text-brand-700"
+                          >
+                            <X className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </span>
+                )}
+                <span className="mt-2 flex items-center gap-2">
+                  <select
+                    aria-label="Select destination"
+                    className={fieldClass}
+                    value=""
+                    disabled={
+                      selectedDestinationIds.length >= MAX_DESTINATIONS_PER_VEHICLE ||
+                      destinations.isLoading
+                    }
+                    onChange={(event) => {
+                      addDestination(event.target.value);
+                      event.target.value = '';
+                    }}
+                  >
+                    <option value="">+ Select Destination</option>
+                    {(destinations.data?.data ?? [])
+                      .filter((destination) => !selectedDestinationIds.includes(destination.id))
+                      .map((destination) => (
+                        <option key={destination.id} value={destination.id}>
+                          {destination.name}
+                        </option>
+                      ))}
+                  </select>
+                </span>
+                <span className="mt-1 block text-xs text-slate-500" aria-live="polite">
+                  {selectedDestinationIds.length} / {MAX_DESTINATIONS_PER_VEHICLE} destinations
+                  selected
+                </span>
+                {destinationError && (
+                  <span role="alert" className="mt-1 block text-xs font-medium text-red-600">
+                    {destinationError}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="space-y-4">

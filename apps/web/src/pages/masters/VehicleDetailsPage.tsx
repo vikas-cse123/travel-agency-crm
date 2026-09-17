@@ -128,6 +128,28 @@ export function VehicleDetailsPage() {
           </div>
         </div>
         <div className="border-t p-4">
+          <h3 className="mb-2 text-sm font-semibold text-slate-800">
+            Destinations{' '}
+            <span className="font-normal text-slate-500">
+              {(value.destinations?.length ?? 0)} / 10
+            </span>
+          </h3>
+          {(value.destinations?.length ?? 0) > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {(value.destinations ?? []).map((destination) => (
+                <span
+                  key={destination.id}
+                  className="rounded-md bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"
+                >
+                  {destination.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No destinations assigned.</p>
+          )}
+        </div>
+        <div className="border-t p-4">
           <h3 className="mb-2 text-sm font-semibold text-slate-800">Description</h3>
           <p className="whitespace-pre-wrap text-sm text-slate-700">
             {value.description || 'No description added.'}

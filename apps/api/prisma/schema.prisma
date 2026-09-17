@@ -1050,6 +1050,7 @@ model Company {
   cities                       City[]
   destinations                 Destination[]
   destinationCities            DestinationCity[]
+  vehicleDestinations          VehicleDestination[]
   hotels                       Hotel[]
   hotelRoomTypes               HotelRoomType[]
   hotelMealPlans               HotelMealPlan[]
@@ -1565,6 +1566,7 @@ model Destination {
   hotels       Hotel[]
   sightseeings Sightseeing[]
   visaTypes    VisaType[]
+  vehicleLinks VehicleDestination[]
 
   @@index([companyId, countryCode, normalizedName])
   @@index([companyId, destinationType, status, deletedAt])
@@ -2305,6 +2307,8 @@ model Vehicle {
   createdBy User    @relation("VehicleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy User?   @relation("VehicleUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
+  destinations VehicleDestination[]
+
   quotationVersionServices  QuotationVersionService[]
   quotationTemplateServices QuotationTemplateService[]
   bookingServices           BookingService[]
@@ -2316,6 +2320,26 @@ model Vehicle {
   @@index([createdById])
   @@index([updatedById])
   @@map("vehicles")
+}
+
+/// Destination assignments for a vehicle master (0–10 destinations).
+/// The ordered link preserves the user's selection order; the destination
+/// itself is resolved through the link so IDs stay authoritative.
+model VehicleDestination {
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @db.Uuid
+  vehicleId     String   @db.Uuid
+  destinationId String   @db.Uuid
+  sequence      Int
+  createdAt     DateTime @default(now())
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  vehicle     Vehicle     @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  destination Destination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@unique([vehicleId, destinationId])
+  @@index([companyId, destinationId])
+  @@map("vehicle_destinations")
 }
 
 // ---------------------------------------------------------------------------

@@ -204,6 +204,34 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Flight' }));
     expect(screen.getByRole('checkbox', { name: 'Flight' })).toBeChecked();
   });
+  it('hides Birth Date on the create form but keeps it on the edit form', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    expect(screen.queryByLabelText('Birth Date')).not.toBeInTheDocument();
+    // Neighboring fields still render (no layout gap left behind).
+    expect(screen.getByLabelText('Assigned salesperson')).toBeInTheDocument();
+  });
+  it('keeps Birth Date visible on the edit form', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(lead);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    expect(screen.getByLabelText('Birth Date')).toBeInTheDocument();
+  });
   it('creates a new lead without adding Visa', async () => {
     authState.permissions.delete('queries.assign');
     const destination = {
