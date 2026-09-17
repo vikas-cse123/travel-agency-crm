@@ -38,6 +38,11 @@ import { PERMISSIONS } from '@interscale/shared';
 // are untouched.
 export const SHOW_VISA_TYPES_MASTER_NAVIGATION = false;
 
+// The "Destination Experts" masters item is temporarily hidden from the UI.
+// Set this back to true to restore it; the route, pages, API and database
+// data are untouched.
+export const SHOW_DESTINATION_EXPERTS_MASTER_NAVIGATION = false;
+
 // The "Quotation Templates" and "Bookings" items are temporarily hidden from
 // the sidebar. Set these back to true to restore them; their routes, pages,
 // permissions and data are untouched.
@@ -331,14 +336,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
         permission: PERMISSIONS.MASTER_ADD_ON_SERVICES_VIEW,
         section: NAV_SECTION.MASTERS,
       },
-      {
-        label: 'Destination Experts',
-        to: '/masters/destination-experts',
-        icon: UserRound,
-        available: true,
-        permission: PERMISSIONS.QUOTATIONS_VIEW,
-        section: NAV_SECTION.MASTERS,
-      },
+      ...(SHOW_DESTINATION_EXPERTS_MASTER_NAVIGATION
+        ? [
+            {
+              label: 'Destination Experts',
+              to: '/masters/destination-experts',
+              icon: UserRound,
+              available: true,
+              permission: PERMISSIONS.QUOTATIONS_VIEW,
+              section: NAV_SECTION.MASTERS,
+            },
+          ]
+        : []),
       {
         label: 'FAQs',
         to: '/masters/faqs',

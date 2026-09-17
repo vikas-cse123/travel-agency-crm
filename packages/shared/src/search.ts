@@ -796,8 +796,10 @@ export interface HotelBookmarkSnapshot {
   hotelId?: string | null;
   /** Room-type master id created under `hotelId` (room bookmarks only). */
   roomTypeId?: string | null;
-  /** Present only when the bookmark was saved from a specific room offer. */
+  /** Present only when the bookmark was saved from a specific room offer. @deprecated use rooms */
   selectedRoom?: HotelRoomSelection | null;
+  /** Hierarchical: multiple room/rate selections under one hotel. Preserves selectedRoom for old HTL-* */
+  rooms?: HotelRoomSelection[];
 }
 
 /** The full snapshot stored on a bookmark: normalized + original provider data. */
@@ -899,4 +901,21 @@ export function hotelFingerprint(
   propertyTokenOrName: string,
 ): string {
   return hashFingerprint(LIVE_SEARCH_BOOKMARK_PROVIDER, 'HOTEL', searchParams, propertyTokenOrName);
+}
+
+/** Stable identity for a room/rate under a hotel – prevents duplicate children. */
+export function hotelRoomSelectionKey(selection: HotelRoomSelection): string {
+  // At minimum: roomName + supplier + guests + totalPrice + beforeTaxes + beds signature
+  const bedsSig = (selection.beds ?? []).map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
+  const normName = (selection.roomName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return [
+    normName || '__provider__',
+    selection.supplier ?? '',
+    String(selection.guests ?? ''),
+    bedsSig,
+    String(selection.totalPrice ?? ''),
+    String(selection.totalPriceBeforeTaxes ?? ''),
+    String(selection.pricePerNight ?? ''),
+    selection.freeCancellation ? 'fc' : 'nfc',
+  ].join('\u0000');
 }

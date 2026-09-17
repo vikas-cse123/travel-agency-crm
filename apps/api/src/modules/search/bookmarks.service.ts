@@ -560,34 +560,51 @@ export const bookmarksService = {
       }
     } else {
       if (input.snapshot.hotel) {
-        const hotel = input.snapshot.hotel;
-        title = (hotel.name ?? 'Property').slice(0, TITLE_MAX);
-        // A saved room selection gets its own fingerprint so two different
-        // rooms of the same property never overwrite each other (the create
-        // path is otherwise idempotent per property).
-        const identity = hotel.selectedRoom
-          ? [
-              hotel.propertyToken ?? hotel.dataId ?? hotel.name ?? '',
-              hotel.selectedRoom.roomName ?? '',
-              hotel.selectedRoom.supplier ?? '',
-            ].join('|')
-          : (hotel.propertyToken ?? hotel.dataId ?? hotel.name ?? '');
-        fingerprint = hotelFingerprint(input.searchParams, identity);
-
-        // Attach a room selection to the (existing or newly created) Hotel
-        // master. Best-effort: the bookmark persists even when no master can
-        // be resolved. The master ids are kept on the snapshot so the
-        // quotation import can link straight to them.
-        const master = hotel.selectedRoom
-          ? await attachRoomToHotelMaster(auth, hotel)
-          : null;
-        snapshot = {
-          hotel: {
-            ...hotel,
-            ...(master ? { hotelId: master.hotelId, roomTypeId: master.roomTypeId } : {}),
-          },
-          raw: input.snapshot.raw,
+        const hotel = input.snapshot.hotel as unknown as Record<string, unknown> & {
+          name?: string;
+          propertyToken?: string | null;
+          dataId?: string | null;
+          selectedRoom?: Record<string, unknown> | null;
+          rooms?: unknown[];
         };
+        const incomingRoom = (hotel.selectedRoom ?? null) as unknown as
+          | (Record<string, unknown> & { roomName?: string | null; supplier?: string | null; guests?: number | null; totalPrice?: number | null })
+          | null;
+        title = (hotel.name ?? 'Property').slice(0, TITLE_MAX);
+        // Hierarchical: hotel identity is property only – all rooms for same hotel share one bookmark
+        const hotelIdentity = (hotel.propertyToken as string | null) ?? (hotel.dataId as string | null) ?? (hotel.name as string | null) ?? '';
+        fingerprint = hotelFingerprint(input.searchParams as Record<string, unknown>, hotelIdentity);
+
+        // If this is a hotel-level bookmark without a specific room, just store hotel
+        if (!incomingRoom) {
+          const master = null;
+          snapshot = {
+            hotel: {
+              ...(hotel as object),
+              ...(master ? { hotelId: (master as unknown as { hotelId: string }).hotelId, roomTypeId: (master as unknown as { roomTypeId: string }).roomTypeId } : {}),
+            } as unknown as typeof hotel,
+            raw: input.snapshot.raw,
+          } as unknown as typeof snapshot;
+        } else {
+          // For hierarchical flow, we will handle merging after checking existing bookmark
+          // Defer snapshot construction until after existing check – keep incoming data for now
+          // Attach master for this specific room (best-effort)
+          const master = await attachRoomToHotelMaster(auth, hotel as unknown as Parameters<typeof attachRoomToHotelMaster>[1]);
+          // Build a normalized room entry to store in hotel.rooms
+          const roomToStore = {
+            ...incomingRoom,
+            ...(master ? { hotelId: master.hotelId, roomTypeId: master.roomTypeId } : {}),
+          };
+          // We will merge below after fetching existing – placeholder snapshot
+          (hotel as unknown as Record<string, unknown>).__incomingRoom = roomToStore;
+          (hotel as unknown as Record<string, unknown>).__master = master;
+          snapshot = {
+            hotel: hotel as unknown as typeof hotel,
+            raw: input.snapshot.raw,
+          } as unknown as typeof snapshot;
+          // Attach a tag so post-existing logic knows this is a room append
+          (snapshot as unknown as Record<string, unknown>).__isHierarchicalRoomAppend = true;
+        }
       } else {
         const raw = (input.snapshot.raw ?? {}) as RawHotelProperty;
         const built = buildHotelBookmark(input.searchParams, raw);
@@ -618,8 +635,112 @@ export const bookmarksService = {
       where: { userId_fingerprint: { userId: auth.userId, fingerprint } },
     });
 
+    // Hierarchical hotel handling: incoming snapshot carries __isHierarchicalRoomAppend
+    const isHierarchicalAppend =
+      (snapshot as unknown as Record<string, unknown>).__isHierarchicalRoomAppend === true;
+    if (isHierarchicalAppend) {
+      const incomingHotel = (snapshot as unknown as { hotel: Record<string, unknown> }).hotel;
+      const incomingRoom = (incomingHotel as unknown as Record<string, unknown>).__incomingRoom as
+        | Record<string, unknown>
+        | null;
+      const incomingMaster = (incomingHotel as unknown as Record<string, unknown>).__master as
+        | { hotelId: string; roomTypeId: string }
+        | null;
+      // Clean temp fields for storage
+      delete (incomingHotel as unknown as Record<string, unknown>).__incomingRoom;
+      delete (incomingHotel as unknown as Record<string, unknown>).__master;
+      delete (snapshot as unknown as Record<string, unknown>).__isHierarchicalRoomAppend;
+
+      // Helper to get room key for duplicate detection – mirrors shared hotelRoomSelectionKey
+      const roomKey = (r: Record<string, unknown>): string => {
+        const beds = (r.beds as Array<{ count?: number; type?: string }> | null) ?? [];
+        const bedsSig = beds.map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
+        const normName = String(r.roomName ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, ' ');
+        return [
+          normName || '__provider__',
+          String(r.supplier ?? ''),
+          String(r.guests ?? ''),
+          bedsSig,
+          String(r.totalPrice ?? ''),
+          String(r.totalPriceBeforeTaxes ?? ''),
+          String(r.pricePerNight ?? ''),
+          r.freeCancellation ? 'fc' : 'nfc',
+        ].join('\u0000');
+      };
+
+      if (existing) {
+        const existingSnap = existing.snapshot as unknown as {
+          hotel?: Record<string, unknown>;
+          raw?: unknown;
+        };
+        const existingHotel = (existingSnap.hotel ?? {}) as Record<string, unknown>;
+        const existingRoomsRaw = existingHotel.rooms as unknown[] | undefined;
+        const existingSelected = existingHotel.selectedRoom as Record<string, unknown> | undefined;
+        const existingRooms: Record<string, unknown>[] = Array.isArray(existingRoomsRaw)
+          ? (existingRoomsRaw as Record<string, unknown>[])
+          : existingSelected
+            ? [existingSelected]
+            : [];
+        // Check duplicate – at minimum roomName+supplier, consider guests/total for different rates
+        const incomingKey = incomingRoom ? roomKey(incomingRoom) : '';
+        const isDuplicate = incomingRoom
+          ? existingRooms.some((r) => roomKey(r) === incomingKey)
+          : false;
+        if (isDuplicate) {
+          return { bookmark: toDto(existing), created: false };
+        }
+        const newRooms = incomingRoom ? [...existingRooms, incomingRoom] : existingRooms;
+        // Merge hotel fields – keep existing hotel data, update with incoming hotel base (without selectedRoom duplicate)
+        const { selectedRoom: _oldSel, rooms: _oldRooms, __incomingRoom: __, __master: __m, ...incomingHotelClean } =
+          incomingHotel as Record<string, unknown>;
+        const mergedHotel = {
+          ...(existingHotel as object),
+          ...(incomingHotelClean as object),
+          rooms: newRooms,
+          // Keep selectedRoom for old HTL-* compat – point to latest added room
+          selectedRoom: incomingRoom ?? existingHotel.selectedRoom ?? null,
+          ...(incomingMaster ? { hotelId: incomingMaster.hotelId, roomTypeId: incomingMaster.roomTypeId } : {}),
+        };
+        const mergedSnapshot = {
+          hotel: mergedHotel,
+          raw: (snapshot as unknown as { raw?: unknown }).raw ?? existingSnap.raw,
+        };
+        const updated = await prisma.liveSearchBookmark.update({
+          where: { id: existing.id },
+          data: {
+            searchParams: input.searchParams as Prisma.InputJsonValue,
+            snapshot: mergedSnapshot as unknown as Prisma.InputJsonValue,
+          },
+        });
+        return { bookmark: toDto(updated), created: false };
+      } else {
+        // No existing hotel bookmark – create new with rooms array
+        const newRooms = incomingRoom ? [incomingRoom] : [];
+        const { __incomingRoom: __, __master: __m, selectedRoom: _sel, ...hotelClean } =
+          incomingHotel as Record<string, unknown>;
+        const hotelForCreate = {
+          ...(hotelClean as object),
+          rooms: newRooms,
+          // Backward compat: keep selectedRoom as first room
+          ...(incomingRoom ? { selectedRoom: incomingRoom } : {}),
+          ...(incomingMaster ? { hotelId: incomingMaster.hotelId, roomTypeId: incomingMaster.roomTypeId } : {}),
+        };
+        // Override snapshot for creation path below
+        snapshot = {
+          hotel: hotelForCreate,
+          raw: (snapshot as unknown as { raw?: unknown }).raw,
+        } as unknown as typeof snapshot;
+        // Fall through to creation logic below (existing is null, so will create)
+      }
+    }
+
     if (existing) {
-      // Idempotent: update the existing bookmark rather than creating a duplicate.
+      // Idempotent: update the existing bookmark rather than creating a duplicate (non-hierarchical or already handled hierarchical duplicate above).
+      // For hierarchical, this path is for duplicate case already returned; for non-hierarchical, update.
+      // If we reach here for hierarchical, it means we already handled duplicate/merge and returned, but keep fallback
       const updated = await prisma.liveSearchBookmark.update({
         where: { id: existing.id },
         data: {

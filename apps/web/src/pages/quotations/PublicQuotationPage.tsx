@@ -35,6 +35,7 @@ import {
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
+  resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
   resolveItineraryActivityImage,
@@ -2660,8 +2661,12 @@ export function PublicQuotationPage() {
                         : !snapshotPresent && presentation?.imageUrl
                           ? [{ url: presentation.imageUrl, alt: cruise.name }]
                           : [];
-                      const duration = cruise.notes?.trim();
-                      const roomType = presentation?.roomTypeName?.trim() || cruise.city?.trim();
+                      const cruiseNights = (cruise as unknown as { cruiseNights?: number | null }).cruiseNights;
+                      const duration = cruiseNights != null && Number(cruiseNights) > 0
+                        ? `${cruiseNights} Night${Number(cruiseNights) !== 1 ? 's' : ''} · ${Number(cruiseNights) + 1} Days`
+                        : cruise.notes?.trim() || null;
+                      const roomLines = resolveCruiseRoomLines(cruise as unknown as Parameters<typeof resolveCruiseRoomLines>[0]);
+                      const roomTypeFallback = presentation?.roomTypeName?.trim() || cruise.city?.trim() || null;
                       const rawDescription = cruise.description?.trim() ?? '';
                       const descriptionHasText = Boolean(
                         rawDescription.replace(/<[^>]*>/g, '').trim(),
@@ -2693,11 +2698,21 @@ export function PublicQuotationPage() {
                                 <strong>Duration:</strong> {duration}
                               </p>
                             )}
-                            {roomType && (
+                            {roomLines.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {roomLines.map((line, lineIndex) => (
+                                  <span key={lineIndex} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-[#000000]">
+                                    <strong className="text-xs font-medium uppercase tracking-wide text-[#000000]">Room {lineIndex + 1}</strong>{' '}
+                                    {(line.roomType ?? '').trim() || roomTypeFallback || 'Room'}
+                                    {line.rooms != null && line.rooms !== 1 ? ` — ${line.rooms} rooms` : ' — 1 room'}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : roomTypeFallback ? (
                               <p className="text-sm text-[#000000]">
-                                <strong>Room Type:</strong> {roomType}
+                                <strong>Room Type:</strong> {roomTypeFallback}
                               </p>
-                            )}
+                            ) : null}
                             {showDescription && (
                               <div className="border-t pt-3">
                                 <RichHtml html={rawDescription} />

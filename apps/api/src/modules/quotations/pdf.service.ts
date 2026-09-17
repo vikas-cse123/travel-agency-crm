@@ -7,6 +7,7 @@ import {
   isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
   normalizeFaqs,
+  resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
   resolveItineraryActivityImage,
@@ -2634,12 +2635,20 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
       planner.pageBreak();
       planner.add(sectionHeaderBlock('Cruise Details'));
       cruiseServices.forEach((row) => {
+        const cruiseNights = (row as unknown as { cruiseNights?: number | null }).cruiseNights;
+        const duration = cruiseNights != null && Number(cruiseNights) > 0
+          ? `${cruiseNights} Nights · ${Number(cruiseNights) + 1} Days`
+          : toText(row.notes) || null;
+        const roomLines = resolveCruiseRoomLines(row as unknown as Parameters<typeof resolveCruiseRoomLines>[0]);
+        const cabin = roomLines.length
+          ? roomLines.map((line, idx) => `${(line.roomType ?? '').trim() || 'Room'}${line.rooms !== 1 ? ` ×${line.rooms}` : ''}${roomLines.length > 1 ? ` (#${idx + 1})` : ''}`).join(' · ')
+          : toText(row.city) || null;
         planner.add(
           buildServiceCard(
             row,
             [
-              ['Duration', row.notes],
-              ['Cabin', row.city],
+              ['Duration', duration],
+              ['Cabin', cabin],
             ],
             'Cruise',
           ),

@@ -61,6 +61,19 @@ import { resolveHotelImageCandidates } from '@/features/search/hotel-images';
 import { formatFlightDate, formatFlightTime } from './flight-format';
 import { resolveHotelPrice } from './hotel-price';
 import {
+  createHotelOfferOptions,
+  groupHotelOfferOptions,
+  filterHotelOfferOptions,
+  sortHotelOfferOptions,
+  getOfferSuppliers,
+  getOfferGuestCounts,
+  cheapestInGroup,
+  countUniqueRooms,
+  type HotelOfferOption,
+  type HotelOfferGroup,
+  type HotelOfferSort,
+} from '@/features/search/hotel-offer-model';
+import {
   searchKeys,
   useBookmarks,
   useCreateBookmark,
@@ -3376,7 +3389,6 @@ function HotelRoomsDrawer({
         typeof searchParams.check_out_date === 'string' ? searchParams.check_out_date : '',
     };
     if (typeof searchParams.adults === 'number') next.adults = searchParams.adults;
-    // Children ages are only sent on searches that carry them.
     if (typeof searchParams.children_ages === 'string' && searchParams.children_ages.trim())
       next.children_ages = searchParams.children_ages;
     if (typeof searchParams.currency === 'string') next.currency = searchParams.currency;
@@ -3387,13 +3399,87 @@ function HotelRoomsDrawer({
 
   const query = useHotelProperty(params);
   const create = useCreateBookmark();
+  const { data: bookmarks } = useBookmarks();
   const [savedKey, setSavedKey] = useState<string | null>(null);
   const [savedCode, setSavedCode] = useState<string | null>(null);
+  void savedCode;
+  const [sortBy, setSortBy] = useState<HotelOfferSort | 'none'>('none');
+  const [freeOnly, setFreeOnly] = useState(false);
+  const [breakfastOnly, setBreakfastOnly] = useState(false);
+  const [supplierFilter, setSupplierFilter] = useState<string>('all');
+  const [guestsFilter, setGuestsFilter] = useState<number | 'all'>('all');
+  const [hotelDetailsOpen, setHotelDetailsOpen] = useState(true);
+  const [devOpen, setDevOpen] = useState(false);
 
   const detail = query.data?.property;
-  const rows = useMemo(() => (detail ? flattenPropertyOffers(detail) : []), [detail]);
   const currency =
     typeof searchParams.currency === 'string' ? searchParams.currency : SEARCH_DEFAULT_CURRENCY;
+
+  const allOptions = useMemo(() => {
+    if (!detail) return [];
+    return createHotelOfferOptions(property, detail);
+  }, [property, detail]);
+
+  const suppliers = useMemo(() => getOfferSuppliers(allOptions), [allOptions]);
+  const guestCounts = useMemo(() => getOfferGuestCounts(allOptions), [allOptions]);
+
+  const filteredSorted = useMemo(() => {
+    const f: Record<string, unknown> = {};
+    if (freeOnly) (f as { freeCancellationOnly?: boolean }).freeCancellationOnly = true;
+    if (breakfastOnly) (f as { breakfastOnly?: boolean }).breakfastOnly = true;
+    if (supplierFilter !== 'all') (f as { supplier?: string }).supplier = supplierFilter;
+    if (guestsFilter !== 'all') (f as { guests?: number }).guests = guestsFilter as number;
+    const filtered = filterHotelOfferOptions(allOptions, f as Parameters<typeof filterHotelOfferOptions>[1]);
+    if (sortBy === 'none') return filtered;
+    return sortHotelOfferOptions(filtered, sortBy as HotelOfferSort);
+  }, [allOptions, freeOnly, breakfastOnly, supplierFilter, guestsFilter, sortBy]);
+
+  const groups = useMemo(() => groupHotelOfferOptions(filteredSorted), [filteredSorted]);
+  const actualRoomCount = useMemo(() => countUniqueRooms(filteredSorted), [filteredSorted]);
+
+  // Hierarchical bookmark state – hotel parent via hotelFingerprint, child via room key
+  const hotelIdentity = property.property_token ?? property.data_id ?? property.name ?? '';
+  const hotelFingerprintValue = useMemo(
+    () => hotelFingerprint(searchParams as Record<string, unknown>, hotelIdentity),
+    [searchParams, hotelIdentity],
+  );
+  const existingHotelBookmark = useMemo(() => {
+    const rawList: unknown = Array.isArray(bookmarks)
+      ? bookmarks
+      : Array.isArray((bookmarks as unknown as { data?: unknown })?.data)
+        ? (bookmarks as unknown as { data: unknown[] }).data
+        : [];
+    const list = rawList as unknown as Array<{ fingerprint: string; type: string; snapshot: unknown }>;
+    return (
+      list.find((b) => b.fingerprint === hotelFingerprintValue && b.type === 'HOTEL') ??
+      list.find((b) => b.type === 'HOTEL') ??
+      null
+    );
+  }, [bookmarks, hotelFingerprintValue]);
+  const isOptionBookmarked = (opt: HotelOfferOption): boolean => {
+    if (savedKey === opt.id) return true;
+    if (!existingHotelBookmark) return false;
+    const snap = existingHotelBookmark.snapshot as unknown as {
+      hotel?: { rooms?: unknown[]; selectedRoom?: unknown };
+    };
+    const rooms = Array.isArray(snap.hotel?.rooms)
+      ? (snap.hotel!.rooms as unknown[])
+      : snap.hotel?.selectedRoom
+        ? [snap.hotel!.selectedRoom]
+        : [];
+    const key = (() => {
+      const bedsSig = (opt.beds ?? []).map((b) => `${b.count ?? 1}-${(b.type ?? '').toLowerCase()}`).sort().join('|');
+      const norm = (opt.roomName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+      return [norm || '__provider__', opt.source ?? '', String(opt.guests ?? ''), bedsSig, String(opt.totalPrice?.extracted_price ?? ''), String(opt.totalPrice?.extracted_price_before_taxes ?? ''), String(opt.pricePerNight?.extracted_price ?? ''), opt.cancellation ? 'fc' : 'nfc'].join('\u0000');
+    })();
+    return (rooms as unknown as Array<Record<string, unknown>>).some((r) => {
+      const b = (r as unknown as { beds?: Array<{ count?: number; type?: string }> })?.beds ?? [];
+      const bs = b.map((bb) => `${bb.count ?? 1}-${(bb.type ?? '').toLowerCase()}`).sort().join('|');
+      const n = String((r as unknown as { roomName?: string })?.roomName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const rk = [n || '__provider__', String((r as unknown as { supplier?: string })?.supplier ?? ''), String((r as unknown as { guests?: number })?.guests ?? ''), bs, String((r as unknown as { totalPrice?: number })?.totalPrice ?? ''), String((r as unknown as { totalPriceBeforeTaxes?: number })?.totalPriceBeforeTaxes ?? ''), String((r as unknown as { pricePerNight?: number })?.pricePerNight ?? ''), (r as unknown as { freeCancellation?: boolean })?.freeCancellation ? 'fc' : 'nfc'].join('\u0000');
+      return rk === key;
+    });
+  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -3403,8 +3489,9 @@ function HotelRoomsDrawer({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const addToQuotation = (row: HotelRoomRow) => {
+  const handleBookmark = (opt: HotelOfferOption) => {
     if (create.isPending) return;
+    if (isOptionBookmarked(opt)) return; // already bookmarked – do not duplicate
     create.mutate(
       {
         type: 'HOTEL',
@@ -3439,35 +3526,35 @@ function HotelRoomsDrawer({
                 }
               : {}),
             selectedRoom: {
-              roomName: row.name ?? null,
-              supplier: row.source ?? null,
-              supplierLogo: row.logo ?? null,
-              isOfficial: Boolean(row.isOfficial),
-              offerLink: row.link ?? null,
-              guests: row.guests ?? null,
-              pricePerNight: row.perNight?.extracted_price ?? null,
-              totalPrice: row.total?.extracted_price ?? null,
-              pricePerNightBeforeTaxes: row.perNight?.extracted_price_before_taxes ?? null,
-              totalPriceBeforeTaxes: row.total?.extracted_price_before_taxes ?? null,
-              freeCancellation: Boolean(row.freeCancellation),
-              freeCancellationUntil: row.freeCancellationUntil ?? null,
-              roomDescription: row.description ?? null,
-              beds: row.beds ?? null,
-              roomAmenities: row.amenities ?? null,
+              roomName: opt.roomName ?? null,
+              supplier: opt.source ?? null,
+              supplierLogo: opt.logo ?? null,
+              isOfficial: Boolean(opt.isOfficial),
+              offerLink: opt.bookingLink ?? null,
+              guests: opt.guests ?? null,
+              pricePerNight: opt.pricePerNight?.extracted_price ?? null,
+              totalPrice: opt.totalPrice?.extracted_price ?? null,
+              pricePerNightBeforeTaxes: opt.pricePerNight?.extracted_price_before_taxes ?? null,
+              totalPriceBeforeTaxes: opt.totalPrice?.extracted_price_before_taxes ?? null,
+              freeCancellation: Boolean(opt.cancellation),
+              freeCancellationUntil: opt.cancellationUntil ?? null,
+              roomDescription: opt.description ?? null,
+              beds: opt.beds ?? null,
+              roomAmenities: opt.amenities ?? null,
             },
           },
           raw: {
             response: query.data ?? null,
             property,
             detail: detail ?? null,
-            offer: row.offer,
-            room: row.room ?? null,
+            offer: opt.originalOffer,
+            room: opt.originalRoom ?? null,
           },
         },
       },
       {
         onSuccess: (result) => {
-          setSavedKey(row.key);
+          setSavedKey(opt.id);
           setSavedCode(result.bookmark.bookmarkCode);
         },
       },
@@ -3483,63 +3570,97 @@ function HotelRoomsDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={`Rooms and offers at ${property.name ?? 'property'}`}
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-card shadow-xl"
+        className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-card shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
-        {/* Hotel-level information stays separate from the room list below. */}
-        <div className="flex items-start justify-between gap-3 border-b border-border p-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-lg font-semibold text-foreground">
-                {property.name ?? 'Property'}
-              </h2>
-              <Stars count={property.extracted_hotel_class} />
+        {/* HEADER – hotel + stay context */}
+        <div className="shrink-0 border-b border-border p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate text-lg font-semibold text-foreground">
+                  {property.name ?? 'Property'}
+                </h2>
+                <Stars count={property.extracted_hotel_class} />
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                {detail?.address ? (
+                  <span className="flex items-center gap-1">
+                    <MapPin className="h-3 w-3" aria-hidden="true" />
+                    {detail.address}
+                  </span>
+                ) : null}
+                {property.rating ? (
+                  <span className="flex items-center gap-1">
+                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />
+                    {property.rating}
+                    {property.reviews ? ` (${property.reviews.toLocaleString('en-IN')})` : ''}
+                  </span>
+                ) : null}
+                {property.check_in_time ? (
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" aria-hidden="true" />Check-in {property.check_in_time}
+                  </span>
+                ) : null}
+                {property.check_out_time ? (
+                  <span className="flex items-center gap-1">
+                    <Moon className="h-3 w-3" aria-hidden="true" />
+                    Check-out {property.check_out_time}
+                  </span>
+                ) : null}
+                <span className="flex items-center gap-1">
+                  <Users className="h-3 w-3" aria-hidden="true" />
+                  {params.adults ?? 2} guest{(params.adults ?? 2) > 1 ? 's' : ''} ·{' '}
+                  {formatDateRange(params.check_in_date, params.check_out_date)}
+                </span>
+              </div>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              {detail?.address ? (
-                <span className="flex items-center gap-1">
-                  <MapPin className="h-3 w-3" aria-hidden="true" />
-                  {detail.address}
-                </span>
-              ) : null}
-              {property.rating ? (
-                <span className="flex items-center gap-1">
-                  <Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />
-                  {property.rating}
-                  {property.reviews ? ` (${property.reviews.toLocaleString('en-IN')})` : ''}
-                </span>
-              ) : null}
-              {property.check_in_time ? (
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3 w-3" aria-hidden="true" />Check-in {property.check_in_time}
-                </span>
-              ) : null}
-              {property.check_out_time ? (
-                <span className="flex items-center gap-1">
-                  <Moon className="h-3 w-3" aria-hidden="true" />
-                  Check-out {property.check_out_time}
-                </span>
-              ) : null}
-              <span className="flex items-center gap-1">
-                <Users className="h-3 w-3" aria-hidden="true" />
-                {params.adults ?? 2} guest{(params.adults ?? 2) > 1 ? 's' : ''} ·{' '}
-                {formatDateRange(params.check_in_date, params.check_out_date)}
-              </span>
-            </div>
+            <button
+              type="button"
+              aria-label="Close rooms and offers"
+              onClick={onClose}
+              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
           </div>
+          {/* Hotel-level details – collapsed by default */}
           <button
             type="button"
-            aria-label="Close rooms and offers"
-            onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => setHotelDetailsOpen((v) => !v)}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+            aria-expanded={hotelDetailsOpen}
           >
-            <X className="h-5 w-5" aria-hidden="true" />
+            {hotelDetailsOpen ? 'Hide hotel details' : 'Hotel details'}
+            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', hotelDetailsOpen && 'rotate-180')} />
           </button>
+          {hotelDetailsOpen ? (
+            <div className="mt-3 grid gap-3">
+              <h3 className="text-sm font-semibold text-foreground">Hotel Overview</h3>
+              {property.images?.length ? <HotelGallery images={property.images} /> : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Type" value={property.type} />
+                <Field label="City" value={property.city ? `${property.city}${property.country ? `, ${property.country}` : ''}` : undefined} />
+                {detail?.address ? <Field label="Address" value={detail.address} /> : null}
+                {property.description ? <Field label="Description" value={property.description} /> : null}
+              </div>
+              {property.amenities?.length ? (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Amenities</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {property.amenities.map((a) => (
+                      <Chip key={a}>{a}</Chip>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {query.isPending ? (
-            <div className="space-y-3">
+            <div className="space-y-3 p-4">
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
                 <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
                 Loading rooms and offers…
@@ -3548,7 +3669,7 @@ function HotelRoomsDrawer({
               <Skeleton className="h-20 w-full" />
             </div>
           ) : query.isError ? (
-            <div className="space-y-3">
+            <div className="space-y-3 p-4">
               <Alert tone="error">
                 {query.error instanceof Error && query.error.message
                   ? query.error.message
@@ -3565,39 +3686,418 @@ function HotelRoomsDrawer({
               </Button>
             </div>
           ) : !detail ? (
-            <Alert tone="error">This property could not be found. Please search again.</Alert>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon={BedDouble}
-              title="No rooms or offers returned"
-              description="This property has no bookable offers for these dates and guests."
-            />
+            <div className="p-4">
+              <Alert tone="error">This property could not be found. Please search again.</Alert>
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="p-4">
+              <EmptyState
+                icon={BedDouble}
+                title="No rooms or offers returned"
+                description="This property has no bookable offers for these dates and guests."
+              />
+            </div>
           ) : (
             <>
-              {create.isError ? (
-                <Alert tone="error">
-                  {create.error instanceof Error && create.error.message
-                    ? create.error.message
-                    : 'Could not save this room to a quotation.'}
-                </Alert>
+              {/* Toolbar */}
+              <div className="sticky top-0 z-10 border-b border-border bg-card/95 p-3 backdrop-blur">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {filteredSorted.length} rate options · {actualRoomCount} {actualRoomCount === 1 ? 'room' : 'rooms'}
+                    {filteredSorted.length !== allOptions.length ? ` · ${allOptions.length} total` : ''}
+                  </span>
+                  <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                    <select
+                      aria-label="Sort by"
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as HotelOfferSort | 'none')}
+                      className="h-7 rounded-md border border-input bg-card px-2 text-xs"
+                    >
+                      <option value="none">Recommended</option>
+                      <option value="total">Lowest Total</option>
+                      <option value="perNight">Lowest Per Night</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setFreeOnly((v) => !v)}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-xs font-medium',
+                        freeOnly ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-border bg-card text-muted-foreground',
+                      )}
+                    >
+                      Free cancellation
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBreakfastOnly((v) => !v)}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-xs font-medium',
+                        breakfastOnly ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-border bg-card text-muted-foreground',
+                      )}
+                    >
+                      Breakfast
+                    </button>
+                    {suppliers.length > 1 ? (
+                      <select
+                        aria-label="Supplier"
+                        value={supplierFilter}
+                        onChange={(e) => setSupplierFilter(e.target.value)}
+                        className="h-7 rounded-md border border-input bg-card px-2 text-xs"
+                      >
+                        <option value="all">All suppliers</option>
+                        {suppliers.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    {guestCounts.length > 1 ? (
+                      <select
+                        aria-label="Guests"
+                        value={String(guestsFilter)}
+                        onChange={(e) => setGuestsFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                        className="h-7 rounded-md border border-input bg-card px-2 text-xs"
+                      >
+                        <option value="all">All guests</option>
+                        {guestCounts.map((g) => (
+                          <option key={g} value={String(g)}>
+                            {g} guests
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </div>
+                </div>
+                {create.isError ? (
+                  <Alert tone="error" className="mt-3">
+                    {create.error instanceof Error && create.error.message
+                      ? create.error.message
+                      : 'Could not save this room to a quotation.'}
+                  </Alert>
+                ) : null}
+              </div>
+
+              {/* Groups */}
+              <div className="space-y-3 p-4">
+                {groups.map((group) => {
+                  if (group.isProviderOnly) {
+                    const opt = group.options[0]!;
+                    const isBookmarked = isOptionBookmarked(opt) || savedKey === opt.id;
+                    return (
+                      <ProviderRateCard
+                        key={opt.id}
+                        option={opt}
+                        currency={currency}
+                        saved={isBookmarked}
+                        saving={create.isPending}
+                        savedCode={savedCode}
+                        onAdd={() => handleBookmark(opt)}
+                      />
+                    );
+                  }
+                  const cheapest = cheapestInGroup(group);
+                  return (
+                    <RoomGroupCard
+                      key={group.key}
+                      group={group}
+                      currency={currency}
+                      cheapestId={cheapest?.id ?? null}
+                      savedKey={savedKey}
+                      saving={create.isPending}
+                      savedCode={savedCode}
+                      onAdd={(opt) => handleBookmark(opt)}
+                      isOptionBookmarked={isOptionBookmarked}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Single developer tools */}
+              {import.meta.env.DEV ? (
+                <div className="border-t border-border p-4">
+                  <details className="rounded-lg border border-dashed border-border bg-muted/30 p-3">
+                    <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
+                      Developer tools – View Raw API Response
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        {allOptions.length} options • {groups.length} groups • Query key: {JSON.stringify(params)}
+                      </p>
+                      <pre className="max-h-96 overflow-auto rounded bg-muted p-3 text-xs leading-relaxed">
+                        {JSON.stringify(query.data ?? null, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setDevOpen((v) => !v)}>
+                        {devOpen ? 'Hide parsed groups' : 'Show parsed groups'}
+                      </Button>
+                    </div>
+                    {devOpen ? (
+                      <pre className="mt-2 max-h-96 overflow-auto rounded bg-muted p-3 text-xs">
+                        {JSON.stringify(groups, null, 2)}
+                      </pre>
+                    ) : null}
+                  </details>
+                </div>
               ) : null}
-              {rows.map((row) => (
-                <RoomOfferCard
-                  key={row.key}
-                  row={row}
-                  currency={currency}
-                  apiResponse={query.data ?? null}
-                  saved={savedKey === row.key}
-                  saving={create.isPending}
-                  savedCode={savedCode}
-                  onAddToQuotation={() => addToQuotation(row)}
-                />
-              ))}
             </>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function SupplierBadges({ opt, isCheapest }: { opt: HotelOfferOption; isCheapest: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {isCheapest ? <Badge variant="success">Lowest rate</Badge> : null}
+      {opt.isOfficial ? <Badge variant="outline">Official site</Badge> : null}
+      {opt.breakfastIncluded ? <Badge variant="secondary">Breakfast included</Badge> : null}
+      {opt.cancellation === true ? <Badge variant="outline">Free cancellation</Badge> : null}
+    </div>
+  );
+}
+
+function SupplierRow({
+  opt,
+  currency,
+  isCheapest,
+  saved,
+  saving,
+  savedCode,
+  onAdd,
+}: {
+  opt: HotelOfferOption;
+  currency: string;
+  isCheapest: boolean;
+  saved: boolean;
+  saving: boolean;
+  savedCode: string | null;
+  onAdd: () => void;
+}) {
+  void savedCode;
+  const [open, setOpen] = useState(false);
+  const perNightVal = opt.pricePerNight;
+  const totalVal = opt.totalPrice;
+  const perNight = perNightVal?.extracted_price ?? perNightVal?.extracted_price_before_taxes;
+  const total = totalVal?.extracted_price ?? totalVal?.extracted_price_before_taxes;
+  const perNightBeforeText = perNightVal?.price_before_taxes ?? opt.originalOffer.price_per_night?.price_before_taxes ?? null;
+  const totalBeforeText = totalVal?.price_before_taxes ?? opt.originalOffer.total_price?.price_before_taxes ?? null;
+  const isPerNightBeforeTaxesOnly = !!perNightVal?.price_before_taxes && !perNightVal?.price;
+  const isTotalBeforeTaxesOnly = !!totalVal?.price_before_taxes && !totalVal?.price;
+  const untilText =
+    opt.cancellationUntil?.date ? [opt.cancellationUntil.date, opt.cancellationUntil.time].filter(Boolean).join(', ') : null;
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {opt.logo ? <img src={opt.logo} alt="" className="h-4 w-4 rounded" loading="lazy" /> : null}
+            <span className="text-sm font-medium text-foreground">{opt.source ?? 'Provider'}</span>
+            <SupplierBadges opt={opt} isCheapest={isCheapest} />
+          </div>
+          {opt.cancellation === true && untilText ? (
+            <p className="mt-1 text-xs text-emerald-600">Free cancellation until {untilText}</p>
+          ) : opt.cancellation === false ? (
+            <p className="mt-1 text-xs text-muted-foreground">Non-refundable</p>
+          ) : null}
+          {opt.remarks?.length ? (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {opt.remarks.map((r) => (
+                <Chip key={r}>{r}</Chip>
+              ))}
+            </div>
+          ) : null}
+          {opt.description ? <p className="mt-1 text-xs text-muted-foreground">{opt.description}</p> : null}
+        </div>
+        <div className="text-right">
+          {perNight !== undefined && perNight !== null ? (
+            <p className="text-sm font-semibold text-foreground">
+              {formatPrice(perNight, currency)} <span className="text-xs font-normal text-muted-foreground">/ night</span>
+              {isPerNightBeforeTaxesOnly ? <span className="ml-1 text-xs font-normal text-muted-foreground">(before taxes)</span> : null}
+            </p>
+          ) : null}
+          {total !== undefined && total !== null ? (
+            <p className="text-sm font-semibold text-foreground">
+              {formatPrice(total, currency)} <span className="text-xs font-normal text-muted-foreground">total</span>
+              {isTotalBeforeTaxesOnly ? <span className="ml-1 text-xs font-normal text-muted-foreground">(before taxes)</span> : null}
+            </p>
+          ) : !perNight ? (
+            <p className="text-sm text-muted-foreground">Price unavailable</p>
+          ) : null}
+          {perNightBeforeText ? <p className="text-xs text-muted-foreground">Before taxes: {perNightBeforeText}</p> : null}
+          {totalBeforeText && totalBeforeText !== perNightBeforeText ? <p className="text-xs text-muted-foreground">Before taxes: {totalBeforeText}</p> : null}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {saved ? (
+            <p className="text-xs font-medium text-emerald-600">Bookmarked ✓</p>
+          ) : (
+            <Button size="sm" isLoading={saving} onClick={onAdd}>
+              <Bookmark className="h-3.5 w-3.5" /> Bookmark
+            </Button>
+          )}
+          {opt.bookingLink ? (
+            <a href={opt.bookingLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+              Booking link <ArrowRight className="h-3 w-3" />
+            </a>
+          ) : null}
+        </div>
+        <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs font-medium text-muted-foreground hover:text-foreground">
+          {open ? 'Hide details' : 'More details'} <ChevronDown className={cn('ml-1 inline h-3 w-3 transition-transform', open && 'rotate-180')} />
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-3 space-y-2 border-t border-border pt-3 text-xs leading-relaxed">
+          {opt.description ? <p className="text-muted-foreground">{opt.description}</p> : null}
+          {opt.beds?.length ? <p className="text-muted-foreground">Beds: {formatBeds(opt.beds)}</p> : null}
+          {opt.amenities?.length ? (
+            <div className="flex flex-wrap gap-1">
+              {opt.amenities.map((a) => (
+                <Chip key={a}>{a}</Chip>
+              ))}
+            </div>
+          ) : null}
+          {opt.guests ? <p className="text-muted-foreground">{opt.guests} guests</p> : null}
+          {opt.mealPlan ? <p className="text-muted-foreground">Meal: {opt.mealPlan}</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RoomGroupCard({
+  group,
+  currency,
+  cheapestId,
+  savedKey,
+  saving,
+  savedCode,
+  onAdd,
+  isOptionBookmarked,
+}: {
+  group: HotelOfferGroup;
+  currency: string;
+  cheapestId: string | null;
+  savedKey: string | null;
+  saving: boolean;
+  savedCode: string | null;
+  onAdd: (opt: HotelOfferOption) => void;
+  isOptionBookmarked?: (opt: HotelOfferOption) => boolean;
+}) {
+  void savedCode;
+  const [open, setOpen] = useState(false);
+  return (
+    <article className="rounded-xl border border-border bg-card shadow-sm">
+      <div className="flex items-start justify-between gap-3 border-b border-border bg-muted/20 px-3 py-2">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-foreground">{group.roomName ?? 'Room'}</h3>
+          <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {group.guests ? <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{group.guests} guests</span> : null}
+            {group.beds?.length ? <span className="inline-flex items-center gap-1"><BedDouble className="h-3 w-3" />{formatBeds(group.beds)}</span> : null}
+            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">{group.options.length} {group.options.length === 1 ? 'offer' : 'offers'}</span>
+          </p>
+        </div>
+        <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs text-muted-foreground hover:text-foreground">
+          {open ? 'Hide' : 'Details'} <ChevronDown className={cn('inline h-3 w-3 transition-transform', open && 'rotate-180')} />
+        </button>
+      </div>
+      <div className="space-y-2 p-3">
+        {group.options.map((opt) => {
+          const isBookmarked = (isOptionBookmarked?.(opt) ?? false) || savedKey === opt.id;
+          return (
+            <SupplierRow
+              key={opt.id}
+              opt={opt}
+              currency={currency}
+              isCheapest={opt.id === cheapestId && group.options.length > 1}
+              saved={isBookmarked}
+              saving={saving}
+              savedCode={savedCode}
+              onAdd={() => onAdd(opt)}
+            />
+          );
+        })}
+      </div>
+      {open ? (
+        <div className="border-t border-border bg-muted/10 p-3 text-xs text-muted-foreground">
+          {group.options[0]?.description ? <p className="mb-2">{group.options[0]?.description}</p> : null}
+          {group.options[0]?.amenities?.length ? (
+            <div className="flex flex-wrap gap-1">
+              {group.options[0]?.amenities?.map((a) => (
+                <Chip key={a}>{a}</Chip>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ProviderRateCard({
+  option,
+  currency,
+  saved,
+  saving,
+  savedCode,
+  onAdd,
+}: {
+  option: HotelOfferOption;
+  currency: string;
+  saved: boolean;
+  saving: boolean;
+  savedCode: string | null;
+  onAdd: () => void;
+}) {
+  void savedCode;
+  return (
+    <article className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Provider Rate</h3>
+          <p className="mt-1 flex items-center gap-2 text-sm text-foreground">
+            {option.logo ? <img src={option.logo} alt="" className="h-4 w-4 rounded" loading="lazy" /> : null}
+            {option.source ?? 'Provider'}
+            {option.isOfficial ? <Badge variant="outline">Official site</Badge> : null}
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {option.guests ? <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{option.guests} guests</span> : null}
+            {option.cancellation === true ? (
+              <span className="text-emerald-600">
+                Free cancellation{option.cancellationUntil?.date ? ` until ${[option.cancellationUntil.date, option.cancellationUntil.time].filter(Boolean).join(', ')}` : ''}
+              </span>
+            ) : option.cancellation === false ? (
+              <span>Non-refundable</span>
+            ) : null}
+            {option.breakfastIncluded ? <span>· Breakfast included</span> : null}
+          </div>
+        </div>
+        <div className="text-right">
+          {option.pricePerNight?.extracted_price !== undefined ? (
+            <p className="text-sm font-semibold">{formatPrice(option.pricePerNight.extracted_price, currency)} <span className="text-xs font-normal text-muted-foreground">/ night</span></p>
+          ) : option.pricePerNight?.extracted_price_before_taxes !== undefined ? (
+            <p className="text-sm font-semibold">{formatPrice(option.pricePerNight.extracted_price_before_taxes, currency)} <span className="text-xs font-normal text-muted-foreground">/ night</span> <span className="text-xs font-normal text-muted-foreground">(before taxes)</span></p>
+          ) : null}
+          {option.totalPrice?.extracted_price !== undefined ? (
+            <p className="text-sm font-semibold">{formatPrice(option.totalPrice.extracted_price, currency)} <span className="text-xs font-normal text-muted-foreground">total</span></p>
+          ) : option.totalPrice?.extracted_price_before_taxes !== undefined ? (
+            <p className="text-sm font-semibold">{formatPrice(option.totalPrice.extracted_price_before_taxes, currency)} <span className="text-xs font-normal text-muted-foreground">total</span> <span className="text-xs font-normal text-muted-foreground">(before taxes)</span></p>
+          ) : !option.pricePerNight && !option.totalPrice ? (
+            <p className="text-sm text-muted-foreground">Price unavailable</p>
+          ) : null}
+          {option.pricePerNight?.price_before_taxes ? <p className="text-xs text-muted-foreground">Before taxes: {option.pricePerNight.price_before_taxes}</p> : null}
+          {option.totalPrice?.price_before_taxes && option.totalPrice.price_before_taxes !== option.pricePerNight?.price_before_taxes ? <p className="text-xs text-muted-foreground">Before taxes: {option.totalPrice.price_before_taxes}</p> : null}
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        {saved ? <p className="text-xs font-medium text-emerald-600">Bookmarked ✓</p> : <Button size="sm" isLoading={saving} onClick={onAdd}><Bookmark className="h-3.5 w-3.5" /> Bookmark</Button>}
+        {option.bookingLink ? <a href={option.bookingLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">Booking link <ArrowRight className="h-3 w-3" /></a> : null}
+      </div>
+    </article>
   );
 }
 
@@ -4378,3 +4878,7 @@ export function TravelSearchPage() {
     </div>
   );
 }
+
+// keep legacy helpers used by tests – prevents TS6133 after drawer refactor
+void flattenPropertyOffers;
+void RoomOfferCard;

@@ -224,6 +224,11 @@ const SHOW_HOTEL_OPTIONS = false;
 // are untouched and existing quotations keep their saved Visa values.
 const SHOW_VISA_QUOTATION_TAB = false;
 
+// Destination Expert is temporarily hidden from the quotation builder UI.
+// Set this back to true to restore the tab and panel; all backend/schema/data
+// paths are untouched and existing quotations keep their saved values.
+const SHOW_DESTINATION_EXPERT_TAB = false;
+
 /** "Xh Ym" flight duration from date+time strings, or '' if incomputable/negative. */
 const computeDuration = (
   depDate?: string | null,
@@ -317,24 +322,6 @@ const defaultHotelDetails = (): NonNullable<QuotationVersionInput['hotelDetails'
   images: [],
 });
 
-interface VehicleDraft {
-  include: boolean;
-  sectionTitle: string;
-  amount: number;
-  vehicleType: string;
-  vehicleId: string;
-  vehicleModel: string;
-  usage: string;
-  description: string;
-  images: QuotationImage[];
-  imageSnapshotPresent: boolean | undefined;
-  pdfImageUrl: string | null;
-  // What `amount` represents: days / hours / transfers / vehicles / fixed total.
-  pricingBasis: string;
-  // Days / hours / transfers / vehicle count — the multiplier of the unit rate.
-  quantity: number;
-}
-
 const VEHICLE_PRICING_BASES: Array<[string, string]> = [
   ['PER_DAY', 'Per Day'],
   ['PER_HOUR', 'Per Hour'],
@@ -342,22 +329,6 @@ const VEHICLE_PRICING_BASES: Array<[string, string]> = [
   ['PER_VEHICLE', 'Per Vehicle'],
   ['FIXED', 'Fixed Total'],
 ];
-
-const defaultVehicleDraft = (): VehicleDraft => ({
-  include: true,
-  sectionTitle: 'Transportation',
-  amount: 0,
-  vehicleType: '',
-  vehicleId: '',
-  vehicleModel: '',
-  usage: '',
-  description: '',
-  images: [],
-  imageSnapshotPresent: false,
-  pdfImageUrl: null,
-  pricingBasis: 'PER_DAY',
-  quantity: 1,
-});
 
 const hotelSectionTitle = (value: string | null | undefined) => {
   const title = value?.trim();
@@ -374,7 +345,7 @@ const TABS: TabDef[] = [
   ...(SHOW_VISA_QUOTATION_TAB ? [{ key: 'visa', label: 'Visa' }] : []),
   { key: 'addon', label: 'Add-on Services', types: ADDON_TYPES },
   { key: 'inclusions', label: 'Inclusions & Exclusions' },
-  { key: 'destinationExpert', label: 'Destination Expert' },
+  ...(SHOW_DESTINATION_EXPERT_TAB ? [{ key: 'destinationExpert', label: 'Destination Expert' }] : []),
   { key: 'faqs', label: 'FAQs' },
   { key: 'summary', label: 'Summary & Pricing' },
   { key: 'pricingBreakdown', label: 'Pricing Breakdown' },
@@ -2014,6 +1985,10 @@ export function QuotationBuilderPage() {
   useEffect(() => {
     if (!SHOW_VISA_QUOTATION_TAB && activeTab === 'visa') setActiveTab('vehicle');
   }, [activeTab]);
+  // Destination Expert is temporarily hidden – same fallback as Visa.
+  useEffect(() => {
+    if (!SHOW_DESTINATION_EXPERT_TAB && activeTab === 'destinationExpert') setActiveTab('setting');
+  }, [activeTab]);
   // Cruise and Vehicle start excluded: the user explicitly enables them (auto-creating the
   // first entry). Saved quotations with rows re-enable on load.
   const [excluded, setExcluded] = useState<Record<string, boolean>>({ cruise: true, vehicle: true });
@@ -3089,34 +3064,6 @@ export function QuotationBuilderPage() {
   const setServicePdfImage = (serviceIndex: number, identity: string) =>
     form.setValue(`services.${serviceIndex}.pdfImageUrl`, identity, { shouldDirty: true });
 
-  const moveVehicleImage = (imageIndex: number, direction: -1 | 1) => {
-    setVehicleDraft((current) => {
-      const target = imageIndex + direction;
-      if (target < 0 || target >= current.images.length) return current;
-      const images = [...current.images];
-      [images[imageIndex], images[target]] = [images[target]!, images[imageIndex]!];
-      return { ...current, images, imageSnapshotPresent: true };
-    });
-  };
-  const removeVehicleImage = (imageIndex: number) => {
-    setVehicleDraft((current) => {
-      const removed = current.images[imageIndex];
-      const images = current.images.filter((_, index) => index !== imageIndex);
-      const removedIdentity = removed ? quotationSnapshotImageIdentity(removed) : null;
-      return {
-        ...current,
-        images,
-        imageSnapshotPresent: true,
-        pdfImageUrl:
-          removedIdentity && current.pdfImageUrl === removedIdentity
-            ? images[0]
-              ? quotationSnapshotImageIdentity(images[0])
-              : null
-            : current.pdfImageUrl,
-      };
-    });
-  };
-
   // Prefill default hotels for untouched hotel rows that appear after
   // initialization (e.g. "Add Hotel"), without ever touching a row the user
   // has selected or edited.
@@ -3737,9 +3684,9 @@ export function QuotationBuilderPage() {
         current.filter((entry) => !/^(hotels|hotelDetails)(\.|:)/.test(entry)),
       );
     }
-    // Turning Cruise on auto-creates exactly one clean entry when none exist,
+    // Turning Cruise/Vehicle on auto-creates exactly one clean entry when none exist,
     // or fills the empty section title of an existing entry; turning it off
-    // clears its service-row errors (only the CRUISE rows).
+    // clears its service-row errors.
     if (key === 'cruise') {
       if (!next) {
         const cruiseIndexes = (services.fields ?? [])
@@ -3766,6 +3713,36 @@ export function QuotationBuilderPage() {
             current.filter((entry) => {
               const match = entry.match(/^services\.(\d+)/);
               return !(match && cruiseIndexes.includes(Number(match[1])));
+            }),
+          );
+        }
+      }
+    }
+    if (key === 'vehicle') {
+      if (!next) {
+        const vehicleIndexes = (services.fields ?? [])
+          .map((_, index) => index)
+          .filter((index) => watchedServices?.[index]?.serviceType === 'VEHICLE_TRANSFER');
+        if (!vehicleIndexes.length) {
+          services.append(newVehicleServiceRow(services.fields.length + 1));
+        } else {
+          const primaryIndex = vehicleIndexes[0]!;
+          const current = watchedServices?.[primaryIndex]?.taxCategory;
+          if (!(current ?? '').trim())
+            applyService(primaryIndex, { taxCategory: 'Transportation' });
+        }
+      } else {
+        const vehicleIndexes = (services.fields ?? [])
+          .map((_, index) => index)
+          .filter((index) => watchedServices?.[index]?.serviceType === 'VEHICLE_TRANSFER');
+        if (vehicleIndexes.length) {
+          form.clearErrors(
+            vehicleIndexes.map((index) => `services.${index}` as FieldPath<QuotationVersionInput>),
+          );
+          setInvalidFields((current) =>
+            current.filter((entry) => {
+              const match = entry.match(/^services\.(\d+)/);
+              return !(match && vehicleIndexes.includes(Number(match[1])));
             }),
           );
         }
@@ -3985,13 +3962,11 @@ export function QuotationBuilderPage() {
                 const vehicle = watchedServices?.[index] as unknown as QuotationVersionInput['services'][number] | undefined;
                 const vehicleType = (vehicle as unknown as { city?: string | null })?.city ?? '';
                 const vehicleId = (vehicle as unknown as { vehicleId?: string | null })?.vehicleId ?? '';
-                const vehicleModel = (vehicle as unknown as { name?: string | null })?.name ?? '';
                 const usage = (vehicle as unknown as { notes?: string | null })?.notes ?? '';
                 const description = (vehicle as unknown as { description?: string | null })?.description ?? '';
                 const amount = Number((vehicle as unknown as { sellingPrice?: number | null })?.sellingPrice ?? 0);
                 const pricingBasis = String((vehicle as unknown as { pricingBasis?: string | null })?.pricingBasis ?? 'PER_DAY');
                 const quantity = Number((vehicle as unknown as { quantity?: number | null })?.quantity ?? 1);
-                const sectionTitle = (vehicle as unknown as { taxCategory?: string | null })?.taxCategory ?? '';
                 const vehicleTypes = [...new Set(masters.map((m) => m.vehicleType).filter(Boolean) as string[])]
                   .concat(
                     vehicleType && !masters.some((m) => m.vehicleType === vehicleType) ? [vehicleType] : [],
@@ -4023,7 +3998,7 @@ export function QuotationBuilderPage() {
                                 step="0.01"
                                 value={amount}
                                 onChange={(event) =>
-                                  applyService(index, { sellingPrice: Math.max(0, Number(event.target.value) || 0), unitSellingPrice: Math.max(0, Number(event.target.value) || 0) })
+                                  applyService(index, { sellingPrice: Math.max(0, Number(event.target.value) || 0) } as unknown as ServiceRowPatch)
                                 }
                                 className="w-full rounded-r-lg bg-transparent px-3 py-2 text-sm outline-none"
                               />
@@ -4034,7 +4009,7 @@ export function QuotationBuilderPage() {
                             <select
                               aria-label={`Vehicle ${index + 1} pricing basis`}
                               value={pricingBasis}
-                              onChange={(event) => applyService(index, { pricingBasis: event.target.value })}
+                              onChange={(event) => applyService(index, { pricingBasis: event.target.value as never })}
                               className={`${field} mt-1`}
                             >
                               {VEHICLE_PRICING_BASES.map(([value, label]) => (
@@ -4126,8 +4101,8 @@ export function QuotationBuilderPage() {
                                   images: snapshot,
                                   imageSnapshotPresent: masterGalleryPresence(master),
                                   pdfImageUrl: snapshot[0] ? quotationSnapshotImageIdentity(snapshot[0]) : null,
-                                  ...(shouldPrefill ? { sellingPrice: Number(masterPrice), unitSellingPrice: Number(masterPrice) } : {}),
-                                });
+                                  ...(shouldPrefill ? { sellingPrice: Number(masterPrice) } : {}),
+                                } as unknown as ServiceRowPatch);
                                 if (master)
                                   void importMasterGalleryPreviews(master.id, snapshot, vehicleImageUrl).then((images) => {
                                     if (form.getValues(`services.${index}.vehicleId`) !== master.id) return;

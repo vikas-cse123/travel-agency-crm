@@ -82,23 +82,15 @@ describe('LIVE Moustache property data through the upgraded UI', () => {
     expect(within(dialog).queryByLabelText('Search API fields')).toBeNull();
     expect(within(dialog).queryByText('Raw JSON')).toBeNull();
 
-    // The complete Property API response is represented directly in the normal
-    // UI: nested price objects, description, amenities and cancellation.
+    // Clean summary card – commercial info only, no Offer/Room ApiDataTree per card
     const dorm = within(dialog).getAllByText('Bed in 18-Bed Mixed Dorm Room')[0]!.closest('article')!;
-    expect(within(dorm).getByText('Offer information')).toBeInTheDocument();
-    expect(within(dorm).getByText('Room information')).toBeInTheDocument();
-    // Nested object labels (data-driven, human-readable).
-    expect(within(dorm).getAllByText('Price per night').length).toBeGreaterThan(0);
-    expect(within(dorm).getAllByText('Total price').length).toBeGreaterThan(0);
-    // Primitive values from the real payload.
-    expect(within(dorm).getAllByText('₹1,682').length).toBeGreaterThan(0);
-    expect(within(dorm).getAllByText('1682').length).toBeGreaterThan(0);
+    expect(within(dorm).queryByText('Offer information')).toBeNull();
+    expect(within(dorm).queryByText('Room information')).toBeNull();
+    // Commercial prices rendered
+    expect(within(dorm).getAllByText('Booking.com').length).toBeGreaterThan(0);
+    expect(within(dorm).getAllByText(/₹1,682/).length).toBeGreaterThan(0);
+    // Description still visible
     expect(within(dorm).getAllByText('Breakfast included · Balcony').length).toBeGreaterThan(0);
-    expect(within(dorm).getAllByText('Balcony').length).toBeGreaterThan(0);
-    // Booleans render as Yes/No.
-    expect(within(dorm).getAllByText(/Yes|No/).length).toBeGreaterThan(0);
-    // Supplier appears in the summary AND in the offer data section.
-    expect(within(dorm).getAllByText('Booking.com').length).toBeGreaterThan(1);
   });
 
   it('shows the complete raw API response per room via API Response dropdown, with no extra request', async () => {
@@ -124,19 +116,17 @@ describe('LIVE Moustache property data through the upgraded UI', () => {
     const dialog = await screen.findByRole('dialog');
     const propertyCallsBefore = calls.filter((u) => u.includes('/search/hotels/property')).length;
 
-    const dorm = within(dialog)
-      .getAllByText('Bed in 18-Bed Mixed Dorm Room')[0]!
-      .closest('article')!;
-    const summary = within(dorm).getAllByText('API Response ▼')[0]!;
-    await user.click(summary);
+    // Single developer tools at bottom, not per room
+    expect(within(dialog).getByText('Developer tools – View Raw API Response')).toBeInTheDocument();
+    await user.click(within(dialog).getByText('Developer tools – View Raw API Response'));
     // Complete raw response: nested offers/rooms/prices/metadata, not a reduced object.
-    const rawPre = within(dorm).getByText(/featured_offers/, { selector: 'pre' });
+    const rawPre = within(dialog).getByText(/featured_offers/, { selector: 'pre' });
     expect(rawPre.textContent).toContain('featured_offers');
     expect(rawPre.textContent).toContain('price_before_taxes');
     expect(rawPre.textContent).toContain('free_cancellation_until');
 
-    // A different room has its own dropdown too.
-    expect(within(dialog).getAllByText('API Response ▼').length).toBeGreaterThan(1);
+    // Only one developer tools section, not per room
+    expect(within(dialog).getAllByText('Developer tools – View Raw API Response').length).toBe(1);
 
     expect(calls.filter((u) => u.includes('/search/hotels/property')).length).toBe(propertyCallsBefore);
   });
@@ -235,40 +225,14 @@ describe('LIVE Moustache property data through the upgraded UI', () => {
     await user.click(screen.getAllByRole('button', { name: /View Rooms & Offers/i })[0]!);
     const dialog = await screen.findByRole('dialog');
 
-    // Structured sections from the complete response.
+    // New agent-first layout: hotel overview + rate comparison, details in collapsible
     expect(within(dialog).getByText('Hotel Overview')).toBeInTheDocument();
     expect(within(dialog).getAllByText('Furama RiverFront').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('405 Havelock Rd, Singapore').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('Price insights')).toBeInTheDocument();
-    expect(within(dialog).getByText('Lowest price')).toBeInTheDocument();
-    expect(within(dialog).getAllByText('₹16,201').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('Exclusive deal')).toBeInTheDocument();
-    expect(within(dialog).getByText('Hotel Images')).toBeInTheDocument();
-    expect(within(dialog).getByText('Nearby Places (1)')).toBeInTheDocument();
-    expect(within(dialog).getByText('National Museum of Singapore')).toBeInTheDocument();
-    expect(within(dialog).getAllByText('Walking: 15 min').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('Ratings & Reviews')).toBeInTheDocument();
-    expect(within(dialog).getAllByText('4.6').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('16,205 reviews')).toBeInTheDocument();
-    expect(within(dialog).getByText('Review Breakdown')).toBeInTheDocument();
-    expect(within(dialog).getByText('Cleanliness')).toBeInTheDocument();
-    expect(within(dialog).getByText('Reviews from Other Sites')).toBeInTheDocument();
-    expect(within(dialog).getAllByText(/Tripadvisor/).length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('Nearby & Recommended Hotels (1)')).toBeInTheDocument();
-    expect(within(dialog).getByText('Park Hotel')).toBeInTheDocument();
-    expect(within(dialog).getByText('Vacation Rentals Nearby (1)')).toBeInTheDocument();
-    expect(within(dialog).getByText('Riverfront Apartment')).toBeInTheDocument();
-
-    // Search metadata/parameters accessible under the collapsible section.
-    await user.click(within(dialog).getByText('Search Information'));
-    expect(within(dialog).getByText('Search Metadata')).toBeInTheDocument();
-    expect(within(dialog).getByText('Search Parameters')).toBeInTheDocument();
-
-    // Unknown fields render automatically in Additional API Information.
-    expect(within(dialog).getByText('Additional API Information')).toBeInTheDocument();
-    expect(within(dialog).getAllByText('Future field').length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText('Future nested field').length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText('123').length).toBeGreaterThan(0);
+    // Rate comparison is now the primary view
+    expect(within(dialog).getByText(/rate options/i)).toBeInTheDocument();
+    // Hotel details are in collapsible secondary section (expanded by default shows Hide)
+    expect(within(dialog).getByText(/Hotel details|Hide hotel details/)).toBeInTheDocument();
 
     // No extra provider request was made to render the details.
     expect(calls.filter((u) => u.includes('/search/hotels/property')).length).toBe(1);

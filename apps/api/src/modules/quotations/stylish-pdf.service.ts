@@ -6,6 +6,7 @@ import {
   formatAgeList,
   isItineraryActivityTitleDuplicate,
   normalizeFaqs,
+  resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
   resolveQuotationPdfSectionOrder,
@@ -933,9 +934,6 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
     [
       overviewIcons.travelers,
       'TRAVELERS',
-      // Child ages from the Lead go on the row's dedicated sub-line (drawn
-      // smaller below the value) because the value box is fixed to the two
-      // count lines and clipped anything appended after them.
       [
         `${input.quotation.adults} Adults`,
         input.quotation.childrenWithBed ? `${input.quotation.childrenWithBed} CWB` : null,
@@ -945,21 +943,29 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
         .filter(Boolean)
         .join(', '),
       RED,
-      (() => {
-        const ageBits = [
-          formatAgeList(input.quotation.childrenWithBedAges)
-            ? `CWB: ${formatAgeList(input.quotation.childrenWithBedAges)}`
-            : null,
-          formatAgeList(input.quotation.childrenWithoutBedAges)
-            ? `CWOB: ${formatAgeList(input.quotation.childrenWithoutBedAges)}`
-            : null,
-          formatAgeList(input.quotation.infantAges)
-            ? `Inf: ${formatAgeList(input.quotation.infantAges)}`
-            : null,
-        ].filter(Boolean);
-        return ageBits.length ? `Ages — ${ageBits.join(', ')}` : undefined;
-      })(),
     ],
+    ...(() => {
+      const ageBits = [
+        formatAgeList(input.quotation.childrenWithBedAges)
+          ? `CWB: ${formatAgeList(input.quotation.childrenWithBedAges)}`
+          : null,
+        formatAgeList(input.quotation.childrenWithoutBedAges)
+          ? `CWOB: ${formatAgeList(input.quotation.childrenWithoutBedAges)}`
+          : null,
+        formatAgeList(input.quotation.infantAges)
+          ? `Inf: ${formatAgeList(input.quotation.infantAges)}`
+          : null,
+      ].filter(Boolean) as string[];
+      if (!ageBits.length) return [];
+      return [
+        [overviewIcons.travelers, 'AGES', ageBits.join(', '), RED] as [
+          PdfImage,
+          string,
+          string,
+          string,
+        ],
+      ];
+    })(),
   ] satisfies Array<[PdfImage, string, string, string] | [PdfImage, string, string, string, string | undefined]>;
   overviewRows.forEach(([icon, label, value, color, sub], index) => {
     const column = index % 3;
@@ -1935,7 +1941,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
       }
       const top = y;
       rounded(M, top, CONTENT_W, rowHeight - 8, '#ffffff', LINE, 9);
-      const imageLeft = rowInGroup % 2 === 0;
+      const imageLeft = true;
       const imageX = imageLeft ? M + 11 : W - M - 168;
       const imageW = 157;
       const imageTop = top + 35;
@@ -1994,14 +2000,27 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           height: 30,
           ellipsis: true,
         });
+      // CRUISE: show room lines (joined) as primary cabin tag, duration as secondary tag
+      const cruiseNightsVal = (service as unknown as { cruiseNights?: number | null }).cruiseNights;
+      const cruiseRoomLinesVal = resolveCruiseRoomLines(service as unknown as Parameters<typeof resolveCruiseRoomLines>[0]);
+      const isCruise = service.serviceType === 'CRUISE';
+      const cruisePrimaryTag = isCruise && cruiseRoomLinesVal.length
+        ? cruiseRoomLinesVal.map((l) => `${(l.roomType ?? '').trim() || 'Room'}${l.rooms !== 1 ? ` ×${l.rooms}` : ''}`).join(' · ')
+        : clean(service.city);
+      const cruiseSecondaryTag = isCruise && cruiseNightsVal != null && Number(cruiseNightsVal) > 0
+        ? `${cruiseNightsVal} Nights · ${Number(cruiseNightsVal) + 1} Days`
+        : clean(service.notes);
       let tagX = textX;
-      if (service.city)
-        tagX += pill(service.city, tagX, top + 78, { minWidth: 64, height: 19, size: 6.5 }) + 8;
-      const secondaryTag = ['VEHICLE_TRANSFER', 'CRUISE'].includes(service.serviceType)
+      const primaryTag = isCruise ? cruisePrimaryTag : clean(service.city);
+      if (primaryTag)
+        tagX += pill(primaryTag, tagX, top + 78, { minWidth: 64, height: 19, size: 6.5 }) + 8;
+      const secondaryTag = service.serviceType === 'VEHICLE_TRANSFER'
         ? clean(service.notes)
-        : asNumber(service.quantity) > 0
-          ? clean(service.quantity)
-          : '';
+        : service.serviceType === 'CRUISE'
+          ? cruiseSecondaryTag
+          : asNumber(service.quantity) > 0
+            ? clean(service.quantity)
+            : '';
       if (secondaryTag)
         pill(secondaryTag, tagX, top + 78, {
           fill: '#fff2d2',
@@ -2019,6 +2038,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           height: 28,
           ellipsis: true,
         });
+      y = top + 169;
     }
   };
 
