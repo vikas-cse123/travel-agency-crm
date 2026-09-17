@@ -178,4 +178,48 @@ describe('buildVehiclePrefillRows', () => {
     expect(new Set(allIds).size).toBe(3);
     expect(allIds.sort()).toEqual(['v-a', 'v-b', 'v-c']);
   });
+
+  it('GENERIC: one vehicle → many destinations, one destination → many vehicles (no hardcoding)', () => {
+    const SINGAPORE = 'dest-singapore';
+    const KASHMIR = 'dest-kashmir';
+    const GOA = 'dest-goa';
+    const DUBAI = 'dest-dubai';
+    // One vehicle can have multiple destinations (0-10)
+    const vehicleA = master('v-a', 'Vehicle A', [SINGAPORE, KASHMIR, GOA]);
+    const vehicleB = master('v-b', 'Vehicle B', [KASHMIR, GOA]);
+    const vehicleC = master('v-c', 'Vehicle C', [GOA]);
+    const vehicleD = master('v-d', 'Vehicle D', [DUBAI]);
+    const masters = [vehicleA, vehicleB, vehicleC, vehicleD];
+
+    // Destination → many vehicles
+    expect(buildVehiclePrefillRows([KASHMIR], masters, 1, new Set()).map((r) => r.vehicleId).sort()).toEqual(
+      ['v-a', 'v-b'].sort(),
+    );
+    expect(buildVehiclePrefillRows([GOA], masters, 1, new Set()).map((r) => r.vehicleId).sort()).toEqual(
+      ['v-a', 'v-b', 'v-c'].sort(),
+    );
+    expect(buildVehiclePrefillRows([SINGAPORE], masters, 1, new Set()).map((r) => r.vehicleId)).toEqual(['v-a']);
+    expect(buildVehiclePrefillRows([DUBAI], masters, 1, new Set()).map((r) => r.vehicleId)).toEqual(['v-d']);
+
+    // One vehicle → many destinations: same vehicle matches each of its destinations independently
+    expect(matchVehiclesForDestination(SINGAPORE, masters).map((m) => m.id)).toEqual(['v-a']);
+    expect(matchVehiclesForDestination(KASHMIR, masters).map((m) => m.id).sort()).toEqual(['v-a', 'v-b'].sort());
+    expect(matchVehiclesForDestination(GOA, masters).map((m) => m.id).sort()).toEqual(['v-a', 'v-b', 'v-c'].sort());
+
+    // Multiple quotation destinations: Singapore+Kashmir+Goa → A,B,C (no duplicates, D not included)
+    const multi = buildVehiclePrefillRows([SINGAPORE, KASHMIR, GOA], masters, 1, new Set());
+    expect(multi.map((r) => r.vehicleId).sort()).toEqual(['v-a', 'v-b', 'v-c'].sort());
+
+    // No limit: if 15 vehicles for Kashmir, all 15 must be prefills
+    const fifteen = Array.from({ length: 15 }, (_, i) => master(`v-${i}`, `Van ${i}`, [KASHMIR]));
+    expect(buildVehiclePrefillRows([KASHMIR], fifteen, 1, new Set())).toHaveLength(15);
+
+    // No blank row when matches exist: build returns rows, caller should not leave empty placeholder
+    expect(buildVehiclePrefillRows([KASHMIR], masters, 1, new Set()).length).toBeGreaterThan(0);
+
+    // Existing saved quotation does not receive new vehicles (shouldAutoPrefillVehicles=false)
+    expect(shouldAutoPrefillVehicles(1)).toBe(false);
+    expect(shouldAutoPrefillVehicles(3)).toBe(false);
+    expect(shouldAutoPrefillVehicles(0)).toBe(true);
+  });
 });

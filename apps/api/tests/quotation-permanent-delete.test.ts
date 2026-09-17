@@ -212,7 +212,6 @@ describe('quotation permanent deletion', () => {
     const company = await db.company.findFirstOrThrow({ where: { id: (await db.quotation.findUniqueOrThrow({ where: { id: quotation.id } })).companyId } });
     const user = await db.user.findFirstOrThrow({ where: { companyId: company.id } });
     const query = await db.query.findFirstOrThrow({ where: { companyId: company.id } });
-    const customer = await db.customer.findFirst({ where: { companyId: company.id } });
     // Minimal booking creation (bypass service, direct prisma)
     await db.booking.create({
       data: {
