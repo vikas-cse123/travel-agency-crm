@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowUpDown,
@@ -18,6 +18,8 @@ import {
   MapPin,
   Pencil,
   Phone,
+  Play,
+  Pause,
   Plus,
   Search,
   Trash2,
@@ -37,6 +39,7 @@ import {
   type Lead,
 } from '@/features/queries/queries.api';
 import { useQuotationWeblinkAnalytics } from '@/features/quotations/quotations.api';
+import { useCallRecordings, fetchCallRecordingPlayUrl } from '@/features/call-recordings/call-recordings.api';
 import { Button } from '@/components/ui/Button';
 import { Pagination } from '@/components/ui/Pagination';
 import { labelForLookup } from '@interscale/shared';
@@ -194,6 +197,55 @@ function CallCell({ lead }: { lead: Lead }) {
     >
       <Phone className="h-4 w-4" aria-hidden="true" />
     </a>
+  );
+}
+
+function CallRecordingCell({ lead, recMap }: { lead: Lead; recMap: Map<string, { id: string; durationSeconds: number | null }> }) {
+  const rec = recMap.get(lead.id);
+  if (!rec) return <span className="text-xs text-slate-400">No recording</span>;
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const audioRef = React.useRef<HTMLAudioElement | null>(null) as React.MutableRefObject<HTMLAudioElement | null>;
+  const handlePlay = async () => {
+    if (playing && audioRef.current) {
+      audioRef.current.pause();
+      setPlaying(false);
+      return;
+    }
+    if (url && audioRef.current) {
+      audioRef.current.play();
+      setPlaying(true);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { url: u } = await fetchCallRecordingPlayUrl(rec.id);
+      setUrl(u);
+      setTimeout(() => {
+        audioRef.current?.play();
+        setPlaying(true);
+      }, 100);
+    } catch {
+      setUrl(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const dur = rec.durationSeconds != null ? `${String(Math.floor(rec.durationSeconds / 60)).padStart(2, '0')}:${String(rec.durationSeconds % 60).padStart(2, '0')}` : '';
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={handlePlay}
+        disabled={loading}
+        className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2 py-1 text-xs text-white hover:bg-slate-800 disabled:opacity-50"
+        aria-label="Play recording"
+      >
+        {playing ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+        {loading ? '...' : dur || 'Play'}
+      </button>
+      {url && <audio ref={audioRef} src={url} onEnded={() => setPlaying(false)} className="hidden" />}
+    </div>
   );
 }
 
@@ -863,6 +915,14 @@ export function LeadsPage() {
   };
 
   const rows = useMemo(() => leads.data?.data ?? [], [leads.data]);
+  const { data: recList } = useCallRecordings({});
+  const recMap = useMemo(() => {
+    const m = new Map<string, { id: string; durationSeconds: number | null }>();
+    recList?.data.forEach((c) => {
+      if (c.query?.id) m.set(c.query.id, { id: c.id, durationSeconds: c.durationSeconds });
+    });
+    return m;
+  }, [recList]);
   const pageIds = useMemo(() => rows.map((lead) => lead.id), [rows]);
   const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const toggleRow = (id: string) =>
@@ -939,6 +999,7 @@ export function LeadsPage() {
     ['Lead ID', 'queryNumber'],
     ['Lead Info', 'customerName'],
     ['Call'],
+    ['Call Recording'],
     ['Destination'],
     ['Travellers Info'],
     ['Services'],
@@ -1348,6 +1409,9 @@ export function LeadsPage() {
                       </td>
                       <td className="text-center">
                         <CallCell lead={lead} />
+                      </td>
+                      <td className="text-center">
+                        <CallRecordingCell lead={lead} recMap={recMap} />
                       </td>
                       <td>
                         <DestinationCell lead={lead} />

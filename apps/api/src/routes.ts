@@ -25,6 +25,8 @@ import { settingsRoutes } from './modules/settings/settings.routes.js';
 import { reportsRoutes } from './modules/reports/reports.routes.js';
 import { searchRoutes } from './modules/search/search.routes.js';
 import { destinationExpertPresetsRoutes } from './modules/destination-expert-presets/destination-expert-presets.routes.js';
+import { mobileRoutes } from './modules/mobile/mobile.routes.js';
+import { callRecordingsRoutes } from './modules/call-recordings/call-recordings.routes.js';
 import { env, isProduction } from './config/env.js';
 import { storageObjectsRoutes } from './services/storage/storage.routes.js';
 
@@ -61,6 +63,8 @@ router.use('/settings', settingsRoutes);
 router.use('/reports', reportsRoutes);
 router.use('/search', searchRoutes);
 router.use('/destination-expert-presets', destinationExpertPresetsRoutes);
+router.use('/mobile', mobileRoutes);
+router.use('/call-recordings', callRecordingsRoutes);
 
 // LOCAL storage provider (development only): serves the presigned-style URLs
 // issued by DiskStorageService. Production runs S3 with real presigned URLs and

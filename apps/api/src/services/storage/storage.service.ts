@@ -170,6 +170,13 @@ export function stylishPage1ImageObjectKey(input: {
   return `companies/${input.companyId}/quotations/${input.quotationId}/versions/${input.versionId}/stylish-page1/${slot}/${sanitizeFileName(input.fileName)}`;
 }
 
+export function callRecordingObjectKey(input: { companyId: string; callId: string }): string {
+  const now = new Date();
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `call-recordings/company/${input.companyId}/${year}/${month}/${input.callId}/recording.m4a`;
+}
+
 export const storageService =
   env.STORAGE_PROVIDER === 's3'
     ? new S3StorageService()
