@@ -1527,6 +1527,57 @@ export const destinationExpertConfigSchema = z
 
 export type DestinationExpertConfig = z.infer<typeof destinationExpertConfigSchema>;
 
+/**
+ * Stylish PDF Page 1 image selections. Persisted per quotation version so
+ * regeneration reproduces the same cover. Hero defaults to the destination
+ * master image; each gallery card defaults to the first usable image of the
+ * first three DIFFERENT sightseeing activities. CUSTOM slots carry a
+ * storage object key written by the approve/confirm upload flow — never the
+ * master or quotation data itself, so Classic PDF / weblink stay untouched.
+ */
+const stylishPdfPage1ImageSchema = z.object({
+  mode: z.enum(['DEFAULT', 'CUSTOM']),
+  objectKey: z.string().trim().min(1).max(1000).nullable().optional(),
+  fileName: z.string().trim().min(1).max(200).nullable().optional(),
+  mimeType: z.string().trim().min(1).max(100).nullable().optional(),
+  fileSize: z.number().int().positive().max(5 * 1024 * 1024).nullable().optional(),
+});
+
+export const stylishPdfPage1Schema = z
+  .object({
+    hero: stylishPdfPage1ImageSchema.nullable().optional(),
+    cards: z.array(stylishPdfPage1ImageSchema.nullable().optional()).max(3).nullable().optional(),
+  })
+  .nullable()
+  .optional();
+
+export type StylishPdfPage1 = z.infer<typeof stylishPdfPage1Schema>;
+
+export function normalizeStylishPdfPage1(value: unknown): StylishPdfPage1 {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const cleanSlot = (slot: unknown) => {
+    if (!slot || typeof slot !== 'object') return null;
+    const s = slot as Record<string, unknown>;
+    if (s.mode !== 'CUSTOM') return { mode: 'DEFAULT' as const };
+    const objectKey = typeof s.objectKey === 'string' && s.objectKey.trim() ? s.objectKey.trim() : null;
+    if (!objectKey) return { mode: 'DEFAULT' as const };
+    return {
+      mode: 'CUSTOM' as const,
+      objectKey,
+      fileName: typeof s.fileName === 'string' ? s.fileName : null,
+      mimeType: typeof s.mimeType === 'string' ? s.mimeType : null,
+      fileSize: typeof s.fileSize === 'number' && Number.isFinite(s.fileSize) ? s.fileSize : null,
+    };
+  };
+  const cardsRaw = Array.isArray(row.cards) ? row.cards.slice(0, 3) : [];
+  while (cardsRaw.length < 3) cardsRaw.push(null);
+  return {
+    hero: cleanSlot(row.hero),
+    cards: cardsRaw.map(cleanSlot),
+  };
+}
+
 export function normalizeDestinationExpertConfig(value: unknown): DestinationExpertConfig {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;

@@ -173,11 +173,20 @@ const envSchema = z.object({
    * Optional here because the running API must boot without them; the
    * bootstrap command fails safely when they are missing.
    */
-  SYSTEM_ADMIN_EMAIL: z.string().trim().email().optional(),
-  SYSTEM_ADMIN_PASSWORD: z.string().min(1).optional(),
+  SYSTEM_ADMIN_EMAIL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().trim().email().optional(),
+  ),
+  SYSTEM_ADMIN_PASSWORD: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(1).optional(),
+  ),
   SYSTEM_ADMIN_RESET_PASSWORD: booleanWithDefault(false),
   /** Optional fallback company id; the deterministic slug is preferred. */
-  SYSTEM_GLOBAL_MASTERS_COMPANY_ID: z.string().uuid().optional(),
+  SYSTEM_GLOBAL_MASTERS_COMPANY_ID: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().uuid().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

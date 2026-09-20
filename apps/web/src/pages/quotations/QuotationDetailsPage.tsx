@@ -31,10 +31,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   uploadQuotationAttachment,
+  useApproveStylishPage1,
+  useConfirmStylishPage1,
   useGenerateQuotationPdf,
   useQuotation,
   useQuotationAction,
+  useResetStylishPage1,
   useSendQuotation,
+  useStylishPage1,
+  type StylishPage1Slot,
 } from '@/features/quotations/quotations.api';
 import { apiClient } from '@/api/client';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -96,6 +101,41 @@ export function QuotationDetailsPage() {
   const [stylishCoverOpen, setStylishCoverOpen] = useState(false);
   const [coverSource, setCoverSource] = useState<'DESTINATION' | 'UPLOAD'>('DESTINATION');
   const [coverFile, setCoverFile] = useState<File | null>(null);
+  // Stylish Page 1 gallery overrides: one optional file per card slot.
+  const [page1CardFiles, setPage1CardFiles] = useState<Array<File | null>>([null, null, null]);
+  const [page1Message, setPage1Message] = useState('');
+  const page1VersionId = query.data?.currentVersionId;
+  const page1Selection = useStylishPage1(quotationId, page1VersionId ?? undefined);
+  const approvePage1 = useApproveStylishPage1(quotationId, page1VersionId ?? '');
+  const confirmPage1 = useConfirmStylishPage1(quotationId, page1VersionId ?? '');
+  const resetPage1 = useResetStylishPage1(quotationId, page1VersionId ?? '');
+  const savePage1Slot = async (slot: StylishPage1Slot, file: File) => {
+    setPage1Message('');
+    try {
+      const approval = await approvePage1.mutateAsync({
+        slot,
+        fileName: file.name,
+        mimeType: file.type,
+        fileSize: file.size,
+      });
+      const response = await fetch(approval.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!response.ok) throw new Error(`The upload failed for ${file.name}.`);
+      await confirmPage1.mutateAsync({
+        slot,
+        objectKey: approval.objectKey,
+        fileName: file.name,
+        mimeType: file.type,
+        fileSize: file.size,
+      });
+      setPage1Message('Page 1 image saved. Regenerate the stylish PDF to see it.');
+    } catch (error) {
+      setPage1Message(error instanceof Error ? error.message : 'Unable to save the Page 1 image.');
+    }
+  };
   const [whatsappOpen, setWhatsappOpen] = useState(false);
   const [summaryCopied, setSummaryCopied] = useState(false);
   const summaryCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -388,12 +428,34 @@ export function QuotationDetailsPage() {
         return;
       }
     }
+    // Optional per-generation gallery overrides for Stylish Page 1 cards.
+    // Persisted defaults (saved below) apply automatically; these files win
+    // for this generation only.
+    let page1CardImageDataUrls: Array<string | null> | undefined;
+    if (style === 'STYLISH') {
+      const urls: Array<string | null> = [];
+      for (const file of page1CardFiles) {
+        if (!file) {
+          urls.push(null);
+          continue;
+        }
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error('Unable to read the selected image.'));
+          reader.readAsDataURL(file);
+        }).catch(() => null);
+        urls.push(dataUrl);
+      }
+      if (urls.some(Boolean)) page1CardImageDataUrls = urls;
+    }
     generatePdf.mutate(
       {
         versionId: current.id,
         style,
         coverSource: selectedCoverSource,
         ...(coverImageDataUrl ? { coverImageDataUrl } : {}),
+        ...(page1CardImageDataUrls ? { page1CardImageDataUrls } : {}),
       },
       {
         onSuccess: ({ url }) => {
@@ -963,6 +1025,106 @@ export function QuotationDetailsPage() {
                   />
                 )}
               </label>
+            <div className="rounded-xl border p-4">
+              <strong className="block">Page 1 gallery cards</strong>
+              <span className="text-sm text-slate-500">
+                Defaults use the first image of the first three different sightseeing
+                activities. Upload a file to override a card for this PDF only, or save
+                it as the version default below.
+              </span>
+              {[0, 1, 2].map((slot) => (
+                <label key={slot} className="mt-3 block text-sm">
+                  Card {slot + 1}
+                  <input
+                    aria-label={`Page 1 card ${slot + 1} image`}
+                    className="mt-1 block w-full text-sm"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      if (file && file.size > 5 * 1024 * 1024) {
+                        setPdfError(`Card ${slot + 1} image may not exceed 5 MB.`);
+                        return;
+                      }
+                      setPdfError('');
+                      setPage1CardFiles((files) => files.map((entry, index) => (index === slot ? file : entry)));
+                    }}
+                  />
+                  {page1CardFiles[slot] && (
+                    <span className="text-xs text-slate-500">{page1CardFiles[slot]?.name} — this PDF only</span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <div className="rounded-xl border p-4">
+              <strong className="block">Saved Page 1 defaults</strong>
+              <span className="text-sm text-slate-500">
+                Saved images persist with this version and apply to every regeneration.
+              </span>
+              {page1Message && <p className="mt-2 text-sm text-slate-600">{page1Message}</p>}
+              <div className="mt-3 space-y-2 text-sm">
+                {(['hero', 'card-1', 'card-2', 'card-3'] as Array<StylishPage1Slot>).map((slot) => {
+                  const selection = page1Selection.data as {
+                    hero?: { mode?: string } | null;
+                    cards?: Array<{ mode?: string } | null> | null;
+                  } | null | undefined;
+                  const mode =
+                    slot === 'hero'
+                      ? (selection?.hero?.mode ?? 'DEFAULT')
+                      : ((selection?.cards ?? [])[Number(slot.split('-')[1]) - 1]?.mode ?? 'DEFAULT');
+                  return (
+                    <div key={slot} className="flex items-center justify-between gap-2">
+                      <span>
+                        {slot === 'hero' ? 'Hero' : `Card ${slot.split('-')[1]}`} · {mode === 'CUSTOM' ? 'Custom' : 'Default'}
+                      </span>
+                      <span className="flex gap-2">
+                        {slot === 'hero' && coverFile && coverSource === 'UPLOAD' && (
+                          <Button
+                            variant="secondary"
+                            disabled={approvePage1.isPending || confirmPage1.isPending}
+                            onClick={() => void savePage1Slot('hero', coverFile)}
+                          >
+                            Save hero
+                          </Button>
+                        )}
+                        {slot !== 'hero' && page1CardFiles[Number(slot.split('-')[1]) - 1] && (
+                          <Button
+                            variant="secondary"
+                            disabled={approvePage1.isPending || confirmPage1.isPending}
+                            onClick={() => {
+                              const file = page1CardFiles[Number(slot.split('-')[1]) - 1];
+                              if (file) void savePage1Slot(slot, file);
+                            }}
+                          >
+                            Save card
+                          </Button>
+                        )}
+                        {mode === 'CUSTOM' && (
+                          <Button
+                            variant="secondary"
+                            disabled={resetPage1.isPending}
+                            onClick={() =>
+                              resetPage1.mutate(
+                                { slot },
+                                {
+                                  onSuccess: () => setPage1Message('Page 1 image reset to default.'),
+                                  onError: (error) =>
+                                    setPage1Message(
+                                      error instanceof Error ? error.message : 'Unable to reset the image.',
+                                    ),
+                                },
+                              )
+                            }
+                          >
+                            Reset
+                          </Button>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <Button

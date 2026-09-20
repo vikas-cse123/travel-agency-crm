@@ -148,9 +148,60 @@ export const quotationsController = {
           style: req.body.style ?? 'CLASSIC',
           coverSource: req.body.coverSource ?? 'DESTINATION',
           coverImageDataUrl: req.body.coverImageDataUrl,
+          page1HeroImageDataUrl: req.body.page1HeroImageDataUrl,
+          page1CardImageDataUrls: req.body.page1CardImageDataUrls,
         },
       ),
       'Quotation PDF ready.',
+    );
+  },
+  async stylishPage1(req: Request, res: Response) {
+    sendSuccess(
+      res,
+      await quotationsService.getStylishPage1(
+        auth(req),
+        req.params.quotationId!,
+        req.params.versionId!,
+      ),
+    );
+  },
+  async approveStylishPage1(req: Request, res: Response) {
+    sendSuccess(
+      res,
+      await quotationsService.approveStylishPage1Image(
+        auth(req),
+        req.params.quotationId!,
+        req.params.versionId!,
+        req.params.slot as 'hero' | 'card-1' | 'card-2' | 'card-3',
+        req.body,
+      ),
+    );
+  },
+  async confirmStylishPage1(req: Request, res: Response) {
+    sendSuccess(
+      res,
+      await quotationsService.confirmStylishPage1Image(
+        auth(req),
+        req.params.quotationId!,
+        req.params.versionId!,
+        req.params.slot as 'hero' | 'card-1' | 'card-2' | 'card-3',
+        req.body,
+        context(req),
+      ),
+      'Page 1 image saved.',
+    );
+  },
+  async resetStylishPage1(req: Request, res: Response) {
+    sendSuccess(
+      res,
+      await quotationsService.resetStylishPage1Image(
+        auth(req),
+        req.params.quotationId!,
+        req.params.versionId!,
+        req.params.slot as 'hero' | 'card-1' | 'card-2' | 'card-3',
+        context(req),
+      ),
+      'Page 1 image reset to default.',
     );
   },
   async documents(req: Request, res: Response) {

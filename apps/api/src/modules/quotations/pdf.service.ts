@@ -513,6 +513,14 @@ export interface QuotationPdfInput {
     flights?: Array<{ description?: string | null; image: Img; url?: string }>;
     /** Destination Expert profile photo bytes. */
     expertProfile?: Img;
+    /**
+     * Stylish PDF Page 1 manual overrides. `page1Hero` replaces the
+     * destination-master hero for the cover only; `page1Cards` replaces the
+     * three sightseeing gallery images slot-by-slot (sparse entries fall back
+     * to the calculated defaults). Never touches Classic PDF / weblink data.
+     */
+    page1Hero?: Img;
+    page1Cards?: Img[];
   };
 }
 
@@ -2347,7 +2355,9 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
           // Hidden when pricingMode is TOTAL — only show in SECTION_WISE.
           const aPrices = isSectionWisePricing ? pdfActivityPrices(a.pricingOptions) : [];
           // DISPLAY-ONLY pricing snapshot — never feeds totals.
-          const aDisplayPrices = pdfDisplayPrices((a as unknown as { displayPricing?: unknown }).displayPricing);
+          const aDisplayPrices = pdfDisplayPrices(
+            (a as unknown as { displayPricing?: Array<{ label?: string | null; price?: number | string | null; enabled?: boolean }> | null }).displayPricing,
+          );
           const pricingGap = 8;
           const pricingPadX = 8;
           const pricingPadY = 6;

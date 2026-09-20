@@ -154,6 +154,22 @@ export function userProfileImageObjectKey(input: {
   return `companies/${input.companyId}/users/${input.userId}/profile/${input.imageId}/${sanitizeFileName(input.fileName)}`;
 }
 
+/**
+ * Stylish PDF Page 1 custom images. Quotation-owned so regeneration is
+ * deterministic; slot is `hero` or `card-1..3`. Never rewrites master or
+ * quotation snapshot data — Page 1 only.
+ */
+export function stylishPage1ImageObjectKey(input: {
+  companyId: string;
+  quotationId: string;
+  versionId: string;
+  slot: string;
+  fileName: string;
+}): string {
+  const slot = input.slot.replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'slot';
+  return `companies/${input.companyId}/quotations/${input.quotationId}/versions/${input.versionId}/stylish-page1/${slot}/${sanitizeFileName(input.fileName)}`;
+}
+
 export const storageService =
   env.STORAGE_PROVIDER === 's3'
     ? new S3StorageService()

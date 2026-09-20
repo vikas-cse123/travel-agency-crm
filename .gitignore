@@ -53,3 +53,4 @@ apps/api/prisma/*.db-journal
 # Local reference training videos
 references/lead-creation-videos/*.mp4
 references/lead-creation-videos/extracted/
+apps/api/.local-storage/

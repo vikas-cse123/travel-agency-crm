@@ -3654,6 +3654,10 @@ model QuotationVersion {
   weblinkSectionOrder          Json?                  @db.Json
   // Destination Expert — per-quotation config (nullable for old quotations)
   destinationExpertConfig      Json?                  @db.Json
+  // Stylish PDF Page 1 — hero + three gallery card selections. Nullable for
+  // backward compatibility; absent means all defaults (destination hero +
+  // first images of the first three different sightseeing activities).
+  stylishPdfPage1              Json?                  @db.Json
   notes                        String?                @db.VarChar(4000)
   internalNotes                String?                @db.VarChar(4000)
   status                       QuotationVersionStatus @default(DRAFT)

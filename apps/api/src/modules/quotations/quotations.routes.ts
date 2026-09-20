@@ -126,6 +126,8 @@ router.post(
         style: z.enum(['CLASSIC', 'STYLISH']).optional(),
         coverSource: z.enum(['DESTINATION', 'UPLOAD']).optional(),
         coverImageDataUrl: z.string().max(7_000_000).optional(),
+        page1HeroImageDataUrl: z.string().max(7_000_000).optional(),
+        page1CardImageDataUrls: z.array(z.string().max(7_000_000).nullable().optional()).max(3).optional(),
       })
       .superRefine((value, ctx) => {
         if (
@@ -143,6 +145,36 @@ router.post(
       .default({}),
   }),
   asyncHandler(controller.pdf),
+);
+const page1Slot = versionId.extend({ slot: z.enum(['hero', 'card-1', 'card-2', 'card-3']) });
+const page1Approve = z.object({
+  fileName: z.string().trim().min(1).max(200),
+  mimeType: z.string().trim().min(1).max(100),
+  fileSize: z.number().int().positive().max(5 * 1024 * 1024),
+});
+router.get(
+  '/:quotationId/versions/:versionId/stylish-page1',
+  requirePermission(PERMISSIONS.QUOTATIONS_VIEW),
+  validateRequest({ params: versionId }),
+  asyncHandler(controller.stylishPage1),
+);
+router.post(
+  '/:quotationId/versions/:versionId/stylish-page1/:slot/approve',
+  requirePermission(PERMISSIONS.QUOTATIONS_UPDATE),
+  validateRequest({ params: page1Slot, body: page1Approve }),
+  asyncHandler(controller.approveStylishPage1),
+);
+router.post(
+  '/:quotationId/versions/:versionId/stylish-page1/:slot/confirm',
+  requirePermission(PERMISSIONS.QUOTATIONS_UPDATE),
+  validateRequest({ params: page1Slot, body: page1Approve.extend({ objectKey: z.string().trim().min(1).max(1000) }) }),
+  asyncHandler(controller.confirmStylishPage1),
+);
+router.post(
+  '/:quotationId/versions/:versionId/stylish-page1/:slot/reset',
+  requirePermission(PERMISSIONS.QUOTATIONS_UPDATE),
+  validateRequest({ params: page1Slot }),
+  asyncHandler(controller.resetStylishPage1),
 );
 router.get(
   '/:quotationId/documents',

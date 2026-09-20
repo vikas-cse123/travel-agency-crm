@@ -548,6 +548,8 @@ export function useGenerateQuotationPdf(quotationId: string) {
       style: 'CLASSIC' | 'STYLISH';
       coverSource?: 'DESTINATION' | 'UPLOAD';
       coverImageDataUrl?: string;
+      page1HeroImageDataUrl?: string;
+      page1CardImageDataUrls?: Array<string | null | undefined>;
     }) => {
       // force: true — an explicit "Generate PDF" always produces a fresh
       // document so the latest destination image / footer is included.
@@ -558,6 +560,12 @@ export function useGenerateQuotationPdf(quotationId: string) {
           style: input.style,
           ...(input.style === 'STYLISH' ? { coverSource: input.coverSource ?? 'DESTINATION' } : {}),
           ...(input.coverImageDataUrl ? { coverImageDataUrl: input.coverImageDataUrl } : {}),
+          ...(input.page1HeroImageDataUrl
+            ? { page1HeroImageDataUrl: input.page1HeroImageDataUrl }
+            : {}),
+          ...(input.page1CardImageDataUrls?.some(Boolean)
+            ? { page1CardImageDataUrls: input.page1CardImageDataUrls }
+            : {}),
         },
       );
       const { url } = await apiClient.get<{ url: string }>(
@@ -605,8 +613,7 @@ export function useUpdateQuotationWeblinkSettings(quotationId: string) {
 }
 
 /** Set/clear the friendly Weblink Name (publicSlug). */
-export function useUpdateQuotationWeblinkName(quotationId: string) {
-  const client = useQueryClient();
+export function useUpdateQuotationWeblinkName(quotationId: string) {  const client = useQueryClient();
   return useMutation({
     mutationFn: (input: { publicSlug: string | null }) =>
       apiClient.patch<{ publicSlug: string | null }>(
@@ -620,6 +627,61 @@ export function useUpdateQuotationWeblinkName(quotationId: string) {
       // so refresh its cache too or the WEBLINK column keeps showing the stale
       // token URL until the 30s staleTime elapses.
       void client.invalidateQueries({ queryKey: ['queries'] });
+    },
+  });
+}
+
+/**
+ * Stylish PDF Page 1 selections (cover-only). Persisted per version so
+ * regeneration reproduces the same hero + gallery cards.
+ */
+export type StylishPage1Slot = 'hero' | 'card-1' | 'card-2' | 'card-3';
+export function useStylishPage1(quotationId: string, versionId: string | undefined) {
+  return useQuery({
+    queryKey: [...quotationKeys.quotation(quotationId), 'stylish-page1', versionId],
+    queryFn: () =>
+      apiClient.get(`/quotations/${quotationId}/versions/${versionId}/stylish-page1`),
+    enabled: Boolean(versionId),
+  });
+}
+export function useApproveStylishPage1(quotationId: string, versionId: string) {
+  return useMutation({
+    mutationFn: (input: { slot: StylishPage1Slot; fileName: string; mimeType: string; fileSize: number }) =>
+      apiClient.post<{ uploadUrl: string; objectKey: string; expiresInSeconds: number }>(
+        `/quotations/${quotationId}/versions/${versionId}/stylish-page1/${input.slot}/approve`,
+        { fileName: input.fileName, mimeType: input.mimeType, fileSize: input.fileSize },
+      ),
+  });
+}
+export function useConfirmStylishPage1(quotationId: string, versionId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      slot: StylishPage1Slot;
+      objectKey: string;
+      fileName: string;
+      mimeType: string;
+      fileSize: number;
+    }) =>
+      apiClient.post(
+        `/quotations/${quotationId}/versions/${versionId}/stylish-page1/${input.slot}/confirm`,
+        input,
+      ),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: quotationKeys.quotation(quotationId) });
+    },
+  });
+}
+export function useResetStylishPage1(quotationId: string, versionId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { slot: StylishPage1Slot }) =>
+      apiClient.post(
+        `/quotations/${quotationId}/versions/${versionId}/stylish-page1/${input.slot}/reset`,
+        {},
+      ),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: quotationKeys.quotation(quotationId) });
     },
   });
 }

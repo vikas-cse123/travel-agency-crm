@@ -180,6 +180,84 @@ type SightDay = {
 
 type PdfImage = Buffer | null | undefined;
 
+/**
+ * Largest display size (in 2pt steps, ≤ startSize, ≥ minSize) at which `text`
+ * still fits within `maxWidth`. Keeps long lead names on the cover hierarchy
+ * without overlapping the logo or hero focal point.
+ */
+export function fitDisplaySize(
+  measure: (text: string, size: number) => number,
+  text: string,
+  maxWidth: number,
+  startSize: number,
+  minSize: number,
+): number {
+  let size = startSize;
+  while (size > minSize && measure(text, size) > maxWidth) size -= 2;
+  return size;
+}
+
+/** Minimal activity shape for Page 1 gallery selection (cover-only). */
+export type StylishPage1CardActivity = {
+  sightseeingId?: string | null;
+  imageDocumentId?: string | null;
+  imageUrl?: string | null;
+};
+
+export type StylishPage1CardImages = {
+  itineraryDocuments?: Record<string, PdfImage>;
+  itinerary?: Record<string, PdfImage>;
+  sightseeing?: Record<string, PdfImage>;
+} | null | undefined;
+
+/**
+ * First usable image from the first three DIFFERENT sightseeing activities,
+ * in quotation order. Each activity row counts as different; the same master
+ * linked twice is only used once. No cover fallback, no fabrication — fewer
+ * than three usable images yields fewer cards.
+ */
+export function resolveStylishPage1DefaultCards(
+  days: Array<{ activities?: StylishPage1CardActivity[] | null } | null> | null | undefined,
+  images: StylishPage1CardImages,
+): Buffer[] {
+  const out: Buffer[] = [];
+  const seen = new Set<string>();
+  let position = 0;
+  for (const day of days ?? []) {
+    for (const activity of day?.activities ?? []) {
+      position += 1;
+      if (out.length >= 3 || !activity) break;
+      const key = activity.sightseeingId?.trim()
+        ? `master:${activity.sightseeingId.trim()}`
+        : `row:${position}`;
+      if (seen.has(key)) continue;
+      const bytes =
+        (activity.imageDocumentId
+          ? images?.itineraryDocuments?.[activity.imageDocumentId]
+          : null) ??
+        (activity.imageUrl ? images?.itinerary?.[activity.imageUrl] : null) ??
+        (activity.sightseeingId ? images?.sightseeing?.[activity.sightseeingId] : null);
+      if (!bytes) continue;
+      seen.add(key);
+      out.push(bytes);
+    }
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+/**
+ * Merge calculated defaults with per-slot CUSTOM overrides. Sparse overrides
+ * fall back to the default in that slot; missing defaults render as null
+ * (empty placeholder, never a duplicate or caption).
+ */
+export function resolveStylishPage1Cards(
+  defaults: Buffer[],
+  overrides?: Array<Buffer | null | undefined>,
+): Array<Buffer | null> {
+  return [0, 1, 2].map((slot) => overrides?.[slot] ?? defaults[slot] ?? null);
+}
+
 const prepareStylishLogo = async (value: Buffer): Promise<Buffer> => {
   try {
     const { data, info } = await sharp(value)
@@ -586,24 +664,6 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
     return png ? drawImage(png, x, top, size, size, 'contain') : false;
   };
 
-  const drawCoverServiceIcon = (label: string, centerX: number, centerY: number) => {
-    const normalized =
-      label === 'Flights' ||
-      label === 'Hotels' ||
-      label === 'Tours' ||
-      label === 'Transport' ||
-      label === 'Cruise'
-        ? label
-        : 'Add-ons';
-    const icon = STYLISH_SERVICE_ICONS[normalized];
-    // Cover icons already sit inside a dotted circular frame. Applying the
-    // generic rounded-photo clipping mask here turns into a second circle and
-    // cuts off wide artwork such as the plane, car and cruise ship. Keep a
-    // small safe inset and render the complete transparent PNG without a mask.
-    const size = 22;
-    return drawImage(icon, centerX - size / 2, centerY - size / 2, size, size, 'contain', 0);
-  };
-
   const drawRichLines = (
     lines: PdfRichTextLine[],
     x: number,
@@ -743,53 +803,144 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
     return rows;
   };
 
-  // Cover ------------------------------------------------------------------
+  // Cover (Page 1) -----------------------------------------------------------
+  // Premium travel-brochure cover: a full-bleed destination photograph with
+  // editorial serif typography, an organic cream-paper sheet laid over the
+  // lower photograph, services integrated into that paper and three framed,
+  // softly rotated sightseeing photo cards. Cover-only: later pages begin with
+  // the overview section below and must not depend on anything in this block.
+  const PAGE1_HERO_H = 530;
+  const PAGE1_CREAM = '#f7f1e7';
+  const PAGE1_GOLD = '#d9a441';
+  const PAGE1_INK = '#102a43';
+  const PAGE1_FOOTER_H = 66;
+  const PAGE1_FOOTER_TOP = H - PAGE1_FOOTER_H;
+  // Footer navy from the brochure reference (Page 2+ keeps NAVY_DARK).
+  const PAGE1_NAVY = '#1e3a5f';
+  const PAGE1_SERVICE_COLORS: Record<string, string> = {
+    Flights: '#2f8fd0',
+    Hotels: '#f0a22e',
+    Tours: '#3d9e73',
+    Transport: '#e06552',
+    Cruise: '#7b79c6',
+    'Add-ons': '#5b7fa6',
+  };
+  const page1PaperNoise = (index: number) => {
+    const value = Math.sin(index * 12.9898 + 7.3) * 43758.5453;
+    return value - Math.floor(value);
+  };
+
+  // First usable image from the first three DIFFERENT sightseeing activities,
+  // in quotation order. Each activity row counts as different; the same master
+  // linked twice is only used once. No cover fallback, no fabrication.
+  const page1DefaultCards = (): Buffer[] => {
+    const details = input.version.sightseeingDetails as {
+      days?: SightDay[];
+    } | null;
+    return resolveStylishPage1DefaultCards(details?.days, input.images);
+  };
+
   realAddPage({ size: [W, H], margin: 0 });
-  if (!drawImage(input.images?.cover, 0, 0, W, H, 'cover', 0)) doc.rect(0, 0, W, H).fill(NAVY_DARK);
-  doc.save().rect(0, 0, W, H).fillOpacity(0.15).fill(NAVY_DARK).restore();
-  if (styledLogo) drawImage(styledLogo, W / 2 - 45, 36, 90, 82, 'contain');
+
+  // Hero photograph: full-bleed, cinematic, object-cover. It extends below the
+  // paper edge so the torn cream contour always overlaps real photography.
+  const page1Hero = input.images?.page1Hero ?? input.images?.cover;
+  const page1HeroBottom = PAGE1_HERO_H + 28;
+  if (!drawImage(page1Hero, 0, 0, W, page1HeroBottom, 'cover', 0))
+    doc.rect(0, 0, W, page1HeroBottom).fill(NAVY_DARK);
+  // Soft readability scrim behind the typography only — the photograph stays
+  // bright and natural (no opaque panel, no hard edge).
+  const page1Scrim = doc.linearGradient(0, 0, 0, 380);
+  page1Scrim.stop(0, NAVY_DARK, 0.48).stop(0.5, NAVY_DARK, 0.2).stop(1, NAVY_DARK, 0);
+  doc.save().rect(0, 0, W, 380).fill(page1Scrim).restore();
+
+  // Centred logo in the upper portion of the hero, with generous breathing room.
+  if (styledLogo) drawImage(styledLogo, W / 2 - 66, 48, 132, 106, 'contain', 0);
   else {
     doc
       .font('Bold')
-      .fontSize(10)
-      .fillColor(GOLD)
-      .text((company?.name ?? 'TRAVEL COMPANY').toUpperCase(), M, 66, {
+      .fontSize(11)
+      .fillColor(PAGE1_GOLD)
+      .text((company?.name ?? 'TRAVEL COMPANY').toUpperCase(), M, 82, {
         width: CONTENT_W,
         align: 'center',
+        characterSpacing: 4,
+        lineBreak: false,
       });
   }
-  doc.font('Helvetica').fontSize(24).fillColor('#ffffff').text(input.version.title, M, 319, {
-    width: CONTENT_W,
-    align: 'center',
-  });
   doc
-    .font('Helvetica')
+    .font('Bold')
     .fontSize(12)
     .fillColor('#ffffff')
-    .text(
-      (input.quotation.destinations || input.quotation.destinationSummary).toUpperCase(),
-      M,
-      356,
-      { width: CONTENT_W, align: 'center', characterSpacing: 0.9 },
-    );
-  const servicesHeading = 'SERVICES INCLUDE';
+    .text('PACKAGE FOR', M, 188, {
+      width: CONTENT_W,
+      align: 'center',
+      characterSpacing: 4.5,
+      lineBreak: false,
+    });
+  // Dominant editorial serif lead name, shrinking gracefully for long names.
+  const page1Name = clean(input.quotation.customerName) || 'Valued Traveller';
+  const page1NameWidth = CONTENT_W - 24;
+  const page1NameSize = fitDisplaySize(
+    (text, size) => {
+      doc.font('Times-Bold').fontSize(size);
+      return doc.widthOfString(text);
+    },
+    page1Name,
+    page1NameWidth,
+    60,
+    34,
+  );
+  const page1NameTop = 210;
+  doc.font('Times-Bold').fontSize(page1NameSize);
+  const page1NameHeight = doc.heightOfString(page1Name, { width: page1NameWidth });
+  doc
+    .fontSize(page1NameSize)
+    .fillColor('#ffffff')
+    .text(page1Name, M + 12, page1NameTop, {
+      width: page1NameWidth,
+      align: 'center',
+    });
+  const page1RuleTop = page1NameTop + page1NameHeight + 10;
   doc
     .save()
-    .moveTo(183.6, 487.4)
-    .lineTo(240.2, 487.4)
-    .moveTo(354.3, 487.4)
-    .lineTo(410.9, 487.4)
-    .lineWidth(0.85)
-    .strokeOpacity(0.4)
-    .strokeColor('#ffffff')
+    .moveTo(W / 2 - 60, page1RuleTop)
+    .lineTo(W / 2 + 60, page1RuleTop)
+    .lineWidth(1.2)
+    .strokeColor(PAGE1_GOLD)
     .stroke()
     .restore();
-  doc.font('Bold').fontSize(5).fillColor('#ffffff').text(servicesHeading, M, 483.5, {
-    width: CONTENT_W,
-    align: 'center',
-    characterSpacing: 1.5,
-  });
-  const selectedServices = [
+  doc
+    .font('Body')
+    .fontSize(9.5)
+    .fillColor('#ffffff')
+    .text('A JOURNEY TO EXTRAORDINARY', M, page1RuleTop + 11, {
+      width: CONTENT_W,
+      align: 'center',
+      characterSpacing: 3.5,
+      lineBreak: false,
+    });
+
+  // Organic cream-paper sheet laid over the lower photograph. The contour
+  // combines two noise frequencies so the torn edge is asymmetric and clearly
+  // physical (never a repeating zig-zag), with a faint warm lift shadow.
+  const page1PaperAmp = (index: number) =>
+    page1PaperNoise(index) * 6 + page1PaperNoise(index * 2.3 + 11) * 3;
+  const page1PaperPath = (edgeOffset: number, steps: number) => {
+    doc.moveTo(0, PAGE1_HERO_H - 10 + edgeOffset + page1PaperAmp(0));
+    for (let step = 1; step <= steps; step += 1) {
+      const x = (W / steps) * step;
+      doc.lineTo(x, PAGE1_HERO_H - 10 + edgeOffset + page1PaperAmp(step));
+    }
+    doc.lineTo(W, PAGE1_FOOTER_TOP).lineTo(0, PAGE1_FOOTER_TOP).closePath();
+  };
+  doc.save().fillColor('#4a3a26').fillOpacity(0.16);
+  page1PaperPath(-4, 52);
+  doc.fill().restore();
+  doc.save().fillColor(PAGE1_CREAM).fillOpacity(1);
+  page1PaperPath(0, 52);
+  doc.fill().restore();
+  const page1Services = [
     ...new Set([
       ...((input.version.flightDetails as FlightDetails | null)?.include ? ['Flights'] : []),
       ...(input.version.hotels.some((hotel) => hotel.selected) ? ['Hotels'] : []),
@@ -811,50 +962,250 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
       (left, right) =>
         ['Flights', 'Hotels', 'Tours', 'Transport', 'Cruise', 'Add-ons'].indexOf(left) -
         ['Flights', 'Hotels', 'Tours', 'Transport', 'Cruise', 'Add-ons'].indexOf(right),
-    )
-    .slice(0, 6);
-  const iconSpace = 68;
-  const iconStart = (W - (selectedServices.length - 1) * iconSpace) / 2;
-  selectedServices.forEach((label, index) => {
-    const center = iconStart + index * iconSpace;
-    doc
-      .save()
-      .circle(center, 525.4, 22.7)
-      .lineWidth(1.13)
-      .dash(1.5, { space: 1.2 })
-      .strokeOpacity(0.8)
-      .strokeColor('#ffffff')
-      .stroke()
-      .restore();
-    drawCoverServiceIcon(label, center, 525.4);
+    );
+  const page1ServicesTop = PAGE1_HERO_H + 19;
+  const page1Heading = 'SERVICES INCLUDE';
+  doc.font('Bold').fontSize(8.5);
+  const page1HeadingWidth =
+    doc.widthOfString(page1Heading) + 3.5 * (page1Heading.length - 1);
+  const page1RuleY = page1ServicesTop + 4;
+  const page1RuleGap = 14;
+  const page1RuleLen = 70;
+  doc
+    .save()
+    .lineWidth(0.5)
+    .strokeColor('#a9b4c2')
+    .moveTo(W / 2 - page1HeadingWidth / 2 - page1RuleGap - page1RuleLen, page1RuleY)
+    .lineTo(W / 2 - page1HeadingWidth / 2 - page1RuleGap, page1RuleY)
+    .moveTo(W / 2 + page1HeadingWidth / 2 + page1RuleGap, page1RuleY)
+    .lineTo(W / 2 + page1HeadingWidth / 2 + page1RuleGap + page1RuleLen, page1RuleY)
+    .stroke()
+    .restore();
+  doc
+    .font('Bold')
+    .fontSize(8.5)
+    .fillColor(PAGE1_INK)
+    .text(page1Heading, M, page1ServicesTop, {
+      width: CONTENT_W,
+      align: 'center',
+      characterSpacing: 3.5,
+      lineBreak: false,
+    });
+  // Circular colour-coded service badges with a white centre and a close label.
+  const page1IconGap = 16;
+  const page1IconD = 56;
+  const page1RowW = page1Services.length * page1IconD + (page1Services.length - 1) * page1IconGap;
+  let page1IconX = (W - page1RowW) / 2;
+  const page1IconTop = page1ServicesTop + 16;
+  page1Services.forEach((label) => {
+    const centerX = page1IconX + page1IconD / 2;
+    const centerY = page1IconTop + page1IconD / 2;
+    doc.save().circle(centerX, centerY, page1IconD / 2).fill(PAGE1_SERVICE_COLORS[label] ?? NAVY).restore();
+    doc.save().circle(centerX, centerY, 20).fill('#ffffff').restore();
+    const icon = STYLISH_SERVICE_ICONS[label as keyof typeof STYLISH_SERVICE_ICONS] ?? null;
+    drawImage(icon, centerX - 14, centerY - 14, 28, 28, 'contain', 0);
     doc
       .font('Bold')
-      .fontSize(5.5)
-      .fillColor('#ffffff')
-      .text(label, center - iconSpace / 2, 556.5, {
-        width: iconSpace,
+      .fontSize(8)
+      .fillColor(PAGE1_INK)
+      .text(label, page1IconX - 10, page1IconTop + page1IconD + 5, {
+        width: page1IconD + 20,
         align: 'center',
         lineBreak: false,
       });
+    page1IconX += page1IconD + page1IconGap;
   });
+  // Three framed sightseeing photographs — white mat, soft lift shadow and a
+  // gentle brochure rotation. The photograph is the whole card; no captions.
+  const page1Defaults = page1DefaultCards();
+  const page1Cards = resolveStylishPage1Cards(page1Defaults, input.images?.page1Cards);
+  const page1CardW = 162;
+  const page1CardH = 112;
+  const page1CardFrame = 4;
+  const page1CardGap = 11;
+  const page1CardRowW = 3 * page1CardW + 2 * page1CardGap;
+  const page1CardLeft0 = M + (CONTENT_W - page1CardRowW) / 2;
+  const page1CardCenterY = 706;
+  const page1CardYOffsets = [1.5, 0, 1.5];
+  const page1CardAngles = [-2, 0, 2];
+  const page1CardOuterW = page1CardW + page1CardFrame * 2;
+  const page1CardOuterH = page1CardH + page1CardFrame * 2;
+  for (let card = 0; card < 3; card += 1) {
+    const image = page1Cards[card] ?? null;
+    const centerX = page1CardLeft0 + card * (page1CardW + page1CardGap) + page1CardW / 2;
+    doc.save();
+    doc.translate(centerX, page1CardCenterY + (page1CardYOffsets[card] ?? 0));
+    doc.rotate(page1CardAngles[card] ?? 0);
+    // Soft, low-opacity lift shadow (approximated with two stacked mats).
+    doc
+      .save()
+      .roundedRect(
+        -page1CardOuterW / 2 + 2,
+        -page1CardOuterH / 2 + 3,
+        page1CardOuterW,
+        page1CardOuterH,
+        8,
+      )
+      .fillColor('#2b2115')
+      .fillOpacity(0.16)
+      .fill()
+      .restore();
+    doc
+      .save()
+      .roundedRect(
+        -page1CardOuterW / 2 + 1,
+        -page1CardOuterH / 2 + 1.5,
+        page1CardOuterW,
+        page1CardOuterH,
+        8,
+      )
+      .fillColor('#2b2115')
+      .fillOpacity(0.1)
+      .fill()
+      .restore();
+    // White photo mat.
+    doc
+      .save()
+      .roundedRect(-page1CardOuterW / 2, -page1CardOuterH / 2, page1CardOuterW, page1CardOuterH, 6)
+      .fill('#ffffff')
+      .restore();
+    if (!image) {
+      doc
+        .save()
+        .roundedRect(-page1CardW / 2, -page1CardH / 2, page1CardW, page1CardH, 3)
+        .fill('#e7edf4')
+        .restore();
+    } else {
+      drawImage(image, -page1CardW / 2, -page1CardH / 2, page1CardW, page1CardH, 'cover', 3);
+    }
+    doc.restore();
+  }
+  // Navy consultant footer (Page 1 only). Compact editorial contact strip with
+  // a very subtle irregular paper transition, compact gold discs holding drawn
+  // navy vector glyphs and short centered separators. All values stay dynamic
+  // and single-line.
+  const page1FooterIconPad = 24;
+  const page1DiscR = 13;
+  const page1DiscY = PAGE1_FOOTER_TOP + PAGE1_FOOTER_H / 2;
+  const page1TearNoise = (index: number) => {
+    const value = Math.sin(index * 12.9898 + 4.1) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  doc.save().fill(PAGE1_NAVY);
+  doc.moveTo(0, PAGE1_FOOTER_TOP);
+  const page1FooterTeeth = 52;
+  for (let tear = 0; tear <= page1FooterTeeth; tear += 1) {
+    const x = (W / page1FooterTeeth) * tear;
+    doc.lineTo(x, PAGE1_FOOTER_TOP + page1TearNoise(tear) * 2);
+  }
   doc
-    .save()
-    .rect(0, H - 39, W, 39)
-    .fillOpacity(0.86)
-    .fill('#ffffff')
+    .lineTo(W, PAGE1_FOOTER_TOP + PAGE1_FOOTER_H)
+    .lineTo(0, PAGE1_FOOTER_TOP + PAGE1_FOOTER_H)
+    .closePath()
+    .fill()
     .restore();
-  // The cover contact strip is viewed against a full-page photograph, so it
-  // needs stronger typography than the compact footers on content pages.
-  doc.font('Bold').fontSize(9).fillColor(INK);
-  doc.text(`Consultant: ${consultant?.name ?? company?.name ?? '-'}`, 18, H - 25, { width: 180 });
-  doc.text(`Phone: ${consultant?.phone ?? company?.phone ?? '-'}`, 208, H - 25, {
-    width: 175,
-    align: 'center',
-  });
-  doc.text(`Email: ${consultant?.email ?? company?.email ?? '-'}`, 390, H - 25, {
-    width: 185,
-    align: 'right',
-    ellipsis: true,
+  // Drawn vector glyphs (navy on gold) — person, telephone handset, envelope.
+  const page1Person = (cx: number, cy: number, radius: number) => {
+    doc.save().fillColor(NAVY_DARK);
+    doc.circle(cx, cy - radius * 0.26, radius * 0.3).fill();
+    doc
+      .moveTo(cx - radius * 0.54, cy + radius * 0.56)
+      .bezierCurveTo(
+        cx - radius * 0.54,
+        cy + radius * 0.12,
+        cx - radius * 0.26,
+        cy - radius * 0.02,
+        cx,
+        cy - radius * 0.02,
+      )
+      .bezierCurveTo(
+        cx + radius * 0.26,
+        cy - radius * 0.02,
+        cx + radius * 0.54,
+        cy + radius * 0.12,
+        cx + radius * 0.54,
+        cy + radius * 0.56,
+      )
+      .closePath()
+      .fill();
+    doc.restore();
+  };
+  const page1Handset = (cx: number, cy: number, radius: number) => {
+    doc.save().strokeColor(NAVY_DARK).lineWidth(radius * 0.22).lineCap('round');
+    doc
+      .moveTo(cx - radius * 0.38, cy - radius * 0.4)
+      .quadraticCurveTo(
+        cx - radius * 0.45,
+        cy + radius * 0.35,
+        cx + radius * 0.36,
+        cy + radius * 0.44,
+      )
+      .stroke();
+    doc.restore();
+    doc.save().fillColor(NAVY_DARK);
+    doc.circle(cx - radius * 0.38, cy - radius * 0.4, radius * 0.15).fill();
+    doc.circle(cx + radius * 0.36, cy + radius * 0.44, radius * 0.15).fill();
+    doc.restore();
+  };
+  const page1Envelope = (cx: number, cy: number, radius: number) => {
+    const ew = radius * 0.84;
+    const eh = radius * 0.58;
+    doc.save().strokeColor(NAVY_DARK).lineWidth(radius * 0.12).lineJoin('round');
+    doc.rect(cx - ew / 2, cy - eh / 2, ew, eh).stroke();
+    doc
+      .moveTo(cx - ew / 2, cy - eh / 2)
+      .lineTo(cx, cy + radius * 0.1)
+      .lineTo(cx + ew / 2, cy - eh / 2)
+      .stroke();
+    doc.restore();
+  };
+  const page1FooterCols = [
+    { label: 'Consultant:', value: consultant?.name ?? company?.name ?? '-', draw: page1Person },
+    { label: 'Phone:', value: consultant?.phone ?? company?.phone ?? '-', draw: page1Handset },
+    { label: 'Email:', value: consultant?.email ?? company?.email ?? '-', draw: page1Envelope },
+  ];
+  const page1ColW = CONTENT_W / 3;
+  page1FooterCols.forEach((column, index) => {
+    const left = M + index * page1ColW;
+    if (index > 0) {
+      doc
+        .save()
+        .moveTo(left, page1DiscY - 14)
+        .lineTo(left, page1DiscY + 14)
+        .lineWidth(0.55)
+        .strokeColor('#4a6584')
+        .stroke()
+        .restore();
+    }
+    const discX = left + page1FooterIconPad;
+    doc.save().circle(discX, page1DiscY, page1DiscR).fill(PAGE1_GOLD).restore();
+    column.draw(discX, page1DiscY, page1DiscR);
+    const textX = discX + page1DiscR + 8;
+    const textW = page1ColW - (textX - left) - 6;
+    doc
+      .font('Body')
+      .fontSize(7.5)
+      .fillColor('#c8d5ec')
+      .text(column.label, textX, PAGE1_FOOTER_TOP + 22, {
+        width: textW,
+        lineBreak: false,
+      });
+    let page1ValueSize = 10;
+    doc.font('Bold').fontSize(page1ValueSize);
+    while (page1ValueSize > 8 && doc.widthOfString(column.value) > textW) {
+      page1ValueSize -= 0.25;
+      doc.font('Bold').fontSize(page1ValueSize);
+    }
+    doc
+      .font('Bold')
+      .fontSize(page1ValueSize)
+      .fillColor('#ffffff')
+      .text(column.value, textX, PAGE1_FOOTER_TOP + 33, {
+        width: textW,
+        height: 16,
+        ellipsis: true,
+        lineBreak: false,
+      });
   });
 
   // Overview ---------------------------------------------------------------
@@ -966,7 +1317,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
         ],
       ];
     })(),
-  ] satisfies Array<[PdfImage, string, string, string] | [PdfImage, string, string, string, string | undefined]>;
+  ] as Array<[PdfImage, string, string, string, (string | undefined)?]>;
   overviewRows.forEach(([icon, label, value, color, sub], index) => {
     const column = index % 3;
     const row = Math.floor(index / 3);

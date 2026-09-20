@@ -15,6 +15,8 @@ import {
   resolveWeblinkSectionOrder,
   normalizeDestinationExpertConfig,
   validateQuotationPricing,
+  normalizeStylishPdfPage1,
+  type StylishPdfPage1,
   SERVICE_PRICING_BASES,
   type QuotationSnapshotImage,
   type DestinationExpertConfig,
@@ -54,6 +56,7 @@ import {
   quotationObjectKey,
   sanitizeFileName,
   storageService,
+  stylishPage1ImageObjectKey,
 } from '../../services/storage/storage.service.js';
 import { emailService } from '../../services/email/email.service.js';
 import { nextCompanyNumber, quotationAudit, type RequestContext } from './quotation.utils.js';
@@ -73,6 +76,14 @@ type QuotationPdfOptions = {
   style: 'CLASSIC' | 'STYLISH';
   coverSource: 'DESTINATION' | 'UPLOAD';
   coverImageDataUrl?: string;
+  /**
+   * Stylish Page 1 manual overrides. The hero data URL replaces the
+   * destination-master hero for the cover only; each card data URL replaces
+   * one of the three sightseeing gallery slots. Sparse — missing slots keep
+   * their calculated defaults. Never touches Classic PDF / weblink data.
+   */
+  page1HeroImageDataUrl?: string;
+  page1CardImageDataUrls?: Array<string | null | undefined>;
 };
 
 async function decodePdfCoverImage(dataUrl: string | undefined): Promise<Buffer> {
@@ -2784,6 +2795,153 @@ export const quotationsService = {
   },
 
   /**
+   * Stylish PDF Page 1 image selections (cover-only). Reads the persisted
+   * `stylishPdfPage1` JSON on the version; absent means all defaults.
+   * Never touches Classic PDF / weblink / master data.
+   */
+  async getStylishPage1(auth: AuthContext, id: string, versionId: string) {
+    const version = await getVersion(auth, id, versionId);
+    return normalizeStylishPdfPage1(
+      (version as unknown as { stylishPdfPage1?: unknown }).stylishPdfPage1,
+    );
+  },
+
+  async approveStylishPage1Image(
+    auth: AuthContext,
+    id: string,
+    versionId: string,
+    slot: 'hero' | 'card-1' | 'card-2' | 'card-3',
+    input: { fileName: string; mimeType: string; fileSize: number },
+  ) {
+    await getVersion(auth, id, versionId);
+    const mime = input.mimeType.trim().toLowerCase();
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime))
+      throw new ValidationError('The Page 1 image must be a JPEG, PNG, or WebP image.');
+    const max = 5 * 1024 * 1024;
+    if (input.fileSize > max || input.fileSize < 12)
+      throw new ValidationError('The Page 1 image must be between 12 bytes and 5 MB.');
+    const key = stylishPage1ImageObjectKey({
+      companyId: auth.companyId,
+      quotationId: id,
+      versionId,
+      slot,
+      fileName: input.fileName,
+    });
+    const ttl = env.MASTER_MEDIA_PRESIGNED_URL_EXPIRY_SECONDS;
+    return {
+      uploadUrl: await storageService.createUploadUrl(key, mime, input.fileSize, ttl),
+      objectKey: key,
+      expiresInSeconds: ttl,
+    };
+  },
+
+  async confirmStylishPage1Image(
+    auth: AuthContext,
+    id: string,
+    versionId: string,
+    slot: 'hero' | 'card-1' | 'card-2' | 'card-3',
+    input: { objectKey: string; fileName: string; mimeType: string; fileSize: number },
+    context: RequestContext,
+  ) {
+    const version = await getVersion(auth, id, versionId);
+    const prefix = `companies/${auth.companyId}/quotations/${id}/versions/${versionId}/stylish-page1/`;
+    if (!input.objectKey.startsWith(prefix))
+      throw new ValidationError('This upload does not belong to this Page 1 slot.');
+    const metadata = await storageService.headObject(input.objectKey);
+    if (!metadata) throw new ValidationError('The uploaded Page 1 image could not be found.');
+    if (metadata.size !== input.fileSize || metadata.contentType !== input.mimeType.trim().toLowerCase())
+      throw new ValidationError('Uploaded image metadata does not match the approved file.');
+    const current =
+      normalizeStylishPdfPage1(
+        (version as unknown as { stylishPdfPage1?: unknown }).stylishPdfPage1,
+      ) ?? { hero: null, cards: [null, null, null] };
+    const slotValue = {
+      mode: 'CUSTOM' as const,
+      objectKey: input.objectKey,
+      fileName: input.fileName,
+      mimeType: input.mimeType,
+      fileSize: input.fileSize,
+    };
+    const cardIndex = slot === 'hero' ? -1 : Number(slot.split('-')[1]) - 1;
+    const next: StylishPdfPage1 =
+      slot === 'hero'
+        ? { hero: slotValue, cards: current?.cards ?? [null, null, null] }
+        : {
+            hero: current?.hero ?? null,
+            cards: (current?.cards ?? [null, null, null]).map((card, index) =>
+              index === cardIndex ? slotValue : (card ?? null),
+            ),
+          };
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.quotationVersion.update({
+        where: { id: versionId },
+        data: { stylishPdfPage1: next as unknown as Prisma.InputJsonValue },
+      });
+      await tx.activityLog.create({
+        data: quotationAudit(auth, 'QUOTATION_UPDATED', 'Quotation', id, context, { versionId }),
+      });
+      return tx.quotationVersion.findUniqueOrThrow({
+        where: { id: versionId },
+        include: versionInclude,
+      });
+    });
+    try {
+      const previous =
+        slot === 'hero'
+          ? (current?.hero as { objectKey?: string } | null)
+          : ((current?.cards ?? [])[cardIndex] as { objectKey?: string } | null);
+      if (previous?.objectKey && previous.objectKey !== input.objectKey)
+        await storageService.deleteObject(previous.objectKey);
+    } catch {
+      // Best-effort cleanup of the replaced upload; never blocks the save.
+    }
+    return this.getStylishPage1(auth, id, result.id);
+  },
+
+  async resetStylishPage1Image(
+    auth: AuthContext,
+    id: string,
+    versionId: string,
+    slot: 'hero' | 'card-1' | 'card-2' | 'card-3',
+    context: RequestContext,
+  ) {
+    const version = await getVersion(auth, id, versionId);
+    const current =
+      normalizeStylishPdfPage1(
+        (version as unknown as { stylishPdfPage1?: unknown }).stylishPdfPage1,
+      ) ?? { hero: null, cards: [null, null, null] };
+    const cardIndex = slot === 'hero' ? -1 : Number(slot.split('-')[1]) - 1;
+    const previous =
+      slot === 'hero'
+        ? (current?.hero as { objectKey?: string } | null)
+        : ((current?.cards ?? [])[cardIndex] as { objectKey?: string } | null);
+    const next: StylishPdfPage1 =
+      slot === 'hero'
+        ? { hero: { mode: 'DEFAULT' as const }, cards: current?.cards ?? [null, null, null] }
+        : {
+            hero: current?.hero ?? null,
+            cards: (current?.cards ?? [null, null, null]).map((card, index) =>
+              index === cardIndex ? { mode: 'DEFAULT' as const } : (card ?? null),
+            ),
+          };
+    await prisma.$transaction([
+      prisma.quotationVersion.update({
+        where: { id: versionId },
+        data: { stylishPdfPage1: next as unknown as Prisma.InputJsonValue },
+      }),
+      prisma.activityLog.create({
+        data: quotationAudit(auth, 'QUOTATION_UPDATED', 'Quotation', id, context, { versionId }),
+      }),
+    ]);
+    try {
+      if (previous?.objectKey) await storageService.deleteObject(previous.objectKey);
+    } catch {
+      // Best-effort; never blocks the reset.
+    }
+    return this.getStylishPage1(auth, id, versionId);
+  },
+
+  /**
    * Set, change or clear the friendly weblink name (publicSlug). The slug is a
    * customer-facing alias for the existing public token: updating it never
    * touches publicToken/publicTokenHash, and it is globally unique across every
@@ -3357,6 +3515,55 @@ export const quotationsService = {
     if (options.style === 'STYLISH' && options.coverSource === 'UPLOAD') {
       const uploadedCover = await decodePdfCoverImage(options.coverImageDataUrl);
       images = { ...(images ?? {}), cover: uploadedCover };
+    }
+
+    if (options.style === 'STYLISH') {
+      if (options.page1HeroImageDataUrl) {
+        const hero = await decodePdfCoverImage(options.page1HeroImageDataUrl);
+        images = { ...(images ?? {}), page1Hero: hero };
+      }
+      const cardUrls = (options.page1CardImageDataUrls ?? []).slice(0, 3);
+      if (cardUrls.some(Boolean)) {
+        const cards: Array<Buffer | null> = [];
+        for (const dataUrl of cardUrls) {
+          cards.push(dataUrl ? await decodePdfCoverImage(dataUrl) : null);
+        }
+        images = { ...(images ?? {}), page1Cards: cards };
+      }
+      // Persisted Page 1 selections fill slots the request did not override.
+      const persistedPage1 = normalizeStylishPdfPage1(
+        (version as unknown as { stylishPdfPage1?: unknown }).stylishPdfPage1,
+      );
+      const fetchPage1Bytes = async (key: string): Promise<Buffer | null> => {
+        try {
+          const body = await storageService.getObject(key);
+          if (!body) return null;
+          return (await webpToPng(body)) ?? body;
+        } catch {
+          return null;
+        }
+      };
+      if (
+        !images?.page1Hero &&
+        persistedPage1?.hero?.mode === 'CUSTOM' &&
+        persistedPage1.hero.objectKey
+      ) {
+        const bytes = await fetchPage1Bytes(persistedPage1.hero.objectKey);
+        if (bytes) images = { ...(images ?? {}), page1Hero: bytes };
+      }
+      const persistedCards = persistedPage1?.cards ?? [];
+      if (persistedCards.some((card) => card?.mode === 'CUSTOM' && card.objectKey)) {
+        const current = [...((images?.page1Cards ?? []) as Array<Buffer | null | undefined>)];
+        while (current.length < 3) current.push(undefined);
+        for (let slot = 0; slot < 3; slot += 1) {
+          const saved = persistedCards[slot];
+          if (!current[slot] && saved?.mode === 'CUSTOM' && saved.objectKey) {
+            const bytes = await fetchPage1Bytes(saved.objectKey);
+            if (bytes) current[slot] = bytes;
+          }
+        }
+        if (current.some(Boolean)) images = { ...(images ?? {}), page1Cards: current };
+      }
     }
 
     const renderer = options.style === 'STYLISH' ? renderStylishQuotationPdf : renderQuotationPdf;
