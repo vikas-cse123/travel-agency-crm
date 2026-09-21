@@ -58,7 +58,7 @@ export function createApp(): Express {
       },
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'X-Request-Id', 'X-CSRF-Token'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-CSRF-Token', 'X-SHA256'],
       exposedHeaders: ['X-Request-Id'],
     }),
   );

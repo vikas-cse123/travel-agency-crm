@@ -13,7 +13,7 @@ export const mobileService = {
     if (!user || user.deletedAt) throw new UnauthorizedError('Invalid email or password.');
     if (user.status !== 'ACTIVE') throw new UnauthorizedError('Account not active.');
     if (user.company.status !== 'ACTIVE') throw new UnauthorizedError('Company not active.');
-    const ok = await verifyPassword(input.password, user.passwordHash);
+    const ok = await verifyPassword(user.passwordHash, input.password);
     if (!ok) throw new UnauthorizedError('Invalid email or password.');
     // Optional: require verified email — keep same as web
     // if (!user.emailVerifiedAt) throw new UnauthorizedError('Verify your email.');

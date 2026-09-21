@@ -67,6 +67,16 @@ export const verifyOrigin = asyncHandler(
       return;
     }
 
+    // Native mobile clients (Travel CRM Android) authenticate with a Bearer
+    // token, not cookies — CSRF origin checks do not apply. The token is a
+    // high-entropy HMAC secret verified per-request; an attacker cannot forge
+    // it cross-origin. Exempt /api/mobile/* so headerless OkHttp POSTs pass.
+    const path = req.path || req.url || '';
+    if (path.startsWith('/mobile/') || path.startsWith('/api/mobile/')) {
+      next();
+      return;
+    }
+
     const headerOrigin = req.get('origin');
     const referer = req.get('referer');
     const candidate = headerOrigin ?? (referer ? originOf(referer) : null);
