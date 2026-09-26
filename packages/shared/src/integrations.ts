@@ -89,3 +89,18 @@ export const wacrmCredentialMintSchema = z.object({
 });
 
 export type WacrmCredentialMint = z.infer<typeof wacrmCredentialMintSchema>;
+
+export const wacrmCredentialImportSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  /** Service identity the credential acts as (must be ACTIVE in the company). */
+  userId: z.string().uuid(),
+  /**
+   * The caller-owned existing secret (e.g. the permanent WACRM secret
+   * already configured on the caller side). Accepted once over this
+   * authenticated session route only; the server stores the SHA-256 hash
+   * and never returns or logs the plaintext.
+   */
+  secret: z.string().trim().min(7).max(160),
+});
+
+export type WacrmCredentialImport = z.infer<typeof wacrmCredentialImportSchema>;

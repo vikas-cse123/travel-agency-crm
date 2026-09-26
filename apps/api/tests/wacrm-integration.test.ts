@@ -1183,16 +1183,12 @@ describe('WACRM credential reconciliation by owner email', () => {
   });
 });
 
-describe('WACRM automatic startup reconciliation', () => {
+describe('WACRM credential import of the caller-owned secret', () => {
   // Synthetic tokens only — these fixtures never touch a real secret.
   // Each tag yields a distinct 12-char key prefix on purpose: the schema
   // enforces one row per (company, prefix), so sharing a prefix across
   // different test secrets would collide for realistic reasons.
   const synthetic = (tag: string) => `wacrm_${tag}_${'x'.repeat(24)}`;
-  const startupEnv = (presented: string, ownerEmail = 'owner@alpha.test') => ({
-    WACRM_RECONCILE_TOKEN: presented,
-    WACRM_OWNER_EMAIL: ownerEmail,
-  });
 
   async function setupCompany(ownerEmail: string, companyName: string, salesEmail: string) {
     const admin = await owner(ownerEmail, companyName);
@@ -1213,201 +1209,173 @@ describe('WACRM automatic startup reconciliation', () => {
     });
   }
 
-  it('skips silently when the integration is not configured', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
-    );
-    await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-    expect(await reconcileWacrmCredentialAtStartup({})).toMatchObject({ status: 'skipped' });
-    expect(await reconcileWacrmCredentialAtStartup({ WACRM_OWNER_EMAIL: 'x@y.test' })).toMatchObject(
-      { status: 'skipped' },
-    );
-  });
+  function importBody(userId: string, secret: string, name = 'wacrm-sync') {
+    return { name, userId, secret };
+  }
 
-  it('fresh startup creates the credential with correct company, user, prefix, and hash', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
-    );
+  it('import registers the existing secret; it authenticates lookups immediately', async () => {
     const { deriveIntegrationCredentialParts } = await import(
       '../src/middleware/wacrm-auth.middleware.js'
     );
-    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-    const presented = synthetic('fresh');
+    const { admin, user } = await setupCompany(
+      'owner@alpha.test',
+      'Alpha Travel',
+      'sales@alpha.test',
+    );
+    const presented = synthetic('importfresh');
     const expected = deriveIntegrationCredentialParts(presented);
 
-    const result = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    expect(result.status).toBe('created');
-    expect(result.credentialId).toBeDefined();
+    const res = await admin.post('/api/integrations/credentials/import', 
+      importBody(user.id, presented),
+    );
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ success: true });
+    expect(res.body.data).toMatchObject({ companyId: user.companyId, userId: user.id });
+
+    // The response carries metadata only — never the plaintext.
+    expect(JSON.stringify(res.body)).not.toContain(presented);
 
     const stored = await db.integrationCredential.findFirstOrThrow({
-      where: { id: result.credentialId as string },
+      where: { companyId: user.companyId, revokedAt: null },
     });
-    expect(stored.companyId).toBe(user.companyId);
-    expect(stored.userId).toBe(user.id);
     expect(stored.keyPrefix).toBe(expected.prefix);
     expect(stored.keyHash).toBe(expected.hash);
-    expect(stored.revokedAt).toBeNull();
     expect(JSON.stringify(stored)).not.toContain(presented);
 
-    // The configured secret authenticates immediately through the
-    // existing middleware.
     expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
   });
 
-  it('restart is idempotent and leaves a matching credential unchanged', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
-    );
-    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-    const presented = synthetic('restart');
-
-    const first = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    const second = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    expect(first.status).toBe('created');
-    expect(second).toMatchObject({
-      status: 'already-matched',
-      credentialId: first.credentialId,
-      companyId: user.companyId,
-    });
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
-  });
-
-  it('revoked rows are safely replaced by the configured secret', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
-    );
-    const { credentialsService } = await import(
-      '../src/modules/integrations/credentials.service.js'
-    );
+  it('importing the same secret again is idempotent (no duplicate)', async () => {
     const { admin, user } = await setupCompany(
       'owner@alpha.test',
       'Alpha Travel',
       'sales@alpha.test',
     );
-    const stale = await credentialsService.reconcileByOwnerEmail({
-      ownerEmail: 'owner@alpha.test',
-      presented: synthetic('rvkstale01'),
-      name: 'wacrm-sync',
-    });
-    await admin.delete(`/api/integrations/credentials/${stale.id}`);
+    const presented = synthetic('importidem1');
 
-    const presented = synthetic('rvknew00001');
-    const result = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    expect(result.status).toBe('created');
+    const first = await admin.post('/api/integrations/credentials/import', 
+      importBody(user.id, presented),
+    );
+    const second = await admin.post('/api/integrations/credentials/import', 
+      importBody(user.id, presented),
+    );
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(200);
+    expect(second.body.data.id).toBe(first.body.data.id);
     expect(await liveCredentials(user.companyId)).toHaveLength(1);
-    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
   });
 
-  it('expired rows are safely replaced by the configured secret', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
-    );
-    const { credentialsService } = await import(
-      '../src/modules/integrations/credentials.service.js'
-    );
-    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-    const stale = await credentialsService.reconcileByOwnerEmail({
-      ownerEmail: 'owner@alpha.test',
-      presented: synthetic('expstale01'),
-      name: 'wacrm-sync',
-    });
-    await db.integrationCredential.update({
-      where: { id: stale.id },
-      data: { expiresAt: new Date(Date.now() - 1000) },
-    });
-
-    const presented = synthetic('expnew00001');
-    const result = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    expect(result.status).toBe('created');
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
-    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
-  });
-
-  it('the same secret revived after revocation restores the same row', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
-    );
+  it('importing a different secret while one is live returns 409', async () => {
     const { admin, user } = await setupCompany(
       'owner@alpha.test',
       'Alpha Travel',
       'sales@alpha.test',
     );
-    const presented = synthetic('revivesame1');
-    const first = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    expect(first.status).toBe('created');
-    await admin.delete(`/api/integrations/credentials/${first.credentialId}`);
+    const liveToken = synthetic('importlive1');
+    expect(
+      (await admin.post('/api/integrations/credentials/import', 
+        importBody(user.id, liveToken),
+      )).status,
+    ).toBe(201);
 
-    const second = await reconcileWacrmCredentialAtStartup(startupEnv(presented));
-    expect(second.status).toBe('already-matched');
-    expect(second.credentialId).toBe(first.credentialId);
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
-    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
-  });
-
-  it('a different active credential is never overwritten (conflict)', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
+    const conflict = await admin.post('/api/integrations/credentials/import', 
+      importBody(user.id, synthetic('importoth1')),
     );
-    const { credentialsService } = await import(
-      '../src/modules/integrations/credentials.service.js'
-    );
-    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-    const liveToken = synthetic('live');
-    await credentialsService.reconcileByOwnerEmail({
-      ownerEmail: 'owner@alpha.test',
-      presented: liveToken,
-      name: 'wacrm-sync',
-    });
-
-    const result = await reconcileWacrmCredentialAtStartup(startupEnv(synthetic('other')));
-    expect(result.status).toBe('conflict');
-    expect(JSON.stringify(result)).not.toContain(synthetic('other'));
+    expect(conflict.status).toBe(409);
     expect(await liveCredentials(user.companyId)).toHaveLength(1);
-    // The existing valid credential keeps working.
     expect((await bearer(liveToken).get('/api/integrations/wacrm/lookups')).status).toBe(200);
   });
 
-  it('unknown, inactive, or deleted owner fails safely without creating rows', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
+  it('revoked or expired credentials can be replaced through import', async () => {
+    const { admin, user } = await setupCompany(
+      'owner@alpha.test',
+      'Alpha Travel',
+      'sales@alpha.test',
     );
-    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-
-    const unknown = await reconcileWacrmCredentialAtStartup(
-      startupEnv(synthetic('nope'), 'nobody@alpha.test'),
-    );
-    expect(unknown.status).toBe('error');
-
-    await db.user.update({ where: { id: user.id }, data: { status: 'INACTIVE' } });
-    const inactive = await reconcileWacrmCredentialAtStartup(startupEnv(synthetic('off')));
-    expect(inactive.status).toBe('error');
-
-    await db.user.update({
-      where: { id: user.id },
-      data: { status: 'ACTIVE', deletedAt: new Date() },
+    const stale = synthetic('importstale');
+    expect(
+      (await admin.post('/api/integrations/credentials/import', importBody(user.id, stale)))
+        .status,
+    ).toBe(201);
+    const row = await db.integrationCredential.findFirstOrThrow({
+      where: { companyId: user.companyId, revokedAt: null },
     });
-    const deleted = await reconcileWacrmCredentialAtStartup(startupEnv(synthetic('gone')));
-    expect(deleted.status).toBe('error');
+    expect((await admin.delete(`/api/integrations/credentials/${row.id}`)).status).toBe(200);
 
-    expect(await db.integrationCredential.count()).toBe(0);
-    for (const result of [unknown, inactive, deleted]) {
-      expect(JSON.stringify(result)).not.toContain('wacrm_test_boot_');
-    }
+    const presented = synthetic('importnew01');
+    const res = await admin.post('/api/integrations/credentials/import', 
+      importBody(user.id, presented),
+    );
+    expect(res.status).toBe(201);
+    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
   });
 
-  it('concurrent startup attempts cannot duplicate the live credential', async () => {
-    const { reconcileWacrmCredentialAtStartup } = await import(
-      '../src/modules/integrations/wacrm-bootstrap.js'
+  it('import rejects bad input without creating rows', async () => {
+    const { admin, user } = await setupCompany(
+      'owner@alpha.test',
+      'Alpha Travel',
+      'sales@alpha.test',
     );
-    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
-    const env = startupEnv(synthetic('race'));
+    const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
 
-    const [first, second] = await Promise.all([
-      reconcileWacrmCredentialAtStartup(env),
-      reconcileWacrmCredentialAtStartup(env),
-    ]);
-    expect(['created', 'already-matched']).toContain(first.status);
-    expect(['created', 'already-matched']).toContain(second.status);
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+    // Unauthenticated (trusted origin so the request reaches session auth).
+    expect(
+      (
+        await request(app)
+          .post('/api/integrations/credentials/import')
+          .set('Origin', 'http://localhost:5173')
+          .send(importBody(user.id, synthetic('noauth00001')))
+      ).status,
+    ).toBe(401);
+    // Malformed secret (long enough to pass input validation, wrong shape).
+    expect(
+      (
+        await admin.post('/api/integrations/credentials/import', 
+          importBody(user.id, 'invalid-secret-value'),
+        )
+      ).status,
+    ).toBe(400);
+    // Service user from another company.
+    expect(
+      (
+        await admin.post('/api/integrations/credentials/import', 
+          importBody(beta.user.id, synthetic('crosscomp1')),
+        )
+      ).status,
+    ).toBe(400);
+    expect(await db.integrationCredential.count()).toBe(0);
+  });
+
+  it('no secret-bearing environment wiring remains in Travel CRM source', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const src = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!full.endsWith('.ts')) continue;
+        const content = readFileSync(full, 'utf8');
+        if (
+          content.includes('WACRM_RECONCILE_TOKEN') ||
+          content.includes('WACRM_OWNER_EMAIL') ||
+          /wacrm_[A-Za-z0-9_-]{20,}/.test(content)
+        ) {
+          offenders.push(full);
+        }
+      }
+    };
+    walk(src);
+    expect(offenders).toEqual([]);
+    // server.ts boots with no credential provisioning hook.
+    const server = readFileSync(join(src, 'server.ts'), 'utf8');
+    expect(server).not.toContain('reconcile');
+    expect(server).not.toContain('wacrm-bootstrap');
   });
 });

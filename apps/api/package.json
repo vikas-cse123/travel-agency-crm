@@ -20,7 +20,6 @@
     "db:backfill-customers": "dotenv -e ../../.env -- tsx src/scripts/backfill-customers.ts",
     "db:backfill-search-api-keys": "dotenv -e ../../.env -- tsx src/scripts/backfill-search-api-keys.ts",
     "db:backfill-weblinks": "dotenv -e ../../.env -- tsx src/scripts/backfill-quotation-weblinks.ts",
-    "db:reconcile-wacrm-credential": "dotenv -e ../../.env -- tsx src/scripts/reconcile-wacrm-credential.ts",
     "reminders:process": "dotenv -e ../../.env -- tsx src/scripts/process-reminders.ts",
     "bootstrap:system-masters": "dotenv -e ../../.env -- tsx src/scripts/bootstrap-system-masters.ts",
     "clean": "rm -rf dist"
