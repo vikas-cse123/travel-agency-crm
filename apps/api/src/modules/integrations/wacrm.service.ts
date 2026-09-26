@@ -8,6 +8,7 @@ import {
   queriesService,
   type RequestContext,
 } from '../queries/queries.service.js';
+import { destinationsService } from '../masters/masters.service.js';
 
 /**
  * WACRM server-to-server lead creation.
@@ -42,6 +43,69 @@ export class AssigneeNotFoundError extends AppError {
 }
 
 const LINK_SELECT = { id: true, queryId: true, status: true } as const;
+
+/**
+ * Itinerary destination feed for the WACRM integration.
+ *
+ * Reuses the native Destinations master via `destinationsService.list`
+ * — the same service (and visibility rules) behind
+ * `GET /masters/destinations` that the Travel CRM lead form
+ * (`LeadForm.tsx` → `useDestinations`) reads. No separate destination
+ * source: stable master ids become `value`, names become `label`, and
+ * each linked city carries its parent destination's `value` as
+ * `destinationValue`. Only ACTIVE rows are exposed (the list service
+ * forces ACTIVE for non-managers; linked cities are filtered to
+ * ACTIVE here since the master include carries every link).
+ */
+interface ItineraryDestinationFeed {
+  destinations: Array<{ value: string; label: string }>;
+  cities: Array<{ value: string; label: string; destinationValue: string }>;
+}
+
+interface MasterDestinationRow {
+  id: string;
+  name: string;
+  cities?: Array<{
+    cityId: string;
+    city?: { id: string; name: string; status?: string } | null;
+  }>;
+}
+
+async function itineraryDestinationFeed(auth: AuthContext): Promise<ItineraryDestinationFeed> {
+  const destinations: ItineraryDestinationFeed['destinations'] = [];
+  const cities: ItineraryDestinationFeed['cities'] = [];
+  const seenDestinations = new Set<string>();
+  const seenCityLinks = new Set<string>();
+  let page = 1;
+  for (;;) {
+    const result = await destinationsService.list(auth, {
+      status: 'ACTIVE',
+      page,
+      pageSize: 100,
+      sortBy: 'name',
+      sortOrder: 'asc',
+    });
+    for (const row of result.data as unknown as MasterDestinationRow[]) {
+      if (!row || typeof row.id !== 'string' || typeof row.name !== 'string') continue;
+      if (!seenDestinations.has(row.id)) {
+        seenDestinations.add(row.id);
+        destinations.push({ value: row.id, label: row.name });
+      }
+      for (const link of row.cities ?? []) {
+        const city = link?.city;
+        if (!city || typeof city.id !== 'string' || typeof city.name !== 'string') continue;
+        if (city.status && city.status !== 'ACTIVE') continue;
+        const key = `${row.id}:${city.id}`;
+        if (seenCityLinks.has(key)) continue;
+        seenCityLinks.add(key);
+        cities.push({ value: city.id, label: city.name, destinationValue: row.id });
+      }
+    }
+    if (page >= result.pagination.totalPages || result.data.length === 0) break;
+    page += 1;
+  }
+  return { destinations, cities };
+}
 
 async function findLink(companyId: string, wacrmAccountId: string, flowRunId: string) {
   return prisma.wacrmLeadLink.findUnique({
@@ -186,6 +250,12 @@ export const wacrmService = {
   },
 
   async lookups(auth: AuthContext) {
-    return queriesService.lookups(auth);
+    const base = await queriesService.lookups(auth);
+    const feed = await itineraryDestinationFeed(auth);
+    return {
+      ...base,
+      destinations: feed.destinations,
+      cities: feed.cities,
+    };
   },
 };

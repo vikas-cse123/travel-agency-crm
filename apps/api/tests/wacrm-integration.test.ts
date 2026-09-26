@@ -97,6 +97,38 @@ const bearer = (token: string) => ({
   get: (path: string) => request(app).get(path).set('Authorization', `Bearer ${token}`),
 });
 
+async function createCity(
+  client: Awaited<ReturnType<typeof owner>>,
+  name: string,
+  countryCode = 'IN',
+) {
+  const response = await client.post('/api/masters/cities', {
+    countryCode,
+    name,
+    airportCode: null,
+    status: 'ACTIVE',
+  });
+  expect(response.status).toBe(201);
+  return response.body.data as { id: string; name: string };
+}
+
+async function createDestination(
+  client: Awaited<ReturnType<typeof owner>>,
+  name: string,
+  cityIds: string[],
+  countryCode = 'IN',
+) {
+  const response = await client.post('/api/masters/destinations', {
+    countryCode,
+    name,
+    destinationType: 'DOMESTIC',
+    cityIds,
+    status: 'ACTIVE',
+  });
+  expect(response.status).toBe(201);
+  return response.body.data as { id: string; name: string };
+}
+
 describe('WACRM server-to-server lead integration', () => {
   it('1+4+16. creates a lead over Bearer auth and returns the real lead ID', async () => {
     const admin = await owner('owner@alpha.test', 'Alpha Travel');
@@ -303,6 +335,21 @@ describe('WACRM server-to-server lead integration', () => {
     for (const key of ['leadSources', 'leadTypes', 'leadStages', 'serviceTypes', 'assignableUsers']) {
       expect(Array.isArray(data[key]), key).toBe(true);
     }
+    // Backward compatibility: every pre-existing lookup field stays present.
+    for (const key of [
+      'countries',
+      'cities',
+      'leadSources',
+      'leadTypes',
+      'leadStages',
+      'priorities',
+      'serviceTypes',
+      'tripTypes',
+      'currencies',
+      'assignableUsers',
+    ]) {
+      expect(data, key).toHaveProperty(key);
+    }
     expect(data.serviceTypes.map((s: { value: string }) => s.value)).toEqual(
       expect.arrayContaining(['FLIGHT', 'HOTEL']),
     );
@@ -347,6 +394,95 @@ describe('WACRM server-to-server lead integration', () => {
     });
     expect(res.status).toBe(201);
     expect(res.body.data.queryNumber).toMatch(/^QRY-/);
+  });
+});
+
+describe('WACRM lookups: itinerary destinations come from the Destinations master', () => {
+  async function setup() {
+    const admin = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(admin, 'sales@alpha.test');
+    const token = await mintToken(admin, 'owner@alpha.test');
+    return { admin, token };
+  }
+
+  it('exposes destinations + linked cities from the real masters', async () => {
+    const { admin, token } = await setup();
+    const jaipur = await createCity(admin, 'Wacrm Jaipur');
+    const jodhpur = await createCity(admin, 'Wacrm Jodhpur');
+    const destRajasthan = await createDestination(admin, 'Wacrm Rajasthan', [jaipur.id, jodhpur.id]);
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    const data = res.body.data;
+
+    expect(data.destinations).toEqual(
+      expect.arrayContaining([{ value: destRajasthan.id, label: 'Wacrm Rajasthan' }]),
+    );
+    expect(data.cities).toEqual(
+      expect.arrayContaining([
+        { value: jaipur.id, label: 'Wacrm Jaipur', destinationValue: destRajasthan.id },
+        { value: jodhpur.id, label: 'Wacrm Jodhpur', destinationValue: destRajasthan.id },
+      ]),
+    );
+  });
+
+  it('preserves the exact Destination → City relationship across destinations', async () => {
+    const { admin, token } = await setup();
+    const north = await createCity(admin, 'Wacrm North City');
+    const south = await createCity(admin, 'Wacrm South City');
+    const destNorth = await createDestination(admin, 'Wacrm North Dest', [north.id]);
+    const destSouth = await createDestination(admin, 'Wacrm South Dest', [south.id]);
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    const cities = res.body.data.cities as Array<{
+      value: string;
+      label: string;
+      destinationValue: string;
+    }>;
+    const byValue = new Map(cities.map((c) => [c.value, c]));
+    // Every city references its own parent destination — never a sibling's.
+    expect(byValue.get(north.id)).toMatchObject({ destinationValue: destNorth.id });
+    expect(byValue.get(south.id)).toMatchObject({ destinationValue: destSouth.id });
+    expect(byValue.get(north.id)?.destinationValue).not.toBe(destSouth.id);
+    expect(byValue.get(south.id)?.destinationValue).not.toBe(destNorth.id);
+  });
+
+  it('excludes archived destinations and inactive cities', async () => {
+    const { admin, token } = await setup();
+    const activeCity = await createCity(admin, 'Wacrm Active City');
+    const retiringCity = await createCity(admin, 'Wacrm Retiring City');
+    const live = await createDestination(admin, 'Wacrm Live Dest', [activeCity.id]);
+    const retiring = await createDestination(admin, 'Wacrm Retiring Dest', [retiringCity.id]);
+
+    expect((await admin.delete(`/api/masters/destinations/${retiring.id}`)).status).toBe(200);
+    expect(
+      (await admin.patch(`/api/masters/cities/${retiringCity.id}/status`, { status: 'INACTIVE' }))
+        .status,
+    ).toBe(200);
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    const data = res.body.data;
+    const destValues = (data.destinations as Array<{ value: string }>).map((d) => d.value);
+    const cityValues = (data.cities as Array<{ value: string }>).map((c) => c.value);
+    expect(destValues).toContain(live.id);
+    expect(destValues).not.toContain(retiring.id);
+    expect(cityValues).toContain(activeCity.id);
+    expect(cityValues).not.toContain(retiringCity.id);
+  });
+
+  it('uses live master ids — never hardcoded values', async () => {
+    const { admin, token } = await setup();
+    const city = await createCity(admin, 'Wacrm Unique City');
+    const dest = await createDestination(admin, 'Wacrm Unique Dest', [city.id]);
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    // Ids are generated per test run, so matching them proves the feed
+    // reads the database rather than returning canned values.
+    expect(JSON.stringify(res.body.data.destinations)).toContain(dest.id);
+    expect(JSON.stringify(res.body.data.cities)).toContain(city.id);
   });
 });
 
