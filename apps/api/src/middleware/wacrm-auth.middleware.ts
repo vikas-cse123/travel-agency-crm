@@ -26,11 +26,39 @@ export function hashIntegrationToken(presented: string): string {
   return createHash('sha256').update(presented, 'utf8').digest('hex');
 }
 
+/**
+ * Derive the storable credential parts for an EXISTING presented token.
+ *
+ * Single source of truth for the prefix/hash derivation, shared by random
+ * minting, Bearer verification, and one-time reconciliation of a
+ * caller-owned secret. The plaintext is never stored — only the returned
+ * `{ prefix, hash }` pair belongs in the database. Throws on malformed
+ * input using the same shape rules as Bearer verification.
+ */
+export function deriveIntegrationCredentialParts(presented: string): {
+  prefix: string;
+  hash: string;
+} {
+  const token = presented.trim();
+  if (
+    !token.startsWith(INTEGRATION_TOKEN_PREFIX) ||
+    token.length <= INTEGRATION_TOKEN_PREFIX.length ||
+    token.length > 160
+  ) {
+    throw new UnauthorizedError('Invalid integration token.');
+  }
+  return {
+    prefix: token.slice(INTEGRATION_TOKEN_PREFIX.length, INTEGRATION_TOKEN_PREFIX.length + PREFIX_CHARS),
+    hash: hashIntegrationToken(token),
+  };
+}
+
 /** Mint a fresh token. The secret is returned once and never stored. */
 export function mintIntegrationToken(): { presented: string; prefix: string; hash: string } {
   const secret = randomBytes(32).toString('base64url');
   const presented = `${INTEGRATION_TOKEN_PREFIX}${secret}`;
-  return { presented, prefix: secret.slice(0, PREFIX_CHARS), hash: hashIntegrationToken(presented) };
+  const { prefix, hash } = deriveIntegrationCredentialParts(presented);
+  return { presented, prefix, hash };
 }
 
 function bearerToken(req: Request): string | null {
@@ -54,8 +82,13 @@ export const authenticateIntegration = asyncHandler(
     if (!presented) {
       throw new UnauthorizedError('Missing integration authorization token.');
     }
-    const prefix = presented.slice(INTEGRATION_TOKEN_PREFIX.length, INTEGRATION_TOKEN_PREFIX.length + PREFIX_CHARS);
-    const credential = await prisma.integrationCredential.findFirst({
+    const { prefix, hash: presentedHash } = deriveIntegrationCredentialParts(presented);
+    // All live rows sharing the public prefix are candidates; the stored
+    // SHA-256 hash selects the single matching credential. Matching by
+    // hash across candidates (instead of trusting the first row) keeps
+    // repeated requests resolving to the same permanent credential even
+    // if two rows ever share a prefix.
+    const candidates = await prisma.integrationCredential.findMany({
       where: { keyPrefix: prefix, revokedAt: null },
       include: {
         user: {
@@ -70,7 +103,8 @@ export const authenticateIntegration = asyncHandler(
         company: { select: { id: true, status: true } },
       },
     });
-    if (!credential || !hashesEqual(hashIntegrationToken(presented), credential.keyHash)) {
+    const credential = candidates.find((candidate) => hashesEqual(presentedHash, candidate.keyHash));
+    if (!credential) {
       throw new UnauthorizedError('Invalid integration token.');
     }
     if (credential.expiresAt && credential.expiresAt.getTime() <= Date.now()) {

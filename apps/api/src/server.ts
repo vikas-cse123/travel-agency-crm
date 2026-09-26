@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { disconnectPrisma } from './config/prisma.js';
+import { reconcileWacrmCredentialAtStartup } from './modules/integrations/wacrm-bootstrap.js';
 
 const app = createApp();
 
@@ -9,6 +10,15 @@ const server = app.listen(env.API_PORT, () => {
   logger.info(
     `Interscale Travel CRM API listening on ${env.API_URL} (${env.NODE_ENV}) — health: ${env.API_URL}/api/health`,
   );
+  // Automatic WACRM credential reconciliation: env-driven, idempotent,
+  // race-safe, and never fatal — failures are logged inside and surface
+  // as a result, so unrelated startup is never blocked. No manual step.
+  void reconcileWacrmCredentialAtStartup().catch((error: unknown) => {
+    logger.error(
+      { err: error instanceof Error ? error.message : String(error) },
+      'WACRM credential auto-reconciliation crashed.',
+    );
+  });
 });
 
 /**
