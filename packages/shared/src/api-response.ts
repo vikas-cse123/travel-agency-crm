@@ -17,6 +17,8 @@ export const ERROR_CODES = {
   // Sightseeing-specific: a record with the same unique identity already exists
   // but is archived, so the create form can offer a restore flow.
   SIGHTSEEING_ARCHIVED_DUPLICATE: 'SIGHTSEEING_ARCHIVED_DUPLICATE',
+  // Integrations: the supplied owner email matches no assignable user.
+  ASSIGNED_USER_NOT_FOUND: 'ASSIGNED_USER_NOT_FOUND',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

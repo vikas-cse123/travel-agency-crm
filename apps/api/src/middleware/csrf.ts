@@ -67,6 +67,17 @@ export const verifyOrigin = asyncHandler(
       return;
     }
 
+    // Server-to-server integration calls (and native mobile clients)
+    // authenticate with an explicit Bearer credential, not ambient
+    // cookies — origin checks do not apply, exactly like the mobile
+    // exemption below. Cookie-authed endpoints ignore the
+    // Authorization header, so no confused-deputy arises.
+    const authorization = req.get('authorization');
+    if (authorization?.startsWith('Bearer ')) {
+      next();
+      return;
+    }
+
     // Native mobile clients (Travel CRM Android) authenticate with a Bearer
     // token, not cookies — CSRF origin checks do not apply. The token is a
     // high-entropy HMAC secret verified per-request; an attacker cannot forge

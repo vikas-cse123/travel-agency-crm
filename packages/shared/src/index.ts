@@ -11,6 +11,7 @@
 
 export * from './constants.js';
 export * from './api-response.js';
+export * from './integrations.js';
 export * from './health.js';
 export * from './enums.js';
 export * from './permissions.js';

@@ -989,6 +989,8 @@ model Company {
   queryFollowUps               QueryFollowUp[]
   queryServices                QueryService[]
   queryItineraries             QueryItinerary[]
+  integrationCredentials       IntegrationCredential[]
+  wacrmLeadLinks               WacrmLeadLink[]
   quotationCounters            QuotationCounter[]
   quotationTemplates           QuotationTemplate[]
   quotationTemplateItineraries QuotationTemplateItineraryDay[]
@@ -1255,6 +1257,7 @@ model User {
   permissionTemplate PermissionTemplate? @relation(fields: [permissionTemplateId], references: [id], onDelete: SetNull)
 
   sessions                    Session[]
+  integrationCredentials      IntegrationCredential[]    @relation("IntegrationCredentialUser")
   emailVerificationOtps       EmailVerificationOtp[]
   passwordResetTokens         PasswordResetToken[]
   createdTemplates            PermissionTemplate[]       @relation("PermissionTemplateCreatedBy")
@@ -2887,6 +2890,7 @@ model Query {
   bookings                 Booking[]
   customerCommunications   CustomerCommunication[]
   calls                    Call[]
+  wacrmLeadLinks           WacrmLeadLink[]
 
   @@unique([companyId, queryNumber])
   @@index([companyId, normalizedPhone])
@@ -4849,4 +4853,73 @@ model CallRecording {
 
   @@index([companyId, s3Key])
   @@map("call_recordings")
+}
+
+/// Server-to-server integration credential (e.g. WACRM lead sync).
+/// The raw secret is shown once at mint time and never stored: only
+/// its SHA-256 hash persists, mirroring the Session convention, so a
+/// database leak cannot be replayed. Requests present
+/// `wacrm_<prefix>.<secret>` as a Bearer token; the prefix selects
+/// the row, the hash comparison is constant-time.
+model IntegrationCredential {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @db.Uuid
+
+  /// Human label shown in settings (never secret).
+  name String @db.VarChar(120)
+
+  /// First 12 chars of the presented token: indexed row selector.
+  keyPrefix String @db.VarChar(16)
+  /// SHA-256 hex of the full presented token.
+  keyHash   String @unique @db.VarChar(64)
+
+  /// Service identity the credential acts as. Tenant and actor for
+  /// every integration call derive from this row — never from the
+  /// request. Deleting the user revokes the credential's power
+  /// (auth rejects); deleting is preferred over orphaning.
+  userId      String  @db.Uuid
+  createdById String? @db.Uuid
+
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation("IntegrationCredentialUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, keyPrefix])
+  @@index([companyId, revokedAt])
+  @@map("integration_credentials")
+}
+
+/// Idempotency record for one WACRM lead → Travel CRM lead sync.
+/// The unique key is the WACRM-side identity; a retry carrying the
+/// same key returns the stored queryId instead of creating again.
+/// queryId stays NULL until creation succeeds — a NULL here must
+/// never render as "created".
+model WacrmLeadLink {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @db.Uuid
+
+  /// Opaque WACRM identifiers (WACRM account + flow run). Stored as
+  /// text so no cross-database foreign key is implied.
+  wacrmAccountId String @db.VarChar(64)
+  flowRunId      String @db.VarChar(64)
+
+  queryId String? @db.Uuid
+  status  String  @default("pending") @db.VarChar(16)
+  error   String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  query   Query?  @relation(fields: [queryId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, wacrmAccountId, flowRunId])
+  @@index([companyId, status])
+  @@map("wacrm_lead_links")
 }
