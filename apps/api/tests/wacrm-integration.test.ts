@@ -349,3 +349,211 @@ describe('WACRM server-to-server lead integration', () => {
     expect(res.body.data.queryNumber).toMatch(/^QRY-/);
   });
 });
+
+describe('WACRM lead creation: departure, travelers, and enum coverage', () => {
+  const runId = (n: number) =>
+    `33333333-3333-4333-8333-${n.toString(16).padStart(12, '0')}`;
+
+  async function setup() {
+    const admin = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(admin, 'sales@alpha.test');
+    const token = await mintToken(admin, 'owner@alpha.test');
+    return { admin, token };
+  }
+
+  it('departureCountry/departureCity are accepted and persisted (no lookup call needed)', async () => {
+    const { token } = await setup();
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ departureCountry: 'India', departureCity: 'Delhi' }));
+    expect(res.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: res.body.data.leadId } });
+    expect(row.departureCountry).toBe('India');
+    expect(row.departureCity).toBe('Delhi');
+  });
+
+  it('arbitrary in-length values pass (free text, like the native form); over-max fails', async () => {
+    const { token } = await setup();
+    const free = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(
+        payload({
+          flowRunId: runId(10),
+          departureCountry: 'Atlantis',
+          departureCity: 'Poseidon Bay',
+        }),
+      );
+    expect(free.status).toBe(201);
+    const tooLong = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ flowRunId: runId(11), departureCountry: 'X'.repeat(81) }));
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error.fields).toHaveProperty('departureCountry');
+    expect(await db.query.count()).toBe(1);
+  });
+
+  it('adults = 1 accepted and stored; adults = 0 rejected', async () => {
+    const { token } = await setup();
+    const one = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ flowRunId: runId(20), adults: 1 }));
+    expect(one.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: one.body.data.leadId } });
+    expect(row.adults).toBe(1);
+    const zero = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ flowRunId: runId(21), adults: 0 }));
+    expect(zero.status).toBe(400);
+    expect(zero.body.error.code).toBe('VALIDATION_ERROR');
+    expect(zero.body.error.fields).toHaveProperty('adults');
+  });
+
+  it('omitted CWB/CWOB/infants default to 0 without rejection', async () => {
+    const { token } = await setup();
+    const base = payload({ flowRunId: runId(30) });
+    delete (base as Record<string, unknown>).childrenWithBed;
+    delete (base as Record<string, unknown>).childrenWithoutBed;
+    delete (base as Record<string, unknown>).infants;
+    const res = await bearer(token).post('/api/integrations/wacrm/leads').send(base);
+    expect(res.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: res.body.data.leadId } });
+    expect(row.childrenWithBed).toBe(0);
+    expect(row.childrenWithoutBed).toBe(0);
+    expect(row.infants).toBe(0);
+    expect(row.childrenWithBedAges).toEqual([]);
+    expect(row.childrenWithoutBedAges).toEqual([]);
+    expect(row.infantAges).toEqual([]);
+  });
+
+  it('optional age arrays are accepted, persisted, and nullable when absent', async () => {
+    const { token } = await setup();
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(
+        payload({
+          flowRunId: runId(40),
+          childrenWithBed: 2,
+          childrenWithBedAges: [8, 10],
+          childrenWithoutBedAges: [],
+          infantAges: [1],
+        }),
+      );
+    expect(res.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: res.body.data.leadId } });
+    expect(row.childrenWithBedAges).toEqual([8, 10]);
+    expect(row.childrenWithoutBedAges).toEqual([]);
+    expect(row.infantAges).toEqual([1]);
+  });
+
+  it('invalid ages are rejected with field errors and create nothing', async () => {
+    const { token } = await setup();
+    const cases = [
+      { field: 'childrenWithBedAges', value: ['old'] },
+      { field: 'childrenWithBedAges', value: [45] },
+      { field: 'infantAges', value: [50] },
+    ] as const;
+    let n = 50;
+    for (const { field, value } of cases) {
+      const res = await bearer(token)
+        .post('/api/integrations/wacrm/leads')
+        .send(payload({ flowRunId: runId(n++), [field]: value }));
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(
+        Object.keys(res.body.error.fields).some(
+          (k: string) => k === field || k.startsWith(`${field}.`),
+        ),
+        field,
+      ).toBe(true);
+    }
+    expect(await db.query.count()).toBe(0);
+  });
+
+  it('all Type values are accepted', async () => {
+    const { token } = await setup();
+    const types = ['FRESH', 'HOT', 'WARM', 'COLD', 'PROSPECT'] as const;
+    let n = 60;
+    for (const leadType of types) {
+      const res = await bearer(token)
+        .post('/api/integrations/wacrm/leads')
+        .send(payload({ flowRunId: runId(n++), leadType }));
+      expect(res.status, leadType).toBe(201);
+    }
+    const rows = await db.query.findMany({ select: { leadType: true } });
+    expect(rows.map((r) => r.leadType).sort()).toEqual([...types].sort());
+  });
+
+  it('all Stage values are accepted', async () => {
+    const { token } = await setup();
+    const stages = [
+      'NEW_LEAD',
+      'CONTACTED',
+      'QUALIFIED',
+      'QUOTATION_REQUIRED',
+      'QUOTATION_SENT',
+      'IN_NEGOTIATION',
+      'READY_TO_BOOK',
+      'BOOKING_CONFIRMED',
+      'FOLLOW_UP',
+      'AMENDMENT',
+      'LOST',
+      'CANCELLED',
+      'INVALID',
+      'ON_HOLD',
+    ] as const;
+    let n = 70;
+    for (const leadStage of stages) {
+      const res = await bearer(token)
+        .post('/api/integrations/wacrm/leads')
+        .send(payload({ flowRunId: runId(n++), leadStage }));
+      expect(res.status, leadStage).toBe(201);
+    }
+    const rows = await db.query.findMany({ select: { leadStage: true } });
+    expect(rows.map((r) => r.leadStage).sort()).toEqual([...stages].sort());
+  });
+
+  it('all Received values are accepted', async () => {
+    const { token } = await setup();
+    const sources = [
+      'WEBSITE',
+      'SOCIAL_MEDIA',
+      'FACEBOOK_ADS',
+      'INSTAGRAM_ADS',
+      'GOOGLE_ADS',
+      'WHATSAPP',
+      'PHONE_CALL',
+      'REFERRAL',
+      'WALK_IN',
+      'REPEAT_CUSTOMER',
+      'PARTNER',
+      'OTHER',
+    ] as const;
+    let n = 90;
+    for (const leadSource of sources) {
+      const res = await bearer(token)
+        .post('/api/integrations/wacrm/leads')
+        .send(payload({ flowRunId: runId(n++), leadSource }));
+      expect(res.status, leadSource).toBe(201);
+    }
+    const rows = await db.query.findMany({ select: { leadSource: true } });
+    expect(rows.map((r) => r.leadSource).sort()).toEqual([...sources].sort());
+  });
+
+  it('all six WACRM service values are accepted', async () => {
+    const { token } = await setup();
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(
+        payload({
+          services: ['CRUISE', 'FLIGHT', 'HOTEL', 'VEHICLE_TRANSFER', 'SIGHTSEEING', 'OTHER_ADD_ON'],
+        }),
+      );
+    expect(res.status).toBe(201);
+    const services = await db.queryService.findMany({
+      where: { queryId: res.body.data.leadId },
+    });
+    expect(services.map((s) => s.serviceType).sort()).toEqual(
+      ['CRUISE', 'FLIGHT', 'HOTEL', 'OTHER_ADD_ON', 'SIGHTSEEING', 'VEHICLE_TRANSFER'].sort(),
+    );
+  });
+});

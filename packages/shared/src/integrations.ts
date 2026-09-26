@@ -48,6 +48,24 @@ export const wacrmLeadPayloadSchema = z
     childrenWithBed: z.coerce.number().int().min(0).max(100).nullable().optional(),
     childrenWithoutBed: z.coerce.number().int().min(0).max(100).nullable().optional(),
     infants: z.coerce.number().int().min(0).max(100).nullable().optional(),
+    // Optional per-child ages — same rules as the core lead schema
+    // (integers 0–30). Absent/null means "none provided" (never a
+    // rejection reason); the core schema defaults them to [].
+    childrenWithBedAges: z
+      .array(z.coerce.number().int().min(0).max(30))
+      .max(100)
+      .nullable()
+      .optional(),
+    childrenWithoutBedAges: z
+      .array(z.coerce.number().int().min(0).max(30))
+      .max(100)
+      .nullable()
+      .optional(),
+    infantAges: z
+      .array(z.coerce.number().int().min(0).max(30))
+      .max(100)
+      .nullable()
+      .optional(),
     services: z.array(z.enum(SERVICE_TYPES)).min(1),
     itinerary: z.array(wacrmItineraryRowSchema).min(1).max(100),
   })

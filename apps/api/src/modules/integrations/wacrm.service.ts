@@ -162,6 +162,9 @@ export const wacrmService = {
         childrenWithBed: input.childrenWithBed ?? undefined,
         childrenWithoutBed: input.childrenWithoutBed ?? undefined,
         infants: input.infants ?? undefined,
+        childrenWithBedAges: input.childrenWithBedAges ?? undefined,
+        childrenWithoutBedAges: input.childrenWithoutBedAges ?? undefined,
+        infantAges: input.infantAges ?? undefined,
         services: [...input.services],
         itinerary: input.itinerary.map((row, i) => ({
           country: row.country,
