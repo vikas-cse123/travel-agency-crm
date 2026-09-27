@@ -8,7 +8,6 @@ import {
   queriesService,
   type RequestContext,
 } from '../queries/queries.service.js';
-import { destinationsService } from '../masters/masters.service.js';
 
 /**
  * WACRM server-to-server lead creation.
@@ -47,15 +46,16 @@ const LINK_SELECT = { id: true, queryId: true, status: true } as const;
 /**
  * Itinerary destination feed for the WACRM integration.
  *
- * Reuses the native Destinations master via `destinationsService.list`
- * — the same service (and visibility rules) behind
- * `GET /masters/destinations` that the Travel CRM lead form
- * (`LeadForm.tsx` → `useDestinations`) reads. No separate destination
- * source: stable master ids become `value`, names become `label`, and
- * each linked city carries its parent destination's `value` as
- * `destinationValue`. Only ACTIVE rows are exposed (the list service
- * forces ACTIVE for non-managers; linked cities are filtered to
- * ACTIVE here since the master include carries every link).
+ * Strictly TENANT-SCOPED: only destinations and cities OWNED by the
+ * scope company are exposed. This deliberately excludes the System
+ * Global Masters company's records — a tenant's WACRM dropdown must
+ * show only the linked account's own master data, never the shared
+ * global list another tenant also sees in the native UI. No separate
+ * destination source: stable master ids become `value`, names become
+ * `label`, and each linked city carries its parent destination's
+ * `value` as `destinationValue`. Only ACTIVE, non-deleted rows are
+ * exposed, and linked cities must belong to the same scope company
+ * (a cross-company city can never leak into another workspace's feed).
  */
 interface ItineraryDestinationFeed {
   destinations: Array<{ value: string; label: string }>;
@@ -67,44 +67,77 @@ interface MasterDestinationRow {
   name: string;
   cities?: Array<{
     cityId: string;
-    city?: { id: string; name: string; status?: string } | null;
+    city?: { id: string; name: string; companyId: string; status?: string; deletedAt?: Date | null } | null;
   }>;
 }
 
-async function itineraryDestinationFeed(auth: AuthContext): Promise<ItineraryDestinationFeed> {
+async function itineraryDestinationFeed(companyId: string): Promise<ItineraryDestinationFeed> {
   const destinations: ItineraryDestinationFeed['destinations'] = [];
   const cities: ItineraryDestinationFeed['cities'] = [];
   const seenDestinations = new Set<string>();
   const seenCityLinks = new Set<string>();
-  let page = 1;
-  for (;;) {
-    const result = await destinationsService.list(auth, {
+  const rows = await prisma.destination.findMany({
+    where: {
+      companyId,
       status: 'ACTIVE',
-      page,
-      pageSize: 100,
-      sortBy: 'name',
-      sortOrder: 'asc',
-    });
-    for (const row of result.data as unknown as MasterDestinationRow[]) {
-      if (!row || typeof row.id !== 'string' || typeof row.name !== 'string') continue;
-      if (!seenDestinations.has(row.id)) {
-        seenDestinations.add(row.id);
-        destinations.push({ value: row.id, label: row.name });
-      }
-      for (const link of row.cities ?? []) {
-        const city = link?.city;
-        if (!city || typeof city.id !== 'string' || typeof city.name !== 'string') continue;
-        if (city.status && city.status !== 'ACTIVE') continue;
-        const key = `${row.id}:${city.id}`;
-        if (seenCityLinks.has(key)) continue;
-        seenCityLinks.add(key);
-        cities.push({ value: city.id, label: city.name, destinationValue: row.id });
-      }
+      deletedAt: null,
+    },
+    orderBy: { name: 'asc' },
+    include: { cities: { orderBy: { sequence: 'asc' }, include: { city: true } } },
+  });
+  for (const row of rows as unknown as MasterDestinationRow[]) {
+    if (!row || typeof row.id !== 'string' || typeof row.name !== 'string') continue;
+    if (!seenDestinations.has(row.id)) {
+      seenDestinations.add(row.id);
+      destinations.push({ value: row.id, label: row.name });
     }
-    if (page >= result.pagination.totalPages || result.data.length === 0) break;
-    page += 1;
+    for (const link of row.cities ?? []) {
+      const city = link?.city;
+      if (!city || typeof city.id !== 'string' || typeof city.name !== 'string') continue;
+      // Tenant isolation: a city is exposed only when it belongs to
+      // the same scope company as its destination. Global/system
+      // cities and any city owned by another account are excluded.
+      if (city.companyId !== companyId) continue;
+      if (city.status && city.status !== 'ACTIVE') continue;
+      if (city.deletedAt !== null) continue;
+      const key = `${row.id}:${city.id}`;
+      if (seenCityLinks.has(key)) continue;
+      seenCityLinks.add(key);
+      cities.push({ value: city.id, label: city.name, destinationValue: row.id });
+    }
   }
   return { destinations, cities };
+}
+
+/**
+ * Resolve the company whose itinerary master data a WACRM lookups
+ * request must see.
+ *
+ * The Bearer credential authenticates the WACRM integration, while
+ * the `assignedToEmail` locator — resolved server-side by WACRM from
+ * the requesting account's OWN rows, never request input — identifies
+ * the Travel CRM account a WACRM workspace is linked to. When a
+ * shared integration secret is bound to one company but the calling
+ * workspace belongs to another, scoping by the credential alone would
+ * leak one customer's master data to another; the locator re-scopes
+ * the feed to the linked company so each workspace receives only its
+ * own destinations/cities. The locator is honored only when it
+ * resolves to exactly one non-deleted Travel CRM user; anything else
+ * falls back to the credential's company (never guesses, never fails
+ * hard, never crosses the credential's own company silently).
+ */
+async function resolveItineraryScopeCompany(
+  auth: AuthContext,
+  ownerEmail: string | null,
+): Promise<string> {
+  const normalized = normalizeEmail(ownerEmail ?? '');
+  if (!normalized) return auth.companyId;
+  const matches = await prisma.user.findMany({
+    where: { normalizedEmail: normalized, deletedAt: null },
+    select: { id: true, companyId: true },
+  });
+  if (matches.length === 1) return matches[0]!.companyId;
+  return auth.companyId;
 }
 
 async function findLink(companyId: string, wacrmAccountId: string, flowRunId: string) {
@@ -249,9 +282,10 @@ export const wacrmService = {
     }
   },
 
-  async lookups(auth: AuthContext) {
+  async lookups(auth: AuthContext, ownerEmail: string | null = null) {
     const base = await queriesService.lookups(auth);
-    const feed = await itineraryDestinationFeed(auth);
+    const scopeCompanyId = await resolveItineraryScopeCompany(auth, ownerEmail);
+    const feed = await itineraryDestinationFeed(scopeCompanyId);
     return {
       ...base,
       destinations: feed.destinations,

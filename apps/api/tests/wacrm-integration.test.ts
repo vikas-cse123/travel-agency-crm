@@ -5,6 +5,11 @@ import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
+import { runSystemMastersBootstrap } from '../src/modules/system-masters/system-masters-bootstrap.service.js';
+import { resetSystemCompanyIdCache } from '../src/modules/masters/master-visibility.js';
+
+const SYSTEM_EMAIL = process.env.SYSTEM_ADMIN_EMAIL ?? 'system.admin@interscale.test';
+const SYSTEM_PASSWORD = process.env.SYSTEM_ADMIN_PASSWORD ?? 'System@2026Bootstrap';
 
 let app: Express;
 let db: PrismaClient;
@@ -16,7 +21,20 @@ afterAll(async () => db.$disconnect());
 beforeEach(async () => {
   await truncateAll(db);
   getMemoryEmailProvider()?.clear();
+  resetSystemCompanyIdCache();
 });
+
+async function systemAdminClient() {
+  const client = createAuthClient(app);
+  const login = await client.post('/api/auth/login', {
+    email: SYSTEM_EMAIL,
+    password: SYSTEM_PASSWORD,
+    rememberMe: false,
+    loginMode: 'COMPANY_ADMIN',
+  });
+  expect(login.status).toBe(200);
+  return client;
+}
 
 async function owner(email: string, companyName: string) {
   const client = createAuthClient(app);
@@ -1450,18 +1468,39 @@ describe('WACRM lookups JIT provisioning via query locator', () => {
     expect(await db.integrationCredential.count()).toBe(0);
   });
 
-  it('known secret ignores a foreign query email (fast path, isolation)', async () => {
-    const { admin, user } = await setupCompany(
-      'owner@alpha.test',
-      'Alpha Travel',
-      'sales@alpha.test',
-    );
+  it('known secret honors the owner-email locator for DATA scoping (shared-secret isolation)', async () => {
+    const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
     const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
-    const presented = await mintToken(admin, 'owner@alpha.test');
+    const presented = await mintToken(alpha.admin, 'owner@alpha.test');
 
-    const res = await lookupsWith(presented, '?assignedToEmail=owner@beta.test');
+    // Alpha owns one destination; Beta owns another. A shared-secret
+    // deployment binds the same presented secret to Alpha's credential,
+    // but the WACRM workspace for Beta sends Beta's owner email. The
+    // locator must re-scope the feed to Beta — Alpha's credential alone
+    // must never expose Alpha's master data to Beta's workspace.
+    const alphaCity = await createCity(alpha.admin, 'Alpha Only City');
+    const alphaDest = await createDestination(alpha.admin, 'Alpha Only Dest', [alphaCity.id]);
+    const betaCity = await createCity(beta.admin, 'Beta Only City');
+    const betaDest = await createDestination(beta.admin, 'Beta Only Dest', [betaCity.id]);
+
+    const res = await lookupsWith(
+      presented,
+      `?assignedToEmail=${encodeURIComponent('owner@beta.test')}`,
+    );
     expect(res.status).toBe(200);
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+    const destValues = (res.body.data.destinations as Array<{ value: string }>).map(
+      (d) => d.value,
+    );
+    const cityValues = (res.body.data.cities as Array<{ value: string }>).map((c) => c.value);
+    // Exactly Beta's own master — never Alpha's.
+    expect(destValues).toContain(betaDest.id);
+    expect(destValues).not.toContain(alphaDest.id);
+    expect(cityValues).toContain(betaCity.id);
+    expect(cityValues).not.toContain(alphaCity.id);
+
+    // The credential stays bound to Alpha (no re-provisioning for Beta
+    // just because a locator was sent) — credential isolation unchanged.
+    expect(await liveCredentials(alpha.user.companyId)).toHaveLength(1);
     expect(await liveCredentials(beta.user.companyId)).toHaveLength(0);
   });
 
@@ -1476,5 +1515,78 @@ describe('WACRM lookups JIT provisioning via query locator', () => {
     expect(await liveCredentials(alpha.user.companyId)).toHaveLength(0);
     const row = (await liveCredentials(beta.user.companyId))[0]!;
     expect(row.userId).toBe(beta.user.id);
+  });
+});
+
+describe('WACRM lookups tenant isolation', () => {
+  async function setupCompany(ownerEmail: string, companyName: string, salesEmail: string) {
+    const admin = await owner(ownerEmail, companyName);
+    await employeeEmail(admin, salesEmail);
+    const token = await mintToken(admin, ownerEmail);
+    return { admin, token };
+  }
+
+  it('each workspace receives only its own destinations and cities', async () => {
+    const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+    const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
+
+    const kashmirCity = await createCity(alpha.admin, 'Kashmir City');
+    const kashmir = await createDestination(alpha.admin, 'Kashmir', [kashmirCity.id]);
+    const singaporeCity = await createCity(beta.admin, 'Singapore City');
+    const singapore = await createDestination(beta.admin, 'Singapore', [singaporeCity.id]);
+    const bangkokCity = await createCity(beta.admin, 'Bangkok City', 'TH');
+    const bangkok = await createDestination(beta.admin, 'Bangkok', [bangkokCity.id], 'TH');
+
+    // Workspace A: exactly its own master, nothing from B.
+    const resA = await bearer(alpha.token).get('/api/integrations/wacrm/lookups');
+    expect(resA.status).toBe(200);
+    expect(resA.body.data.destinations).toEqual([{ value: kashmir.id, label: 'Kashmir' }]);
+    expect(resA.body.data.cities).toEqual([
+      { value: kashmirCity.id, label: 'Kashmir City', destinationValue: kashmir.id },
+    ]);
+
+    // Workspace B: exactly its own masters, nothing from A.
+    const resB = await bearer(beta.token).get('/api/integrations/wacrm/lookups');
+    expect(resB.status).toBe(200);
+    expect(resB.body.data.destinations).toEqual(
+      expect.arrayContaining([
+        { value: singapore.id, label: 'Singapore' },
+        { value: bangkok.id, label: 'Bangkok' },
+      ]),
+    );
+    expect(resB.body.data.destinations).toHaveLength(2);
+    const cityValuesB = (resB.body.data.cities as Array<{ value: string }>).map((c) => c.value);
+    expect(cityValuesB).toEqual(
+      expect.arrayContaining([singaporeCity.id, bangkokCity.id]),
+    );
+    expect(cityValuesB).toHaveLength(2);
+    expect(cityValuesB).not.toContain(kashmirCity.id);
+  });
+
+  it('excludes System Global Masters (shared) destinations and cities from the feed', async () => {
+    await runSystemMastersBootstrap();
+    const system = await systemAdminClient();
+
+    // A global/shared destination owned by the hidden System Global
+    // Masters company — visible to every tenant in the native UI, but
+    // must NEVER surface through the WACRM integration for a tenant.
+    const globalCity = await createCity(system, 'Global Goa City');
+    const globalDest = await createDestination(system, 'GOA', [globalCity.id]);
+
+    const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+    const ownCity = await createCity(alpha.admin, 'Kashmir City');
+    const ownDest = await createDestination(alpha.admin, 'Kashmir', [ownCity.id]);
+
+    const res = await bearer(alpha.token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    const destValues = (res.body.data.destinations as Array<{ value: string }>).map(
+      (d) => d.value,
+    );
+    const cityValues = (res.body.data.cities as Array<{ value: string }>).map((c) => c.value);
+    // Exactly the tenant's own master — the shared global one never leaks.
+    expect(destValues).toEqual([ownDest.id]);
+    expect(cityValues).toEqual([ownCity.id]);
+    expect(destValues).not.toContain(globalDest.id);
+    expect(cityValues).not.toContain(globalCity.id);
   });
 });
