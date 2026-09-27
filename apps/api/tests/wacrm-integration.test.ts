@@ -1183,7 +1183,7 @@ describe('WACRM credential reconciliation by owner email', () => {
   });
 });
 
-describe('WACRM credential import of the caller-owned secret', () => {
+describe('WACRM automatic first-use association by owner email', () => {
   // Synthetic tokens only — these fixtures never touch a real secret.
   // Each tag yields a distinct 12-char key prefix on purpose: the schema
   // enforces one row per (company, prefix), so sharing a prefix across
@@ -1196,7 +1196,10 @@ describe('WACRM credential import of the caller-owned secret', () => {
     const user = await db.user.findFirstOrThrow({
       where: { normalizedEmail: ownerEmail, deletedAt: null },
     });
-    return { admin, user };
+    const sales = await db.user.findFirstOrThrow({
+      where: { normalizedEmail: salesEmail, deletedAt: null },
+    });
+    return { admin, user, sales };
   }
 
   async function liveCredentials(companyId: string) {
@@ -1209,142 +1212,124 @@ describe('WACRM credential import of the caller-owned secret', () => {
     });
   }
 
-  function importBody(userId: string, secret: string, name = 'wacrm-sync') {
-    return { name, userId, secret };
-  }
+  it('owner email auto-provisions on first lead sync; lookups then returns 200', async () => {
+    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+    const presented = synthetic('jitowner01');
 
-  it('import registers the existing secret; it authenticates lookups immediately', async () => {
-    const { deriveIntegrationCredentialParts } = await import(
-      '../src/middleware/wacrm-auth.middleware.js'
-    );
-    const { admin, user } = await setupCompany(
+    // No credential yet: lookups rejects.
+    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(401);
+
+    // First lead request carries the owner email and the unknown secret.
+    const lead = await bearer(presented)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ assignedToEmail: 'owner@alpha.test' }));
+    expect(lead.status).toBe(201);
+
+    // Exactly one credential, bound to the owner company/user, hash-only.
+    const rows = await liveCredentials(user.companyId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ companyId: user.companyId, userId: user.id });
+    expect(rows[0]!.keyHash).toHaveLength(64);
+    expect(JSON.stringify(rows[0])).not.toContain(presented);
+
+    // The same secret now authenticates lookups with destinations/cities.
+    const lookups = await bearer(presented).get('/api/integrations/wacrm/lookups');
+    expect(lookups.status).toBe(200);
+    expect(Array.isArray(lookups.body.data.destinations)).toBe(true);
+    expect(Array.isArray(lookups.body.data.cities)).toBe(true);
+  });
+
+  it('regular member email provisions bound to that member and company', async () => {
+    const { user, sales } = await setupCompany(
       'owner@alpha.test',
       'Alpha Travel',
       'sales@alpha.test',
     );
-    const presented = synthetic('importfresh');
-    const expected = deriveIntegrationCredentialParts(presented);
+    const presented = synthetic('jitmember1');
 
-    const res = await admin.post('/api/integrations/credentials/import', 
-      importBody(user.id, presented),
-    );
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ success: true });
-    expect(res.body.data).toMatchObject({ companyId: user.companyId, userId: user.id });
-
-    // The response carries metadata only — never the plaintext.
-    expect(JSON.stringify(res.body)).not.toContain(presented);
-
-    const stored = await db.integrationCredential.findFirstOrThrow({
-      where: { companyId: user.companyId, revokedAt: null },
-    });
-    expect(stored.keyPrefix).toBe(expected.prefix);
-    expect(stored.keyHash).toBe(expected.hash);
-    expect(JSON.stringify(stored)).not.toContain(presented);
-
-    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
+    await bearer(presented).post('/api/integrations/wacrm/leads').send(payload());
+    const rows = await liveCredentials(user.companyId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ companyId: user.companyId, userId: sales.id });
+    // The secret passes Bearer authentication (non-401 proves auth
+    // accepted it; authorization depends on the member's permissions).
+    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).not.toBe(401);
   });
 
-  it('importing the same secret again is idempotent (no duplicate)', async () => {
-    const { admin, user } = await setupCompany(
-      'owner@alpha.test',
-      'Alpha Travel',
-      'sales@alpha.test',
-    );
-    const presented = synthetic('importidem1');
-
-    const first = await admin.post('/api/integrations/credentials/import', 
-      importBody(user.id, presented),
-    );
-    const second = await admin.post('/api/integrations/credentials/import', 
-      importBody(user.id, presented),
-    );
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(200);
-    expect(second.body.data.id).toBe(first.body.data.id);
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
-  });
-
-  it('importing a different secret while one is live returns 409', async () => {
-    const { admin, user } = await setupCompany(
-      'owner@alpha.test',
-      'Alpha Travel',
-      'sales@alpha.test',
-    );
-    const liveToken = synthetic('importlive1');
-    expect(
-      (await admin.post('/api/integrations/credentials/import', 
-        importBody(user.id, liveToken),
-      )).status,
-    ).toBe(201);
-
-    const conflict = await admin.post('/api/integrations/credentials/import', 
-      importBody(user.id, synthetic('importoth1')),
-    );
-    expect(conflict.status).toBe(409);
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
-    expect((await bearer(liveToken).get('/api/integrations/wacrm/lookups')).status).toBe(200);
-  });
-
-  it('revoked or expired credentials can be replaced through import', async () => {
-    const { admin, user } = await setupCompany(
-      'owner@alpha.test',
-      'Alpha Travel',
-      'sales@alpha.test',
-    );
-    const stale = synthetic('importstale');
-    expect(
-      (await admin.post('/api/integrations/credentials/import', importBody(user.id, stale)))
-        .status,
-    ).toBe(201);
-    const row = await db.integrationCredential.findFirstOrThrow({
-      where: { companyId: user.companyId, revokedAt: null },
-    });
-    expect((await admin.delete(`/api/integrations/credentials/${row.id}`)).status).toBe(200);
-
-    const presented = synthetic('importnew01');
-    const res = await admin.post('/api/integrations/credentials/import', 
-      importBody(user.id, presented),
-    );
-    expect(res.status).toBe(201);
-    expect(await liveCredentials(user.companyId)).toHaveLength(1);
-    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
-  });
-
-  it('import rejects bad input without creating rows', async () => {
+  it('existing credential is reused; email is ignored once the hash matches', async () => {
     const { admin, user } = await setupCompany(
       'owner@alpha.test',
       'Alpha Travel',
       'sales@alpha.test',
     );
     const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
+    const presented = await mintToken(admin, 'owner@alpha.test');
 
-    // Unauthenticated (trusted origin so the request reaches session auth).
+    // Known secret but another company's owner email: the hash fast path
+    // authenticates as the credential's own company (no 401), while lead
+    // validation still fails closed on the foreign assignee (400) — the
+    // email never moves authentication across company boundaries.
+    const lead = await bearer(presented)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ assignedToEmail: 'owner@beta.test' }));
+    expect(lead.status).toBe(400);
+    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+    expect(await liveCredentials(beta.user.companyId)).toHaveLength(0);
+    expect(await db.query.count()).toBe(0);
+  });
+
+  it('unknown, inactive, or deleted owner fails closed with no row', async () => {
+    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+
     expect(
       (
-        await request(app)
-          .post('/api/integrations/credentials/import')
-          .set('Origin', 'http://localhost:5173')
-          .send(importBody(user.id, synthetic('noauth00001')))
+        await bearer(synthetic('jitunknown'))
+          .post('/api/integrations/wacrm/leads')
+          .send(payload({ assignedToEmail: 'nobody@alpha.test' }))
       ).status,
     ).toBe(401);
-    // Malformed secret (long enough to pass input validation, wrong shape).
+
+    await db.user.update({ where: { id: user.id }, data: { status: 'INACTIVE' } });
     expect(
       (
-        await admin.post('/api/integrations/credentials/import', 
-          importBody(user.id, 'invalid-secret-value'),
-        )
+        await bearer(synthetic('jitinactiv'))
+          .post('/api/integrations/wacrm/leads')
+          .send(payload({ assignedToEmail: 'owner@alpha.test' }))
       ).status,
-    ).toBe(400);
-    // Service user from another company.
+    ).toBe(401);
+
+    await db.user.update({
+      where: { id: user.id },
+      data: { status: 'ACTIVE', deletedAt: new Date() },
+    });
     expect(
       (
-        await admin.post('/api/integrations/credentials/import', 
-          importBody(beta.user.id, synthetic('crosscomp1')),
-        )
+        await bearer(synthetic('jitdeleted'))
+          .post('/api/integrations/wacrm/leads')
+          .send(payload({ assignedToEmail: 'owner@alpha.test' }))
       ).status,
-    ).toBe(400);
+    ).toBe(401);
+
     expect(await db.integrationCredential.count()).toBe(0);
+  });
+
+  it('a different live credential is never overwritten by first use', async () => {
+    const { admin, user } = await setupCompany(
+      'owner@alpha.test',
+      'Alpha Travel',
+      'sales@alpha.test',
+    );
+    const liveToken = await mintToken(admin, 'owner@alpha.test');
+
+    expect(
+      (
+        await bearer(synthetic('jitother01'))
+          .post('/api/integrations/wacrm/leads')
+          .send(payload({ assignedToEmail: 'owner@alpha.test' }))
+      ).status,
+    ).toBe(401);
+    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+    expect((await bearer(liveToken).get('/api/integrations/wacrm/lookups')).status).toBe(200);
   });
 
   it('no secret-bearing environment wiring remains in Travel CRM source', async () => {
@@ -1373,9 +1358,8 @@ describe('WACRM credential import of the caller-owned secret', () => {
     };
     walk(src);
     expect(offenders).toEqual([]);
-    // server.ts boots with no credential provisioning hook.
     const server = readFileSync(join(src, 'server.ts'), 'utf8');
     expect(server).not.toContain('reconcile');
-    expect(server).not.toContain('wacrm-bootstrap');
+    expect(server).not.toContain('bootstrap');
   });
 });

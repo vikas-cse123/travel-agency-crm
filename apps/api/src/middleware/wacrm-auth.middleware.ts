@@ -1,9 +1,12 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
+import { logger } from '../config/logger.js';
 import { createTenantContext } from '../db/tenant.js';
 import { UnauthorizedError } from '../utils/errors.js';
 import { asyncHandler } from '../utils/async-handler.js';
+import { credentialsService } from '../modules/integrations/credentials.service.js';
 import type { AuthContext } from './authenticate.js';
 
 /**
@@ -76,6 +79,62 @@ function hashesEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
+const credentialInclude = {
+  user: {
+    select: {
+      id: true,
+      companyId: true,
+      status: true,
+      emailVerifiedAt: true,
+      deletedAt: true,
+    },
+  },
+  company: { select: { id: true, status: true } },
+} as const;
+
+/**
+ * Just-in-time automatic association for a presented secret that matches
+ * no stored credential.
+ *
+ * Zero-manual-setup provisioning point: some integration requests already
+ * carry the account locator (WACRM lead payloads carry the owner email as
+ * `assignedToEmail`). When the Bearer secret is otherwise unknown, the
+ * email resolves the Travel CRM user → company → service identity, and
+ * the credential is created hash-only under the one-live-per-company
+ * rule. Any failure (no email, unknown/inactive/ambiguous user, live
+ * credential for a different secret, cross-company race loser) returns
+ * null so the caller fails closed with 401. Nothing secret-bearing is
+ * logged or returned.
+ *
+ * The secret itself is the only proof accepted: knowledge of it is what
+ * authorizes the binding, exactly as it authorizes every later request.
+ */
+async function tryAutoProvision(
+  ownerEmail: unknown,
+  presented: string,
+): Promise<Prisma.IntegrationCredentialGetPayload<{ include: typeof credentialInclude }> | null> {
+  try {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) return null;
+    const result = await credentialsService.reconcileByOwnerEmail({
+      ownerEmail,
+      presented,
+      name: 'wacrm-sync',
+    });
+    const row = await prisma.integrationCredential.findFirst({
+      where: { id: result.id },
+      include: credentialInclude,
+    });
+    if (!row || !row.user) return null;
+    logger.info(
+      { credentialId: row.id, companyId: row.companyId },
+      'Provisioned WACRM integration credential on first use.',
+    );
+    return row;
+  } catch {
+    return null;
+  }
+}
+
 export const authenticateIntegration = asyncHandler(
   async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     const presented = bearerToken(req);
@@ -90,20 +149,27 @@ export const authenticateIntegration = asyncHandler(
     // if two rows ever share a prefix.
     const candidates = await prisma.integrationCredential.findMany({
       where: { keyPrefix: prefix, revokedAt: null },
-      include: {
-        user: {
-          select: {
-            id: true,
-            companyId: true,
-            status: true,
-            emailVerifiedAt: true,
-            deletedAt: true,
-          },
-        },
-        company: { select: { id: true, status: true } },
-      },
+      include: credentialInclude,
     });
-    const credential = candidates.find((candidate) => hashesEqual(presentedHash, candidate.keyHash));
+    let credential:
+      | Prisma.IntegrationCredentialGetPayload<{ include: typeof credentialInclude }>
+      | null
+      | undefined = candidates.find((candidate) =>
+      hashesEqual(presentedHash, candidate.keyHash),
+    );
+    if (!credential) {
+      // Unknown secret: attempt automatic first-use association driven by
+      // the owner email the request itself carries (lead payloads carry
+      // `assignedToEmail`). Requests with no resolvable email (e.g. plain
+      // lookups with an unregistered secret) stay rejected — there is
+      // nothing to resolve the account from, and guessing is forbidden.
+      const body = (req as { body?: unknown }).body;
+      const ownerEmail =
+        body !== null && typeof body === 'object'
+          ? (body as Record<string, unknown>).assignedToEmail
+          : null;
+      credential = await tryAutoProvision(ownerEmail, presented);
+    }
     if (!credential) {
       throw new UnauthorizedError('Invalid integration token.');
     }

@@ -1,6 +1,6 @@
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { prisma } from '../../config/prisma.js';
-import { AppError, ConflictError, NotFoundError, ValidationError } from '../../utils/errors.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../utils/errors.js';
 import { normalizeEmail } from '../../utils/normalize.js';
 import {
   deriveIntegrationCredentialParts,
@@ -103,45 +103,12 @@ export const credentialsService = {
   },
 
   /**
-   * Register a caller-owned existing secret (e.g. the permanent WACRM
-   * secret already configured on the caller side) through the
-   * authenticated credential-setup flow.
-   *
-   * The company is taken from the session — never from the request — so
-   * company isolation holds exactly as for minting. Delegates to
-   * `reconcile()`: hash-only storage, one-live-credential-per-company
-   * (409 on a different live secret), idempotent rematch. Malformed
-   * secrets surface as 400 (not 401) since this is a session-authed
-   * setup call, not a Bearer attempt. The plaintext is never returned,
-   * logged, or stored.
-   */
-  async importCredential(
-    auth: AuthContext,
-    input: { name: string; userId: string; secret: string },
-  ): Promise<{ id: string; name: string; companyId: string; userId: string; created: boolean }> {
-    try {
-      return await credentialsService.reconcile({
-        companyId: auth.companyId,
-        userId: input.userId,
-        presented: input.secret,
-        name: input.name,
-        createdById: auth.userId,
-      });
-    } catch (err) {
-      if (err instanceof AppError && err.statusCode === 401) {
-        throw new ValidationError('The provided secret is not a valid WACRM credential.');
-      }
-      throw err;
-    }
-  },
-
-  /**
    * One-time reconciliation of a caller-owned secret (e.g. the permanent
    * WACRM secret already configured on the caller side).
    *
-   * Reached ONLY through authenticated credential setup (the session-
-   * authed import route or admin tooling) — never through a public
-   * endpoint, and never through the Bearer surface it provisions.
+   * Reached through automatic first-use provisioning inside Bearer
+   * authentication (and admin tooling) — never through a public
+   * endpoint, and never with weaker checks than minting.
    * Derives the storable `{ prefix, hash }` with the same implementation
    * Bearer verification uses, stores hash-only, and enforces the
    * one-live-credential-per-company rule:

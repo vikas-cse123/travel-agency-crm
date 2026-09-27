@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { PERMISSIONS, wacrmCredentialImportSchema, wacrmCredentialMintSchema, wacrmLeadPayloadSchema } from '@interscale/shared';
+import { PERMISSIONS, wacrmCredentialMintSchema, wacrmLeadPayloadSchema } from '@interscale/shared';
 import { z } from 'zod';
 import { requireAuth, requireVerifiedEmail } from '../../middleware/authenticate.js';
 import { authenticateIntegration } from '../../middleware/wacrm-auth.middleware.js';
@@ -35,17 +35,6 @@ router.delete(
   requirePermission(PERMISSIONS.SETTINGS_UPDATE),
   validateRequest({ params: credentialId }),
   asyncHandler(integrationsController.revokeCredential),
-);
-// Register a caller-owned existing secret (e.g. the permanent WACRM
-// secret): same session/permission guards as minting; hash-only storage;
-// the plaintext is never returned.
-router.post(
-  '/credentials/import',
-  requireAuth,
-  requireVerifiedEmail,
-  requirePermission(PERMISSIONS.SETTINGS_UPDATE),
-  validateRequest({ body: wacrmCredentialImportSchema }),
-  asyncHandler(integrationsController.importCredential),
 );
 
 // --- WACRM server-to-server surface (Bearer integration credential).

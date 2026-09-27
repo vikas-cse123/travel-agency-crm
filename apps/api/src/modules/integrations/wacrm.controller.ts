@@ -35,20 +35,6 @@ export const integrationsController = {
     );
   },
 
-  async importCredential(req: Request, res: Response) {
-    const result = await credentialsService.importCredential(auth(req), req.body);
-    // The caller already owns the secret — only metadata is returned,
-    // never the plaintext.
-    sendSuccess(
-      res,
-      result,
-      result.created
-        ? 'Integration credential registered.'
-        : 'Integration credential already registered.',
-      result.created ? 201 : 200,
-    );
-  },
-
   async wacrmLookups(req: Request, res: Response) {
     sendSuccess(res, await wacrmService.lookups(auth(req)));
   },
