@@ -504,6 +504,70 @@ describe('WACRM lookups: itinerary destinations come from the Destinations maste
   });
 });
 
+describe('WACRM lead assignment: the WACRM workspace owner is the assignee', () => {
+  const runId = (n: number) =>
+    `33333333-3333-4333-8333-${n.toString(16).padStart(12, '0')}`;
+
+  async function setupCompany(ownerEmail: string, companyName: string) {
+    const admin = await owner(ownerEmail, companyName);
+    const token = await mintToken(admin, ownerEmail);
+    const user = await db.user.findFirstOrThrow({
+      where: { normalizedEmail: ownerEmail, deletedAt: null },
+    });
+    return { admin, token, user };
+  }
+
+  it('assigns the created lead to the WACRM workspace owner user', async () => {
+    const { token, user } = await setupCompany('owner@alpha.test', 'Alpha Travel');
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ assignedToEmail: 'owner@alpha.test' }));
+    expect(res.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: res.body.data.leadId } });
+    // The owner email → owner user → lead assigned to that user, in the
+    // owner's company. The WACRM lead's own "Assigned To" value is never
+    // used here (only assignedToEmail drives assignment).
+    expect(row.assignedToId).toBe(user.id);
+    expect(row.companyId).toBe(user.companyId);
+  });
+
+  it('each workspace is assigned to its own owner', async () => {
+    const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel');
+    const beta = await setupCompany('owner@beta.test', 'Beta Travel');
+
+    const leadA = await bearer(alpha.token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ flowRunId: runId(1), assignedToEmail: 'owner@alpha.test' }));
+    const leadB = await bearer(beta.token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ flowRunId: runId(2), assignedToEmail: 'owner@beta.test' }));
+    expect(leadA.status).toBe(201);
+    expect(leadB.status).toBe(201);
+
+    const rowA = await db.query.findUniqueOrThrow({ where: { id: leadA.body.data.leadId } });
+    const rowB = await db.query.findUniqueOrThrow({ where: { id: leadB.body.data.leadId } });
+    expect(rowA.assignedToId).toBe(alpha.user.id);
+    expect(rowA.companyId).toBe(alpha.user.companyId);
+    expect(rowB.assignedToId).toBe(beta.user.id);
+    expect(rowB.companyId).toBe(beta.user.companyId);
+  });
+
+  it('an owner email with no matching user in the workspace company fails closed', async () => {
+    const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel');
+    // Beta's owner exists as a Travel CRM user, but only in Beta's
+    // company — never assignable from Alpha's workspace. No silent
+    // fallback to another user, no auto-created user.
+    const betaOwner = await owner('owner@beta.test', 'Beta Travel');
+    void betaOwner;
+    const res = await bearer(alpha.token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ assignedToEmail: 'owner@beta.test' }));
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('ASSIGNED_USER_NOT_FOUND');
+    expect(await db.query.count()).toBe(0);
+  });
+});
+
 describe('WACRM lead creation: departure, travelers, and enum coverage', () => {
   const runId = (n: number) =>
     `33333333-3333-4333-8333-${n.toString(16).padStart(12, '0')}`;

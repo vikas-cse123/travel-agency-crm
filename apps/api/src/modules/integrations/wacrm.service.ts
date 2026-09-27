@@ -20,10 +20,13 @@ import {
  *   2. otherwise claim a `pending` row first (unique constraint
  *      serializes concurrent retries; a live `pending` row from a
  *      crashed attempt is a 409, never a silent duplicate);
- *   3. resolve `assignedToEmail` to an ACTIVE same-company user —
- *      unknown emails fail closed without creating;
+ *   3. resolve `assignedToEmail` (ALWAYS the WACRM workspace owner's
+ *      email) to an ACTIVE user in the workspace's own company —
+ *      unknown/inactive/cross-company emails fail closed with
+ *      ASSIGNED_USER_NOT_FOUND, never a silent fallback;
  *   4. delegate to `queriesService.create` (same validation,
- *      transaction, histories, and audit as the UI path);
+ *      transaction, histories, and audit as the UI path) in the
+ *      workspace's company, assigned to that owner user;
  *   5. mark the link `created` with the real query id (failures
  *      mark it `failed` with the reason and rethrow).
  *
@@ -222,18 +225,30 @@ export const wacrmService = {
     }
     const linkId = link.id;
 
-    const email = normalizeEmail(input.assignedToEmail);
-    const assignee = await prisma.user.findFirst({
+    // --- Travel CRM assignment: the WACRM workspace owner. ---
+    // `input.assignedToEmail` is ALWAYS the WACRM workspace owner's
+    // email (resolved server-side by WACRM from the authenticated
+    // account — never the WACRM lead's "Assigned To" value, never
+    // client-supplied). Assignment is decided here, exclusively:
+    // find the Travel CRM user with that email, verify the user belongs
+    // to the current workspace's company (auth.companyId — the company
+    // the integration credential is bound to), and assign the lead to
+    // that user. Any miss (no such user, inactive/deleted, or a user
+    // belonging to a different company) fails closed with
+    // ASSIGNED_USER_NOT_FOUND — the lead is never silently assigned to
+    // an arbitrary user, and no new user is ever auto-created.
+    const ownerEmail = normalizeEmail(input.assignedToEmail);
+    const ownerUser = await prisma.user.findFirst({
       where: {
         companyId,
-        normalizedEmail: email,
+        normalizedEmail: ownerEmail,
         status: 'ACTIVE',
         deletedAt: null,
       },
       select: { id: true },
     });
-    if (!assignee) {
-      await markLinkFailed(linkId, `ASSIGNED_USER_NOT_FOUND:${email}`);
+    if (!ownerUser) {
+      await markLinkFailed(linkId, `ASSIGNED_USER_NOT_FOUND:${ownerEmail}`);
       throw new AssigneeNotFoundError(input.assignedToEmail.trim());
     }
 
@@ -249,7 +264,7 @@ export const wacrmService = {
         leadSource: input.leadSource,
         leadType: input.leadType,
         leadStage: input.leadStage,
-        assignedToId: assignee.id,
+        assignedToId: ownerUser.id,
         dateOfBirth: input.dateOfBirth ?? undefined,
         travelStartDate: input.travelStartDate ?? undefined,
         departureCountry: input.departureCountry ?? undefined,
