@@ -1363,3 +1363,118 @@ describe('WACRM automatic first-use association by owner email', () => {
     expect(server).not.toContain('bootstrap');
   });
 });
+
+describe('WACRM lookups JIT provisioning via query locator', () => {
+  // Synthetic tokens only — these fixtures never touch a real secret.
+  // Each tag yields a distinct 12-char key prefix on purpose: the schema
+  // enforces one row per (company, prefix), so sharing a prefix across
+  // different test secrets would collide for realistic reasons.
+  const synthetic = (tag: string) => `wacrm_${tag}_${'x'.repeat(24)}`;
+  const lookupsWith = (token: string, query: string) =>
+    bearer(token).get(`/api/integrations/wacrm/lookups${query}`);
+
+  async function setupCompany(ownerEmail: string, companyName: string, salesEmail: string) {
+    const admin = await owner(ownerEmail, companyName);
+    await employeeEmail(admin, salesEmail);
+    const user = await db.user.findFirstOrThrow({
+      where: { normalizedEmail: ownerEmail, deletedAt: null },
+    });
+    return { admin, user };
+  }
+
+  async function liveCredentials(companyId: string) {
+    return db.integrationCredential.findMany({
+      where: {
+        companyId,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+    });
+  }
+
+  it('GET with assignedToEmail query provisions and returns destinations/cities', async () => {
+    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+    const presented = synthetic('qryfresh01');
+
+    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(401);
+
+    const res = await lookupsWith(presented, `?assignedToEmail=${encodeURIComponent('owner@alpha.test')}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data.destinations)).toBe(true);
+    expect(Array.isArray(res.body.data.cities)).toBe(true);
+
+    const rows = await liveCredentials(user.companyId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ companyId: user.companyId, userId: user.id });
+    expect(JSON.stringify(rows[0])).not.toContain(presented);
+    expect(JSON.stringify(res.body)).not.toContain(presented);
+
+    // Repeat lookups ride the fast hash path (no duplicate row).
+    expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).toBe(200);
+    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+  });
+
+  it('URL-encoded owner email normalizes to the same user', async () => {
+    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+    const presented = synthetic('qryencoded1');
+    const res = await lookupsWith(
+      presented,
+      `?assignedToEmail=${encodeURIComponent('  OWNER@Alpha.Test ')}`,
+    );
+    expect(res.status).toBe(200);
+    const rows = await liveCredentials(user.companyId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ userId: user.id });
+  });
+
+  it('unknown, inactive, or deleted owner via query fails closed', async () => {
+    const { user } = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+
+    expect(
+      (await lookupsWith(synthetic('qrynope001'), '?assignedToEmail=nobody@alpha.test')).status,
+    ).toBe(401);
+
+    await db.user.update({ where: { id: user.id }, data: { status: 'INACTIVE' } });
+    expect(
+      (await lookupsWith(synthetic('qryoff0001'), '?assignedToEmail=owner@alpha.test')).status,
+    ).toBe(401);
+
+    await db.user.update({
+      where: { id: user.id },
+      data: { status: 'ACTIVE', deletedAt: new Date() },
+    });
+    expect(
+      (await lookupsWith(synthetic('qrygone001'), '?assignedToEmail=owner@alpha.test')).status,
+    ).toBe(401);
+
+    expect(await db.integrationCredential.count()).toBe(0);
+  });
+
+  it('known secret ignores a foreign query email (fast path, isolation)', async () => {
+    const { admin, user } = await setupCompany(
+      'owner@alpha.test',
+      'Alpha Travel',
+      'sales@alpha.test',
+    );
+    const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
+    const presented = await mintToken(admin, 'owner@alpha.test');
+
+    const res = await lookupsWith(presented, '?assignedToEmail=owner@beta.test');
+    expect(res.status).toBe(200);
+    expect(await liveCredentials(user.companyId)).toHaveLength(1);
+    expect(await liveCredentials(beta.user.companyId)).toHaveLength(0);
+  });
+
+  it('fresh secret bound to another company stays scoped there', async () => {
+    const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel', 'sales@alpha.test');
+    const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
+    const presented = synthetic('qrybeta001');
+
+    const res = await lookupsWith(presented, '?assignedToEmail=owner@beta.test');
+    expect(res.status).toBe(200);
+    expect(await liveCredentials(beta.user.companyId)).toHaveLength(1);
+    expect(await liveCredentials(alpha.user.companyId)).toHaveLength(0);
+    const row = (await liveCredentials(beta.user.companyId))[0]!;
+    expect(row.userId).toBe(beta.user.id);
+  });
+});

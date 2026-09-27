@@ -98,7 +98,8 @@ const credentialInclude = {
  *
  * Zero-manual-setup provisioning point: some integration requests already
  * carry the account locator (WACRM lead payloads carry the owner email as
- * `assignedToEmail`). When the Bearer secret is otherwise unknown, the
+ * `assignedToEmail` in the body; the lookups GET carries it as a query
+ * locator of the same name). When the Bearer secret is otherwise unknown, the
  * email resolves the Travel CRM user → company → service identity, and
  * the credential is created hash-only under the one-live-per-company
  * rule. Any failure (no email, unknown/inactive/ambiguous user, live
@@ -159,16 +160,33 @@ export const authenticateIntegration = asyncHandler(
     );
     if (!credential) {
       // Unknown secret: attempt automatic first-use association driven by
-      // the owner email the request itself carries (lead payloads carry
-      // `assignedToEmail`). Requests with no resolvable email (e.g. plain
-      // lookups with an unregistered secret) stay rejected — there is
-      // nothing to resolve the account from, and guessing is forbidden.
+      // the owner email the request itself carries. Lead payloads carry it
+      // in the body (`assignedToEmail`); the lookups GET — which cannot
+      // carry a body — carries it as a query locator of the same name.
+      // The query locator is honored on GET requests only, so the POST
+      // lead flow keeps its body-only behavior. Requests with no
+      // resolvable email stay rejected — there is nothing to resolve the
+      // account from, and guessing is forbidden. The email never
+      // overrides ownership or security checks: it only selects which
+      // account a previously unknown secret binds to on first use, and
+      // known secrets authenticate by hash alone with the email ignored.
       const body = (req as { body?: unknown }).body;
-      const ownerEmail =
+      const bodyEmail =
         body !== null && typeof body === 'object'
           ? (body as Record<string, unknown>).assignedToEmail
           : null;
-      credential = await tryAutoProvision(ownerEmail, presented);
+      const rawQuery =
+        req.method === 'GET'
+          ? (req as { query?: unknown }).query
+          : null;
+      const queryEmail =
+        rawQuery !== null &&
+        typeof rawQuery === 'object' &&
+        !Array.isArray(rawQuery) &&
+        typeof (rawQuery as Record<string, unknown>).assignedToEmail === 'string'
+          ? (rawQuery as Record<string, unknown>).assignedToEmail
+          : null;
+      credential = await tryAutoProvision(bodyEmail ?? queryEmail, presented);
     }
     if (!credential) {
       throw new UnauthorizedError('Invalid integration token.');
