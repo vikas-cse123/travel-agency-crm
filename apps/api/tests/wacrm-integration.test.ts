@@ -201,34 +201,50 @@ describe('WACRM server-to-server lead integration', () => {
     expect((await bearer(tampered).post('/api/integrations/wacrm/leads').send(payload())).status).toBe(401);
   });
 
-  it('3+18. isolates tenants: cross-company assignee and lead access fail', async () => {
+  it('3+18. the owner email decides the assignee + company; lookups stay read-isolated', async () => {
+    const runId = (n: number) =>
+      `11111111-1111-4111-8111-${n.toString(16).padStart(12, '0')}`;
     const adminA = await owner('owner@alpha.test', 'Alpha Travel');
     await employeeEmail(adminA, 'sales@alpha.test');
     const tokenA = await mintToken(adminA, 'owner@alpha.test');
     const adminB = await owner('owner@beta.test', 'Beta Travel');
     await employeeEmail(adminB, 'sales@beta.test');
     const tokenB = await mintToken(adminB, 'owner@beta.test');
+    const alphaSales = await db.user.findFirstOrThrow({ where: { email: 'sales@alpha.test' } });
 
-    // B's token cannot resolve A's user by email.
+    // The WACRM workspace owner email decides the assignee AND the
+    // company context — never the integration credential's company. B's
+    // token carrying Alpha's user email creates the lead in ALPHA's
+    // company, assigned to that user.
     const cross = await bearer(tokenB)
       .post('/api/integrations/wacrm/leads')
-      .send(payload({ assignedToEmail: 'sales@alpha.test' }));
-    expect(cross.status).toBe(400);
-    expect(cross.body.error.code).toBe('ASSIGNED_USER_NOT_FOUND');
+      .send(payload({ flowRunId: runId(1), assignedToEmail: 'sales@alpha.test' }));
+    expect(cross.status).toBe(201);
+    const crossRow = await db.query.findUniqueOrThrow({ where: { id: cross.body.data.leadId } });
+    expect(crossRow.assignedToId).toBe(alphaSales.id);
+    expect(crossRow.companyId).toBe(alphaSales.companyId);
 
-    // A creates; B cannot read the lead through any integration path.
-    const created = await bearer(tokenA).post('/api/integrations/wacrm/leads').send(payload());
+    // Read isolation is preserved: lookups only expose the caller's own
+    // company master data (scoped via its owner email) — never another
+    // company's lead ids.
+    const created = await bearer(tokenA)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ flowRunId: runId(2), assignedToEmail: 'sales@alpha.test' }));
     const leadId = created.body.data.leadId as string;
     const lookupsB = await bearer(tokenB).get('/api/integrations/wacrm/lookups');
     expect(lookupsB.status).toBe(200);
-    const ids = JSON.stringify(lookupsB.body);
-    expect(ids).not.toContain(leadId);
-    // B's link namespace is independent: same WACRM key creates B's own lead.
+    expect(JSON.stringify(lookupsB.body)).not.toContain(leadId);
+
+    // Each owner email owns an independent link namespace: the same WACRM
+    // account with Beta's owner email creates Beta's own lead in Beta.
+    const betaOwner = await db.user.findFirstOrThrow({ where: { email: 'owner@beta.test' } });
     const again = await bearer(tokenB)
       .post('/api/integrations/wacrm/leads')
-      .send(payload({ assignedToEmail: 'sales@beta.test' }));
+      .send(payload({ flowRunId: runId(3), assignedToEmail: 'owner@beta.test' }));
     expect(again.status).toBe(201);
-    expect(again.body.data.leadId).not.toBe(leadId);
+    const againRow = await db.query.findUniqueOrThrow({ where: { id: again.body.data.leadId } });
+    expect(againRow.assignedToId).toBe(betaOwner.id);
+    expect(againRow.companyId).toBe(betaOwner.companyId);
   });
 
   it('5. duplicate retries return the existing lead without a second row', async () => {
@@ -261,7 +277,7 @@ describe('WACRM server-to-server lead integration', () => {
     expect(row.assignedToId).toBe(assignee.id);
   });
 
-  it('7+15. unknown assignee fails closed with no lead and a failed link', async () => {
+  it('7+15. unknown owner email fails closed with no lead and no silent assignee', async () => {
     const admin = await owner('owner@alpha.test', 'Alpha Travel');
     const token = await mintToken(admin, 'owner@alpha.test');
 
@@ -271,11 +287,10 @@ describe('WACRM server-to-server lead integration', () => {
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('ASSIGNED_USER_NOT_FOUND');
     expect(await db.query.count()).toBe(0);
-    const link = await db.wacrmLeadLink.findFirstOrThrow({
-      where: { flowRunId: FLOW_RUN },
-    });
-    expect(link.status).toBe('failed');
-    // Retry after fixing the email succeeds on the same key.
+    // Owner resolution precedes link creation, so no link row is written
+    // for an unresolvable owner (nothing to assign, nothing to idempotency-key).
+    expect(await db.wacrmLeadLink.count()).toBe(0);
+    // Retry after the user exists succeeds.
     await employeeEmail(admin, 'sales@alpha.test');
     const retry = await bearer(token)
       .post('/api/integrations/wacrm/leads')
@@ -552,19 +567,29 @@ describe('WACRM lead assignment: the WACRM workspace owner is the assignee', () 
     expect(rowB.companyId).toBe(beta.user.companyId);
   });
 
-  it('an owner email with no matching user in the workspace company fails closed', async () => {
+  it('a nonexistent owner email fails closed; an existing one in another company succeeds', async () => {
     const alpha = await setupCompany('owner@alpha.test', 'Alpha Travel');
-    // Beta's owner exists as a Travel CRM user, but only in Beta's
-    // company — never assignable from Alpha's workspace. No silent
-    // fallback to another user, no auto-created user.
-    const betaOwner = await owner('owner@beta.test', 'Beta Travel');
-    void betaOwner;
-    const res = await bearer(alpha.token)
+    await owner('owner@beta.test', 'Beta Travel');
+
+    // No Travel CRM user anywhere has this email → ASSIGNED_USER_NOT_FOUND,
+    // no silent assignee, no auto-created user.
+    const missing = await bearer(alpha.token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload({ assignedToEmail: 'ghost@nowhere.test' }));
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.code).toBe('ASSIGNED_USER_NOT_FOUND');
+    expect(await db.query.count()).toBe(0);
+
+    // An existing Travel CRM user in ANOTHER company is assignable: the
+    // owner email (never the credential's company) decides the company.
+    const betaOwner = await db.user.findFirstOrThrow({ where: { email: 'owner@beta.test' } });
+    const cross = await bearer(alpha.token)
       .post('/api/integrations/wacrm/leads')
       .send(payload({ assignedToEmail: 'owner@beta.test' }));
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe('ASSIGNED_USER_NOT_FOUND');
-    expect(await db.query.count()).toBe(0);
+    expect(cross.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: cross.body.data.leadId } });
+    expect(row.assignedToId).toBe(betaOwner.id);
+    expect(row.companyId).toBe(betaOwner.companyId);
   });
 });
 
@@ -1338,7 +1363,7 @@ describe('WACRM automatic first-use association by owner email', () => {
     expect((await bearer(presented).get('/api/integrations/wacrm/lookups')).status).not.toBe(401);
   });
 
-  it('existing credential is reused; email is ignored once the hash matches', async () => {
+  it('existing credential is reused; the owner email determines the lead tenant', async () => {
     const { admin, user } = await setupCompany(
       'owner@alpha.test',
       'Alpha Travel',
@@ -1347,17 +1372,23 @@ describe('WACRM automatic first-use association by owner email', () => {
     const beta = await setupCompany('owner@beta.test', 'Beta Travel', 'sales@beta.test');
     const presented = await mintToken(admin, 'owner@alpha.test');
 
-    // Known secret but another company's owner email: the hash fast path
-    // authenticates as the credential's own company (no 401), while lead
-    // validation still fails closed on the foreign assignee (400) — the
-    // email never moves authentication across company boundaries.
+    // Known secret bound to Alpha's credential: authentication rides the
+    // hash fast path (no 401, no re-provisioning). The lead's tenant and
+    // assignee follow the OWNER EMAIL — Beta's owner email creates the
+    // lead in Beta's company, assigned to Beta's owner. The credential
+    // company is never used to pick the tenant.
     const lead = await bearer(presented)
       .post('/api/integrations/wacrm/leads')
       .send(payload({ assignedToEmail: 'owner@beta.test' }));
-    expect(lead.status).toBe(400);
+    expect(lead.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: lead.body.data.leadId } });
+    expect(row.companyId).toBe(beta.user.companyId);
+    expect(row.assignedToId).toBe(beta.user.id);
+    // Credential binding is untouched: Alpha keeps its one credential and
+    // Beta gains none.
     expect(await liveCredentials(user.companyId)).toHaveLength(1);
     expect(await liveCredentials(beta.user.companyId)).toHaveLength(0);
-    expect(await db.query.count()).toBe(0);
+    expect(await db.query.count()).toBe(1);
   });
 
   it('unknown, inactive, or deleted owner fails closed with no row', async () => {

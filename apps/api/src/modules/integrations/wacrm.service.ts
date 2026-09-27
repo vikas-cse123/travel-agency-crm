@@ -3,6 +3,7 @@ import type { AuthContext } from '../../middleware/authenticate.js';
 import { prisma } from '../../config/prisma.js';
 import { AppError, NotFoundError } from '../../utils/errors.js';
 import { normalizeEmail } from '../../utils/normalize.js';
+import { createTenantContext } from '../../db/tenant.js';
 import {
   getVisible,
   queriesService,
@@ -12,21 +13,26 @@ import {
 /**
  * WACRM server-to-server lead creation.
  *
- * Flow per request (idempotency key = company + wacrmAccountId +
+ * The Travel CRM assignee and the lead's company context are determined
+ * SOLELY by the WACRM workspace owner's email (`assignedToEmail`,
+ * resolved server-side by WACRM): the matching Travel CRM user and that
+ * user's own company — never the integration credential's company, never
+ * the WACRM lead's "Assigned To".
+ *
+ * Flow per request (idempotency key = owner company + wacrmAccountId +
  * flowRunId):
- *   1. look up the link row — a stored queryId returns the existing
- *      lead without creating (deleted leads fall through to
- *      re-create and re-link);
- *   2. otherwise claim a `pending` row first (unique constraint
+ *   1. resolve `assignedToEmail` (the WACRM workspace owner) to an
+ *      ACTIVE, non-deleted Travel CRM user by normalized email across
+ *      the whole database — no match fails closed with
+ *      ASSIGNED_USER_NOT_FOUND (no fallback, no auto-created user);
+ *   2. look up the link row keyed by the OWNER's company — a stored
+ *      queryId returns the existing lead without creating;
+ *   3. otherwise claim a `pending` row first (unique constraint
  *      serializes concurrent retries; a live `pending` row from a
  *      crashed attempt is a 409, never a silent duplicate);
- *   3. resolve `assignedToEmail` (ALWAYS the WACRM workspace owner's
- *      email) to an ACTIVE user in the workspace's own company —
- *      unknown/inactive/cross-company emails fail closed with
- *      ASSIGNED_USER_NOT_FOUND, never a silent fallback;
  *   4. delegate to `queriesService.create` (same validation,
  *      transaction, histories, and audit as the UI path) in the
- *      workspace's company, assigned to that owner user;
+ *      owner's company, assigned to that owner user;
  *   5. mark the link `created` with the real query id (failures
  *      mark it `failed` with the reason and rethrow).
  *
@@ -170,13 +176,47 @@ export const wacrmService = {
     input: WacrmLeadPayload,
     context: RequestContext,
   ): Promise<{ leadId: string; alreadyExists: boolean }> {
-    const { companyId } = auth;
     const { wacrmAccountId, flowRunId } = input;
+
+    // --- Owner-email assignment: the ONLY assignee/company mapping. ---
+    // `input.assignedToEmail` is ALWAYS the WACRM workspace owner's email
+    // (resolved server-side by WACRM from the authenticated account —
+    // never the WACRM lead's "Assigned To", never an assignedUserId
+    // override). The Travel CRM assignee and the lead's company context
+    // are determined EXCLUSIVELY by that email: find the Travel CRM user
+    // with the normalized (trim + lowercase) email across the whole
+    // database, require ACTIVE + non-deleted, and use THAT user's own
+    // company as the company the lead is created in and THAT user as the
+    // assignee. The integration credential's companyId is NEVER used to
+    // pick the assignee or the tenant. Any miss fails closed with
+    // ASSIGNED_USER_NOT_FOUND — no silent fallback, no auto-created user.
+    const ownerEmail = normalizeEmail(input.assignedToEmail);
+    const ownerUser = await prisma.user.findFirst({
+      where: {
+        normalizedEmail: ownerEmail,
+        status: 'ACTIVE',
+        deletedAt: null,
+      },
+      select: { id: true, companyId: true },
+    });
+    if (!ownerUser) {
+      throw new AssigneeNotFoundError(input.assignedToEmail.trim());
+    }
+    const companyId = ownerUser.companyId;
+    // Lead creation runs in the OWNER's company as the owner user (the
+    // credential only authenticates the WACRM integration; it never
+    // determines the tenant or the actor for the created lead).
+    const ownerAuth: AuthContext = {
+      ...auth,
+      userId: ownerUser.id,
+      companyId,
+      tenant: createTenantContext(companyId),
+    };
 
     const existing = await findLink(companyId, wacrmAccountId, flowRunId);
     if (existing?.queryId) {
       try {
-        await getVisible(auth, existing.queryId);
+        await getVisible(ownerAuth, existing.queryId);
         return { leadId: existing.queryId, alreadyExists: true };
       } catch (err) {
         // Linked lead is gone (deleted) — fall through and re-link.
@@ -225,33 +265,6 @@ export const wacrmService = {
     }
     const linkId = link.id;
 
-    // --- Travel CRM assignment: the WACRM workspace owner. ---
-    // `input.assignedToEmail` is ALWAYS the WACRM workspace owner's
-    // email (resolved server-side by WACRM from the authenticated
-    // account — never the WACRM lead's "Assigned To" value, never
-    // client-supplied). Assignment is decided here, exclusively:
-    // find the Travel CRM user with that email, verify the user belongs
-    // to the current workspace's company (auth.companyId — the company
-    // the integration credential is bound to), and assign the lead to
-    // that user. Any miss (no such user, inactive/deleted, or a user
-    // belonging to a different company) fails closed with
-    // ASSIGNED_USER_NOT_FOUND — the lead is never silently assigned to
-    // an arbitrary user, and no new user is ever auto-created.
-    const ownerEmail = normalizeEmail(input.assignedToEmail);
-    const ownerUser = await prisma.user.findFirst({
-      where: {
-        companyId,
-        normalizedEmail: ownerEmail,
-        status: 'ACTIVE',
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
-    if (!ownerUser) {
-      await markLinkFailed(linkId, `ASSIGNED_USER_NOT_FOUND:${ownerEmail}`);
-      throw new AssigneeNotFoundError(input.assignedToEmail.trim());
-    }
-
     try {
       // Re-parse through the canonical lead schema so UI-only
       // defaults (priority, currency, traveller counts) apply
@@ -285,7 +298,7 @@ export const wacrmService = {
           sequence: row.sequence ?? i + 1,
         })),
       });
-      const created = await queriesService.create(auth, queryInput, context);
+      const created = await queriesService.create(ownerAuth, queryInput, context);
       await prisma.wacrmLeadLink.update({
         where: { id: linkId },
         data: { status: 'created', queryId: created.id, error: null },
