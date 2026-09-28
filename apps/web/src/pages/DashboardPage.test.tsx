@@ -43,7 +43,6 @@ const analytics = (overrides: Record<string, unknown> = {}) => ({
     totalQuotations: 20,
     acceptedQuotations: 12,
     rejectedQuotations: 8,
-    totalQuotedValue: '500000.00',
     quotationAcceptanceRate: 60,
   },
   bookings: {

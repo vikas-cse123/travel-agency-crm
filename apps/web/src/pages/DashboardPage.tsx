@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowRight,
-  Banknote,
   CalendarClock,
   CheckCircle,
   CreditCard,
@@ -496,18 +495,12 @@ export function DashboardPage() {
           </section>
 
           {data?.quotations && (
-            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <section className="grid gap-3 sm:grid-cols-2">
               <KpiCard
                 label="Quotations"
                 value={data.quotations.totalQuotations}
                 icon={FileText}
                 className="bg-blue-100 text-blue-800"
-              />
-              <KpiCard
-                label="Total Quoted Value"
-                value={money(data.quotations.totalQuotedValue)}
-                icon={Banknote}
-                className="bg-violet-100 text-violet-800"
               />
               <KpiCard
                 label="Acceptance Rate"

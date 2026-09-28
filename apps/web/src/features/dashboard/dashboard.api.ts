@@ -61,7 +61,6 @@ export interface DashboardAnalytics {
     totalQuotations: number;
     acceptedQuotations: number;
     rejectedQuotations: number;
-    totalQuotedValue: string;
     quotationAcceptanceRate: number;
   };
   bookings?: {
