@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  Baby,
   Ban,
   Building2,
   CalendarDays,
@@ -256,6 +257,15 @@ const buildPolicySections = (version: QuotationVersion): PolicySection[] => {
       iconClass: 'text-red-600',
       html: version.exclusionsHtml,
       rows: version.exclusions ?? [],
+      visible: false,
+    },
+    {
+      key: 'child',
+      label: 'Child Policy',
+      Icon: Baby,
+      iconClass: 'text-emerald-600',
+      html: version.childPolicy,
+      rows: [],
       visible: false,
     },
     {

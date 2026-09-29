@@ -19,10 +19,10 @@ import type { MastersRequestContext } from '../../../masters/masters.service.js'
 /**
  * Destination Master Excel import.
  *
- * The user-facing template has exactly nine columns — Country (a human-readable
+ * The user-facing template has exactly ten columns — Country (a human-readable
  * country name), Destination Name, Destination Type, Cities, Inclusions,
- * Exclusions, Payment Policies, Cancellation Policies and Booking Terms &
- * Conditions. Destination images are OUT OF SCOPE for Excel import; the manual
+ * Exclusions, Payment Policies, Cancellation Policies, Booking Terms &
+ * Conditions and Child Policy. Destination images are OUT OF SCOPE for Excel import; the manual
  * Destination image flow is untouched.
  *
  * Destination Type is optional and defaults to DOMESTIC. Cities are entered as
@@ -102,6 +102,14 @@ export const destinationColumns: ImportColumnDefinition[] = [
     example: 'Standard booking terms',
     description: 'Optional. Free text.',
   },
+  {
+    field: 'childPolicy',
+    header: 'Child Policy',
+    aliases: ['child policy', 'child policies', 'childpolicy'],
+    required: false,
+    example: 'Children below 5 stay free',
+    description: 'Optional. Free text.',
+  },
 ];
 
 const destinationImportSchema = z.object({
@@ -116,6 +124,7 @@ const destinationImportSchema = z.object({
   paymentPolicies: z.string().trim().max(50_000).nullable().optional(),
   cancellationPolicies: z.string().trim().max(50_000).nullable().optional(),
   bookingTerms: z.string().trim().max(50_000).nullable().optional(),
+  childPolicy: z.string().trim().max(50_000).nullable().optional(),
 });
 
 const blankToNull = (v: unknown) => {
@@ -258,6 +267,7 @@ export const destinationAdapter = {
         paymentPolicies: sanitizeRichText(blankToNull(input.paymentPolicies)),
         cancellationPolicies: sanitizeRichText(blankToNull(input.cancellationPolicies)),
         bookingTerms: sanitizeRichText(blankToNull(input.bookingTerms)),
+        childPolicy: sanitizeRichText(blankToNull(input.childPolicy)),
         cities: {
           create: cityIds.map((cityId, sequence) => ({ companyId: auth.companyId, cityId, sequence })),
         },

@@ -13345,6 +13345,7 @@ describe.skip('Phase 14 master selectors', () => {
     paymentPolicies: null,
     cancellationPolicies: null,
     bookingTerms: null,
+    childPolicy: null,
     ...policies,
     cities: [],
     _count: { cities: 0 },
@@ -13353,13 +13354,14 @@ describe.skip('Phase 14 master selectors', () => {
     createdBy: person,
   });
 
-  it('prefills the five policy editors from the destination master', async () => {
+  it('prefills the six policy editors from the destination master', async () => {
     const sg = destinationFixture('Singapore', {
       inclusions: '<p>Hotel, flights, transfers</p>',
       exclusions: '<p>Personal expenses</p>',
       paymentPolicies: '<p>50% advance</p>',
       cancellationPolicies: '<p>Free up to 7 days</p>',
       bookingTerms: '<p>Valid for the dates shown</p>',
+      childPolicy: '<p>Children below 5 stay free</p>',
     });
     const quotation = stayQuotation([{ destination: 'Singapore', nights: 2 }]);
     vi.stubGlobal('fetch', masterFetch(quotation, { '/masters/destinations': page([sg]) }));
@@ -13375,6 +13377,7 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getByLabelText('Booking Terms & Conditions')).toHaveTextContent(
       'Valid for the dates shown',
     );
+    expect(screen.getByLabelText('Child Policy')).toHaveTextContent('Children below 5 stay free');
   });
 
   it('combines multiple destination policies in order and deduplicates identical content', async () => {

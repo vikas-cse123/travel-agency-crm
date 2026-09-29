@@ -111,6 +111,7 @@ export interface Destination extends MasterVisibilityMeta {
   paymentPolicies: string | null;
   cancellationPolicies: string | null;
   bookingTerms: string | null;
+  childPolicy: string | null;
   imageStorageProvider: string | null;
   imageFileName: string | null;
   imageMimeType: string | null;

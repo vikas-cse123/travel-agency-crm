@@ -1242,6 +1242,7 @@ export const quotationVersionInputSchema = z
     paymentPolicies: optionalText(8000),
     cancellationPolicies: optionalText(8000),
     bookingTerms: optionalText(8000),
+    childPolicy: optionalText(8000),
     // Reference "Visa" — single dedicated section.
     includeVisa: z.boolean().optional(),
     visaSectionTitle: optionalText(200),

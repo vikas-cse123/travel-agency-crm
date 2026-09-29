@@ -282,6 +282,7 @@ function policyData(input: DestinationInput | DestinationUpdateInput) {
       ? { cancellationPolicies: sanitizeRichText(input.cancellationPolicies) }
       : {}),
     ...('bookingTerms' in input ? { bookingTerms: sanitizeRichText(input.bookingTerms) } : {}),
+    ...('childPolicy' in input ? { childPolicy: sanitizeRichText(input.childPolicy) } : {}),
   };
 }
 

@@ -436,6 +436,7 @@ const defaults: QuotationVersionInput = {
   paymentPolicies: null,
   cancellationPolicies: null,
   bookingTerms: null,
+  childPolicy: null,
   includeVisa: true,
   visaSectionTitle: null,
   visaAmount: 0,
@@ -502,6 +503,7 @@ export function normalizeQuotationVersionForBuilder(version: QuotationVersion): 
     cancellationPolicies:
       typeof raw.cancellationPolicies === 'string' ? raw.cancellationPolicies : null,
     bookingTerms: typeof raw.bookingTerms === 'string' ? raw.bookingTerms : null,
+    childPolicy: typeof raw.childPolicy === 'string' ? raw.childPolicy : null,
     flightDetails: flight
       ? ({
           ...flight,
@@ -1791,10 +1793,11 @@ const DESTINATION_POLICY_MAP = [
   ['paymentPolicies', 'paymentPolicies'],
   ['cancellationPolicies', 'cancellationPolicies'],
   ['bookingTerms', 'bookingTerms'],
+  ['childPolicy', 'childPolicy'],
 ] as const;
 
 type PolicyKey =
-  'inclusionsHtml' | 'exclusionsHtml' | 'paymentPolicies' | 'cancellationPolicies' | 'bookingTerms';
+  'inclusionsHtml' | 'exclusionsHtml' | 'paymentPolicies' | 'cancellationPolicies' | 'bookingTerms' | 'childPolicy';
 
 /** True when rich-text HTML contains visible content (editor-empty markup excluded). */
 export const hasPolicyHtml = (html?: string | null): boolean =>
@@ -1808,7 +1811,7 @@ export const policyValue = (
 ): string | null => (hasPolicyHtml(versionValue) ? (versionValue ?? null) : (masterValue ?? null));
 
 /** Build quotation-policy prefills from the destination masters in lead order. */
-const buildDestinationPolicyPrefill = (
+export const buildDestinationPolicyPrefill = (
   destinations: Destination[],
   destinationNames: string[],
 ): Partial<Record<PolicyKey, string>> => {
@@ -2842,6 +2845,7 @@ export function QuotationBuilderPage() {
         destinationPolicyPrefill.cancellationPolicies,
       ),
       bookingTerms: policyValue(version.bookingTerms, destinationPolicyPrefill.bookingTerms),
+      childPolicy: policyValue(version.childPolicy, destinationPolicyPrefill.childPolicy),
       includeVisa: version.includeVisa ?? true,
       visaSectionTitle: version.visaSectionTitle ?? null,
       visaAmount: Number(version.visaAmount ?? 0),
@@ -6641,6 +6645,17 @@ export function QuotationBuilderPage() {
                   <p className="mt-1 text-xs text-slate-500">{hint}</p>
                 </div>
               ))}
+            </div>
+            <div>
+              <h3 className="mb-1 font-semibold text-slate-800">🧒 Child Policy</h3>
+              <RichTextEditor
+                ariaLabel="Child Policy"
+                value={form.watch('childPolicy') ?? ''}
+                onChange={(html) => form.setValue('childPolicy', html, { shouldDirty: true })}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Child pricing, age slabs, and stay conditions.
+              </p>
             </div>
             <div>
               <h3 className="mb-1 font-semibold text-slate-800">

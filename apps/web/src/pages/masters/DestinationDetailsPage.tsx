@@ -11,6 +11,7 @@ import { formatMasterDate, LoadingCard, MasterHeader, SafeRichText, StatusBadge 
 const tabs = [
   ['inclusions', 'Inclusions'],
   ['exclusions', 'Exclusions'],
+  ['childPolicy', 'Child Policy'],
   ['paymentPolicies', 'Payment Policies'],
   ['cancellationPolicies', 'Cancellation Policies'],
   ['bookingTerms', 'Terms & Conditions'],

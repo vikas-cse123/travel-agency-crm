@@ -423,6 +423,9 @@ export interface QuotationPdfInput {
     paymentPolicies: string | null;
     cancellationPolicies: string | null;
     bookingTerms: string | null;
+    // Optional for backward compatibility with callers/tests that build the
+    // PDF input without the newer Child Policy field.
+    childPolicy?: string | null;
     includeVisa: boolean;
     visaSectionTitle: string | null;
     visaAmount: unknown;
@@ -2750,6 +2753,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
           ? htmlToLines(v.exclusionsHtml)
           : v.exclusions.map((r) => `• ${r.content}`),
       ],
+      ['Child Policy', GREEN, htmlToLines(v.childPolicy)],
       ['Payment Policies', AMBER, htmlToLines(v.paymentPolicies)],
       ['Cancellation Policies', RED, htmlToLines(v.cancellationPolicies)],
       [

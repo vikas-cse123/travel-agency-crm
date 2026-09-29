@@ -1079,6 +1079,7 @@ describe('excel import', () => {
       'Payment Policies',
       'Cancellation Policies',
       'Booking Terms & Conditions',
+      'Child Policy',
     ];
 
     async function makeCities(email: string, companyId: string) {
@@ -1094,7 +1095,7 @@ describe('excel import', () => {
       await createCity('New York', 'US', 'JFK');
     }
 
-    it('generates a template with exactly the nine destination columns and no image/internal columns', async () => {
+    it('generates a template with exactly the ten destination columns and no image/internal columns', async () => {
       const { generateTemplate } = await import('../src/modules/masters/excel-import/template.service.js');
       const { destinationAdapter } = await import('../src/modules/masters/excel-import/adapters/destination.adapter.js');
       expect(destinationAdapter.columns.map((c) => c.header)).toEqual(DEST_HEADERS);

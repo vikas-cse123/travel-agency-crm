@@ -270,6 +270,7 @@ export interface QuotationVersion {
   paymentPolicies: string | null;
   cancellationPolicies: string | null;
   bookingTerms: string | null;
+  childPolicy: string | null;
   // Reference "Visa" — single dedicated section.
   includeVisa: boolean;
   visaSectionTitle: string | null;

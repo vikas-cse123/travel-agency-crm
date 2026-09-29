@@ -45,6 +45,7 @@ const schema = z.object({
   paymentPolicies: z.string().max(50_000),
   cancellationPolicies: z.string().max(50_000),
   bookingTerms: z.string().max(50_000),
+  childPolicy: z.string().max(50_000),
   status: z.enum(['ACTIVE', 'INACTIVE', 'ARCHIVED']),
 });
 type Values = z.infer<typeof schema>;
@@ -58,6 +59,7 @@ const initial: Values = {
   paymentPolicies: '',
   cancellationPolicies: '',
   bookingTerms: '',
+  childPolicy: '',
   status: 'ACTIVE',
 };
 
@@ -111,6 +113,7 @@ export function DestinationFormPage() {
       paymentPolicies: destination.data.paymentPolicies ?? '',
       cancellationPolicies: destination.data.cancellationPolicies ?? '',
       bookingTerms: destination.data.bookingTerms ?? '',
+      childPolicy: destination.data.childPolicy ?? '',
       status: destination.data.status as Values['status'],
     });
     hydratedIdRef.current = destinationId ?? null;
@@ -154,6 +157,7 @@ export function DestinationFormPage() {
       paymentPolicies: values.paymentPolicies || null,
       cancellationPolicies: values.cancellationPolicies || null,
       bookingTerms: values.bookingTerms || null,
+      childPolicy: values.childPolicy || null,
     };
     try {
       const saved = destinationId
@@ -377,6 +381,7 @@ export function DestinationFormPage() {
                 [
                   'inclusions',
                   'exclusions',
+                  'childPolicy',
                   'paymentPolicies',
                   'cancellationPolicies',
                   'bookingTerms',
@@ -395,6 +400,7 @@ export function DestinationFormPage() {
                           paymentPolicies: 'Payment Policies',
                           cancellationPolicies: 'Cancellation Policies',
                           bookingTerms: 'Booking Terms & Conditions',
+                          childPolicy: 'Child Policy',
                         }[name]
                       }
                       value={field.value}

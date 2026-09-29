@@ -1561,6 +1561,7 @@ model Destination {
   paymentPolicies       String?          @db.Text
   cancellationPolicies  String?          @db.Text
   bookingTerms          String?          @db.Text
+  childPolicy           String?          @db.Text
   status                MasterStatus     @default(ACTIVE)
   createdById           String           @db.Uuid
   createdAt             DateTime         @default(now())
@@ -3636,6 +3637,7 @@ model QuotationVersion {
   paymentPolicies              String?                @db.VarChar(8000)
   cancellationPolicies         String?                @db.VarChar(8000)
   bookingTerms                 String?                @db.VarChar(8000)
+  childPolicy                  String?                @db.VarChar(8000)
   // Reference "Visa" — single dedicated section.
   includeVisa                  Boolean                @default(true)
   visaSectionTitle             String?                @db.VarChar(200)

@@ -1107,6 +1107,7 @@ function versionCreateData(
       paymentPolicies: normalized.paymentPolicies ?? null,
       cancellationPolicies: normalized.cancellationPolicies ?? null,
       bookingTerms: normalized.bookingTerms ?? null,
+      childPolicy: normalized.childPolicy ?? null,
       // Reference "Visa" — single dedicated section.
       includeVisa: normalized.includeVisa ?? true,
       visaSectionTitle: normalized.visaSectionTitle ?? null,
@@ -1222,6 +1223,7 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
     paymentPolicies: source.paymentPolicies,
     cancellationPolicies: source.cancellationPolicies,
     bookingTerms: source.bookingTerms,
+    childPolicy: source.childPolicy,
     includeVisa: source.includeVisa,
     visaSectionTitle: source.visaSectionTitle,
     visaAmount: source.visaAmount.toNumber(),

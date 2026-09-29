@@ -39,6 +39,7 @@ const destinationBaseSchema = z.object({
   paymentPolicies: optionalRichText,
   cancellationPolicies: optionalRichText,
   bookingTerms: optionalRichText,
+  childPolicy: optionalRichText,
   status: z.enum(MASTER_STATUSES).default('ACTIVE'),
 });
 

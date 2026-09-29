@@ -2521,6 +2521,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
     const policies = [
       ['INCLUSIONS', GREEN, input.version.inclusionsHtml, input.version.inclusions],
       ['EXCLUSIONS', RED, input.version.exclusionsHtml, input.version.exclusions],
+      ['CHILD POLICY', GREEN, input.version.childPolicy, []],
       ['PAYMENT POLICIES', NAVY, input.version.paymentPolicies, []],
       ['CANCELLATION POLICIES', NAVY, input.version.cancellationPolicies, []],
       ['BOOKING TERMS & CONDITIONS', NAVY, input.version.bookingTerms, input.version.terms],
