@@ -158,6 +158,15 @@ export function resolveItineraryDayImage<T>(
 
 export const SERVICE_DESCRIPTION_MAX_LENGTH = 20_000;
 
+/**
+ * Quotation "Booking Terms & Conditions" — rich-text/HTML block edited in the
+ * Quotation Builder. Detailed travel booking terms legitimately exceed the old
+ * 8,000-character cap (HTML markup counts toward the stored length), so the
+ * limit is 20,000 characters. The DB column is TEXT (no DB-level cap); this
+ * app-level limit is enforced identically by the frontend form and the API.
+ */
+export const QUOTATION_BOOKING_TERMS_MAX_LENGTH = 20_000;
+
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
 const arrayFromNullish = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => (value === null || value === undefined ? [] : value), z.array(schema));
@@ -1241,7 +1250,7 @@ export const quotationVersionInputSchema = z
     exclusionsHtml: optionalText(50_000),
     paymentPolicies: optionalText(8000),
     cancellationPolicies: optionalText(8000),
-    bookingTerms: optionalText(8000),
+    bookingTerms: optionalText(QUOTATION_BOOKING_TERMS_MAX_LENGTH),
     childPolicy: optionalText(8000),
     // Reference "Visa" — single dedicated section.
     includeVisa: z.boolean().optional(),

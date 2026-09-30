@@ -3636,7 +3636,10 @@ model QuotationVersion {
   exclusionsHtml               String?                @db.Text
   paymentPolicies              String?                @db.VarChar(8000)
   cancellationPolicies         String?                @db.VarChar(8000)
-  bookingTerms                 String?                @db.VarChar(8000)
+  // Booking Terms & Conditions — TEXT (not VARCHAR) because detailed travel
+  // booking terms legitimately exceed 8000 chars with HTML markup. The 20,000
+  // app-level limit lives in QUOTATION_BOOKING_TERMS_MAX_LENGTH (shared).
+  bookingTerms                 String?                @db.Text
   childPolicy                  String?                @db.VarChar(8000)
   // Reference "Visa" — single dedicated section.
   includeVisa                  Boolean                @default(true)

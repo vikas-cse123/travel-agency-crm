@@ -285,7 +285,9 @@ export const settingsPreferencesSchema = z.object({
 
 export const settingsDefaultTermsSchema = z.object({
   quotationTerms: optionalTrimmed(8000),
-  bookingTerms: optionalTrimmed(8000),
+  // Default Booking Terms feed the Quotation Builder's bookingTerms, so this
+  // must match QUOTATION_BOOKING_TERMS_MAX_LENGTH (20,000) in quotations.ts.
+  bookingTerms: optionalTrimmed(20_000),
 });
 
 export const companyBankAccountSchema = z

@@ -34,6 +34,7 @@ import {
   hotelStayNights,
   labelForLookup,
   normalizePricingMode,
+  QUOTATION_BOOKING_TERMS_MAX_LENGTH,
   quotationVersionInputSchema,
   quotationSnapshotImageIdentity,
   resolveCruiseRoomLines,
@@ -6658,9 +6659,34 @@ export function QuotationBuilderPage() {
               </p>
             </div>
             <div>
-              <h3 className="mb-1 font-semibold text-slate-800">
-                📄 Booking Terms &amp; Conditions
-              </h3>
+              <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="font-semibold text-slate-800">📄 Booking Terms &amp; Conditions</h3>
+                {(() => {
+                  const termsValue = form.watch('bookingTerms') ?? '';
+                  const termsLength = termsValue.length;
+                  const overLimit = termsLength > QUOTATION_BOOKING_TERMS_MAX_LENGTH;
+                  const nearLimit =
+                    !overLimit &&
+                    termsLength >= Math.floor(QUOTATION_BOOKING_TERMS_MAX_LENGTH * 0.9);
+                  return (
+                    <span
+                      aria-live="polite"
+                      className={cn(
+                        'text-xs tabular-nums',
+                        overLimit
+                          ? 'font-semibold text-red-600'
+                          : nearLimit
+                            ? 'font-semibold text-amber-600'
+                            : 'text-slate-500',
+                      )}
+                    >
+                      {termsLength.toLocaleString('en-IN')} /{' '}
+                      {QUOTATION_BOOKING_TERMS_MAX_LENGTH.toLocaleString('en-IN')} characters
+                      {overLimit ? ' — over the limit' : ''}
+                    </span>
+                  );
+                })()}
+              </div>
               <RichTextEditor
                 ariaLabel="Booking Terms & Conditions"
                 value={form.watch('bookingTerms') ?? ''}
@@ -6669,6 +6695,11 @@ export function QuotationBuilderPage() {
               <p className="mt-1 text-xs text-slate-500">
                 General terms, conditions, and important notes.
               </p>
+              {form.formState.errors.bookingTerms?.message ? (
+                <p className="mt-1 text-xs font-medium text-red-600">
+                  {form.formState.errors.bookingTerms.message as string}
+                </p>
+              ) : null}
             </div>
           </div>
         )}
