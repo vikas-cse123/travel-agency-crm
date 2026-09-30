@@ -1560,6 +1560,55 @@ export function shouldAutoPrefillHotels(savedHotelCount: number): boolean {
   return savedHotelCount === 0;
 }
 
+/**
+ * Candidate sightseeing masters for quotation prefill, in consumption order
+ * (sequence → createdAt → id).
+ *
+ * Destination-level matching comes first: masters whose destination name or
+ * country name contains the quotation's destination token. That covers the
+ * normal case (e.g. token "singapore" with masters under destination
+ * "Singapore").
+ *
+ * City-level fallback: the lead's itinerary destination can be a city (e.g.
+ * "Hanoi") while sightseeing masters are organized under the parent
+ * destination (e.g. "Vietnam"), so the destination-name filter can
+ * legitimately remove every row. When — and only when — destination matching
+ * yields zero masters, masters whose city exactly matches (normalized trim +
+ * lowercase) one of the itinerary/day cities are retained instead of
+ * prefilling empty activities. Matching stays exact (never substring, never
+ * reversed) so sightseeing from an unrelated destination can never be
+ * attached; with no city match the result is empty and the builder keeps its
+ * empty-activity placeholder.
+ */
+export function selectSightseeingPrefillMasters(
+  masters: Sightseeing[],
+  destinationToken: string | null | undefined,
+  fallbackCityKeys: string[],
+): Sightseeing[] {
+  const normalizedToken = (destinationToken ?? '').trim().toLowerCase();
+  const ordered = [...(masters ?? [])]
+    .filter((row) => row.status === 'ACTIVE')
+    .sort(
+      (a, b) =>
+        (a.sequence ?? 0) - (b.sequence ?? 0) ||
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.id.localeCompare(b.id),
+    );
+  const destinationMatched = !normalizedToken
+    ? ordered
+    : ordered.filter((row) =>
+        [row.destination?.name, row.destination?.countryName]
+          .map((value) => value?.toLowerCase())
+          .some((value) => Boolean(value && value.includes(normalizedToken))),
+      );
+  if (destinationMatched.length > 0) return destinationMatched;
+  const cityKeys = new Set(
+    (fallbackCityKeys ?? []).map((key) => key.trim().toLowerCase()).filter(Boolean),
+  );
+  if (cityKeys.size === 0) return [];
+  return ordered.filter((row) => cityKeys.has((row.city?.name ?? '').trim().toLowerCase()));
+}
+
 /** The best available active hotel for a city (first by name). */
 const matchBestCityHotel = (city: string, masters: DefaultHotelMaster[]) => {
   const c = city.trim().toLowerCase();
@@ -2580,20 +2629,19 @@ export function QuotationBuilderPage() {
       .split(/[•(→>,]/)[0]
       ?.trim()
       ?.toLowerCase();
-    const destinationMatch = (row: Sightseeing) => {
-      if (!destinationToken) return true;
-      return [row.destination?.name, row.destination?.countryName]
-        .map((value) => value?.toLowerCase())
-        .some((value) => Boolean(value && value.includes(destinationToken)));
-    };
-    const orderedMasters = (sightseeingMasters.data?.data ?? [])
-      .filter((row) => row.status === 'ACTIVE' && destinationMatch(row))
-      .sort(
-        (a, b) =>
-          (a.sequence ?? 0) - (b.sequence ?? 0) ||
-          a.createdAt.localeCompare(b.createdAt) ||
-          a.id.localeCompare(b.id),
-      );
+    // Itinerary/day cities for the city-level fallback inside
+    // selectSightseeingPrefillMasters (lead destination + computed day cities).
+    const fallbackCityKeys = Array.from(
+      new Set([
+        ...(quotation.data?.query?.itinerary ?? []).map((stay) => stay.destination ?? ''),
+        ...dayCities,
+      ]),
+    );
+    const orderedMasters = selectSightseeingPrefillMasters(
+      sightseeingMasters.data?.data ?? [],
+      destinationToken,
+      fallbackCityKeys,
+    );
 
     /** Detect a departure activity by normalized title. */
     const normTitle = (value: string | null | undefined) =>
