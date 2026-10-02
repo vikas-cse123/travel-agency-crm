@@ -2097,7 +2097,7 @@ export function PublicQuotationPage() {
             </>
           )}
           <div className="relative z-10 mx-auto w-full max-w-5xl px-5 text-left md:px-4">
-            <h1 className="text-[32px] font-extrabold leading-[1.1] text-[#FFDE21] sm:text-[40px] lg:text-[48px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
+            <h1 className="text-[32px] font-extrabold leading-[1.1] text-white sm:text-[40px] lg:text-[48px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
               {v.weblinkHeading?.trim() || heroDestination}
             </h1>
             {duration && (
@@ -2105,7 +2105,7 @@ export function PublicQuotationPage() {
                 {duration}
               </p>
             )}
-            <p className="mt-5 max-w-2xl text-[20px] font-bold leading-snug text-white sm:text-[24px] lg:text-[28px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
+            <p className="mt-2 max-w-2xl text-[16px] font-bold leading-snug text-white [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
               {packageHeading}
             </p>
             {heroIntroduction && (
