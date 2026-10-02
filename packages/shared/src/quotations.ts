@@ -89,21 +89,14 @@ export function stripItineraryDayPrefixes(value: string | null | undefined): str
   return title;
 }
 
-/** True when a title already carries a complete "Day N - ..." stored prefix. */
-function hasStoredDayDashPrefix(value: string): boolean {
-  return /^day\s+\d+\s*[-–—]\s*/i.test(value);
-}
-
 /**
  * Format an itinerary title for its current position.
  *
- * The canonical separator is " - " (never ": "). A stored title that already
- * carries a day prefix is rendered VERBATIM and never rebuilt — "Day 3 -
- * Hanoi" stays exactly that (no injected colon, no renumbering), so
- * legitimate colons inside it ("Day 3 - Hanoi: City Tour") are preserved too.
- * Prefix-less titles gain the "Day N - " prefix, and stale colon-style
- * prefixes are normalized to the dash form ("Day 4: Marina Bay" at position 5
- * becomes "Day 5 - Marina Bay").
+ * The stored title is rendered VERBATIM (whitespace-normalized): no separator
+ * is ever generated between title parts — no " - ", no ":", no "|", no dash
+ * normalization, no renumbering. "Night safari" stays "Night safari", and
+ * "Day 3 - Hanoi" stays exactly that. Only a missing/blank title falls back
+ * to the bare "Day N" label (which itself contains no separator).
  */
 export function formatItineraryDayTitle(
   dayNumber: number,
@@ -111,9 +104,7 @@ export function formatItineraryDayTitle(
 ): string {
   const raw = (value ?? '').replace(/\s+/g, ' ').trim();
   if (!raw) return `Day ${dayNumber}`;
-  if (hasStoredDayDashPrefix(raw)) return raw;
-  const title = stripItineraryDayPrefixes(raw);
-  return title ? `Day ${dayNumber} - ${title}` : `Day ${dayNumber}`;
+  return raw;
 }
 
 /** True when an activity name duplicates the day title (after stripping Day N: prefixes). */
@@ -1231,6 +1222,9 @@ export const quotationVersionInputSchema = z
     title: z.string().trim().min(2).max(200),
     introduction: optionalText(4000),
     weblinkHeading: optionalText(200),
+    // Custom package heading for the third line of the public weblink hero.
+    // Null/empty falls back to "Custom Package for [Lead]".
+    packageHeading: optionalText(200),
     destinationSummary: z.string().trim().min(2).max(500),
     travelStartDate: optionalDate,
     travelEndDate: optionalDate,

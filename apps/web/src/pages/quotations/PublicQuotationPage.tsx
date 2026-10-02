@@ -1926,6 +1926,19 @@ export function PublicQuotationPage() {
           )
         : 0;
   const duration = nights > 0 ? `${nights} Nights / ${nights + 1} Days` : null;
+  // Weblink hero, exactly three lines: Master Destination name, duration, then
+  // the saved package heading. Line 1 comes from the lead itinerary's Master
+  // Destination names (`destinations`) — never an itinerary city. Only legacy
+  // payloads without destinations fall back to the destination summary.
+  // Private names never reach this payload (destination names only).
+  const heroDestination =
+    q.destinations?.split(/[•→>,/]/)[0]?.trim() ||
+    q.destinationSummary.split(/[•→>,/]/)[0]?.trim() ||
+    q.destinationSummary;
+  // Legacy versions without a saved heading fall back to the lead-based
+  // default (no destination derived here).
+  const packageHeading =
+    v.packageHeading?.trim() || `Custom Package for ${q.customerName.trim()}`;
 
   const travelers = [
     q.adults && `${q.adults} Adult${q.adults > 1 ? 's' : ''}`,
@@ -2084,10 +2097,8 @@ export function PublicQuotationPage() {
             </>
           )}
           <div className="relative z-10 mx-auto w-full max-w-5xl px-5 text-left md:px-4">
-            <h1 className="text-[32px] font-extrabold leading-[1.1] text-white sm:text-[40px] lg:text-[48px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
-              {v.weblinkHeading?.trim() ||
-                q.destinationSummary.split(/[•→>,/]/)[0]?.trim() ||
-                q.destinationSummary}
+            <h1 className="text-[32px] font-extrabold leading-[1.1] text-[#FFDE21] sm:text-[40px] lg:text-[48px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
+              {v.weblinkHeading?.trim() || heroDestination}
             </h1>
             {duration && (
               <p className="mt-2 text-[15px] font-medium text-white/85 sm:text-[17px] lg:text-[19px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
@@ -2095,7 +2106,7 @@ export function PublicQuotationPage() {
               </p>
             )}
             <p className="mt-5 max-w-2xl text-[20px] font-bold leading-snug text-white sm:text-[24px] lg:text-[28px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
-              {v.title}
+              {packageHeading}
             </p>
             {heroIntroduction && (
               <p

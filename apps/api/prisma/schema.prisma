@@ -3601,6 +3601,10 @@ model QuotationVersion {
   title                        String                 @db.VarChar(200)
   introduction                 String?                @db.VarChar(4000)
   weblinkHeading               String?                @db.VarChar(200)
+  /// Custom package heading for the third line of the public weblink hero
+  /// (destination / duration / package heading). Null for legacy versions,
+  /// which fall back to "Custom Package for [Lead]".
+  packageHeading               String?                @db.VarChar(200)
   destinationSummary           String                 @db.VarChar(500)
   travelStartDate              DateTime?              @db.Date
   travelEndDate                DateTime?              @db.Date

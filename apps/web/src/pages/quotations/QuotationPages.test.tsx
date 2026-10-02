@@ -1714,7 +1714,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    expect(await screen.findByText('Goa proposal')).toBeInTheDocument();
+    expect(await screen.findByText('Custom Package for Aarav Mehta')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Your Hotels' })).toBeInTheDocument();
     expect(screen.getByText('Hotel welcome note.').closest('article')).not.toBeNull();
     // Hotel image uses the dynamic presentation URL in a landscape cover wrapper.
@@ -1839,7 +1839,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     // The first ordered image is shown initially; only one image at a time.
     expect(screen.getByAltText('Gallery 1')).toHaveAttribute(
@@ -2195,7 +2195,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     expect(screen.getByAltText('Pool view')).toHaveAttribute('src', 'https://cdn.example/pool.jpg');
     expect(screen.queryByRole('button', { name: 'Next hotel image' })).not.toBeInTheDocument();
@@ -2302,7 +2302,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     const firstImage = screen.getByAltText('Room view');
     expect(firstImage).toHaveAttribute('src', 'https://cdn.example/room.jpg');
@@ -2392,7 +2392,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     // The excluded Hotel section is completely absent.
     expect(screen.queryByRole('heading', { name: /Your Hotels|Accommodation Details/ })).toBeNull();
     expect(screen.queryByText('Coastal Bay Resort')).not.toBeInTheDocument();
@@ -2403,7 +2403,7 @@ describe('Phase 8 quotation pages', () => {
     }
   });
 
-  it('shows the Master destination (Malaysia) in Destinations while the hero stays the city', async () => {
+  it('shows the Master destination (Malaysia) in Destinations with the weblink heading override', async () => {
     const publicData = {
       company: {
         name: 'Alpha Travel',
@@ -2484,14 +2484,15 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    // Hero heading remains the city.
+    // Hero heading keeps the explicit weblink override.
     expect(await screen.findByRole('heading', { name: 'Kuala Lumpur' })).toBeInTheDocument();
     // The Destinations summary card shows the Master destination (Malaysia).
     const dest = screen.getByText('Destinations');
     expect(dest.closest('div')?.textContent).toContain('Malaysia');
     expect(dest.closest('div')?.textContent).not.toContain('Kuala Lumpur');
-    // Package title keeps the city.
-    expect(screen.getByText('Kuala Lumpur Package for Rajesh Kumar')).toBeInTheDocument();
+    // Package heading falls back to the lead-based default, never the title.
+    expect(screen.getByText('Custom Package for Rajesh Kumar')).toBeInTheDocument();
+    expect(screen.queryByText('Kuala Lumpur Package for Rajesh Kumar')).not.toBeInTheDocument();
   });
 
   it('deduplicates destination names in the Destinations summary', async () => {
@@ -2675,7 +2676,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     // 1. Final package price is still shown.
     expect(screen.getAllByText('Total Package Price').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/₹10,000/).length).toBeGreaterThan(0);
@@ -2792,7 +2793,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Grand Escape');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Duration comes from all destination rows (11 nights), not the two hotels (6 nights).
     expect(screen.getAllByText('11 Nights / 12 Days').length).toBeGreaterThan(0);
@@ -2869,7 +2870,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Singapore Package for Vikas Singh');
+    await screen.findByText('Custom Package for Vikas Singh');
 
     // The stock "prepared for" sentence is fully gone from the hero.
     expect(
@@ -3062,7 +3063,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Bali Package for Riya Kapoor');
+    await screen.findByText('Custom Package for Riya Kapoor');
 
     // The destination image itself covers the complete width of the hero.
     const hero = screen.getByRole('banner');
@@ -3076,10 +3077,10 @@ describe('Phase 8 quotation pages', () => {
     expect(heroImage).toHaveAttribute('src', 'https://storage.example.test/bali-hero.jpg');
     expect(heroImage).toHaveClass('object-cover');
 
-    // Hero values are preserved: destination heading, duration, package title.
+    // Hero values are preserved: destination heading, duration, package heading.
     expect(screen.getByRole('heading', { name: 'Bali' })).toBeInTheDocument();
     expect(screen.getAllByText('4 Nights / 5 Days').length).toBeGreaterThan(0);
-    expect(screen.getByText('Bali Package for Riya Kapoor')).toBeInTheDocument();
+    expect(screen.getByText('Custom Package for Riya Kapoor')).toBeInTheDocument();
 
     // The hero text block is left-aligned in the page content container, never
     // horizontally centred.
@@ -3092,11 +3093,11 @@ describe('Phase 8 quotation pages', () => {
     expect(destination.className).toContain('font-extrabold');
     expect(destination.className).toContain('text-[32px]');
     expect(destination.className).toContain('lg:text-[48px]');
-    const packageTitle = screen.getByText('Bali Package for Riya Kapoor');
+    const packageTitle = screen.getByText('Custom Package for Riya Kapoor');
     expect(packageTitle.className).toContain('font-bold');
     expect(packageTitle.className).toContain('lg:text-[28px]');
-    // The stored title is not uppercased.
-    expect(packageTitle.textContent).toBe('Bali Package for Riya Kapoor');
+    // The package heading is not uppercased.
+    expect(packageTitle.textContent).toBe('Custom Package for Riya Kapoor');
 
     // Summary and price cards still sit below the hero.
     expect(screen.getAllByText('Total Package Price').length).toBeGreaterThan(0);
@@ -3151,7 +3152,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Bali Package for Riya Kapoor');
+    await screen.findByText('Custom Package for Riya Kapoor');
 
     // 1. The hero section renders before the information/price card wrapper.
     const header = screen.getByRole('banner');
@@ -3371,7 +3372,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Grand Escape');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     const heading = screen.getByRole('heading', { name: 'Services Include' });
     const section = heading.closest('section') as HTMLElement;
@@ -3555,7 +3556,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('No Duplicate Block');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     // The duplicate block is gone entirely.
     expect(
@@ -3647,7 +3648,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Legacy Generic Services');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // No "Services & Experiences" block, and no bare duplicate value rows for
     // values that only the old block ever displayed (no dedicated section).
@@ -3775,7 +3776,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Sightseeing Trip');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const section = screen
       .getByRole('heading', { name: 'Services Include' })
@@ -3860,7 +3861,7 @@ describe('Phase 8 quotation pages', () => {
         </Routes>,
         { route: '/q/public-token-value-with-at-least-32-characters' },
       );
-      await screen.findByText('No Sightseeing');
+      await screen.findByText('Custom Package for Mira Shah');
       const section = screen
         .getByRole('heading', { name: 'Services Include' })
         .closest('section') as HTMLElement;
@@ -3988,7 +3989,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Itinerary Check');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // The old generic itinerary card is gone (no generic title, description, or overnight line).
     expect(screen.queryByText(/4 night stay in Singapore/)).not.toBeInTheDocument();
@@ -4061,7 +4062,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('No Itinerary');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // No generic fallback itinerary card and no "Your Itinerary" heading.
     expect(screen.queryByRole('heading', { name: 'Your Itinerary' })).not.toBeInTheDocument();
@@ -4142,7 +4143,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Singapore Escape');
+    await screen.findByText('Custom Package for Mira Shah');
 
     expect(screen.getByRole('heading', { name: 'Your Itinerary' })).toBeInTheDocument();
     // Section intro renders sanitized rich text inside the Instructions info box.
@@ -4150,11 +4151,11 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getByText('Explore the highlights.')).toBeInTheDocument();
     expect(screen.queryByText(/<p>/)).not.toBeInTheDocument();
     // Deduplicated day title (never "Day 1: Day 1: …").
-    expect(screen.getByRole('heading', { name: 'Day 1 - City Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'City Tour' })).toBeInTheDocument();
     expect(screen.queryByText('Day 1: Day 1: City Tour')).not.toBeInTheDocument();
     // Metadata: city + formatted date.
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Singapore')).toBeInTheDocument();
     expect(within(article).getByText(/Mon, 10 Aug 2026/)).toBeInTheDocument();
@@ -4259,9 +4260,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Per Meal Options');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     expect(
       within(article).getByText(
@@ -4344,9 +4345,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Legacy Meals');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     // The shared legacy WITH_TRANSFER mode now renders per meal.
     expect(
@@ -4429,9 +4430,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('No Detail Meal');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     // WITH_TRANSFER with blank details renders without a trailing colon.
     expect(within(article).getByText('Dinner (With Transfer)')).toBeInTheDocument();
@@ -4517,9 +4518,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Legacy Variants');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     // Each variant normalizes to its canonical label; none becomes (Hotel).
     expect(
@@ -4602,9 +4603,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Unknown Mode');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     // A present-but-unknown per-meal mode shows no suffix (never (Hotel)).
     expect(within(article).getByText('Meals:')).toBeInTheDocument();
@@ -4694,10 +4695,10 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Thumbnails');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - City Tour' })
+      .getByRole('heading', { name: 'City Tour' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Activities & Details')).toBeInTheDocument();
     // Each activity owns its image; the second resolves its signed presentation.
@@ -4796,7 +4797,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Singapore Activities');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const marina = screen.getByLabelText('Marina Bay & Gardens by the Bay image gallery');
     const safari = screen.getByLabelText('Night Safari image gallery');
@@ -4929,7 +4930,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Independent Galleries');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const activityA = screen.getByLabelText('Activity A image gallery');
     const activityB = screen.getByLabelText('Activity B image gallery');
@@ -5037,7 +5038,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('No Thumbnails');
+    await screen.findByText('Custom Package for Mira Shah');
     // No broken image icon for the activity without an image.
     expect(screen.queryByAltText('Free Walking')).not.toBeInTheDocument();
     expect(screen.getByText('Free Walking')).toBeInTheDocument();
@@ -5115,8 +5116,8 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
-    expect(screen.getByRole('heading', { name: 'Day 2 - Sentosa Tour' })).toBeInTheDocument();
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(screen.getByRole('heading', { name: 'Sentosa Tour' })).toBeInTheDocument();
     // No transfer badge for NO_TRANSFER, no meals row when nothing selected.
     expect(screen.queryByText('Shared Transfer')).not.toBeInTheDocument();
     expect(screen.queryByText('Private Transfer')).not.toBeInTheDocument();
@@ -5197,7 +5198,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Instructions Box');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const box = screen.getByText('Instructions').closest('div')?.parentElement as HTMLElement;
     // The info icon + Instructions heading render inside the box.
@@ -5217,7 +5218,7 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.queryByText(/alert/)).not.toBeInTheDocument();
     // The green itinerary timeline remains directly below the box.
     expect(screen.getByRole('heading', { name: 'Your Itinerary' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Day 1 - City Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'City Tour' })).toBeInTheDocument();
   });
 
   it('hides the Instructions box when the section description is empty', async () => {
@@ -5293,11 +5294,11 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Empty Instructions');
+    await screen.findByText('Custom Package for Mira Shah');
 
     expect(screen.queryByText('Instructions')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Your Itinerary' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Day 1 - City Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'City Tour' })).toBeInTheDocument();
   });
 
   it('hides empty sightseeing days and renders multiple activities in one card', async () => {
@@ -5391,13 +5392,13 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
-    expect(screen.getByRole('heading', { name: 'Day 1 - Full Day' })).toBeInTheDocument();
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(screen.getByRole('heading', { name: 'Full Day' })).toBeInTheDocument();
     // The empty day 2 is hidden entirely.
     expect(screen.queryByRole('heading', { name: 'Day 2:' })).not.toBeInTheDocument();
     // Both activities render inside the same day card, in order.
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - Full Day' })
+      .getByRole('heading', { name: 'Full Day' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Morning Tour')).toBeInTheDocument();
     expect(within(article).getByText('Evening Dinner Cruise')).toBeInTheDocument();
@@ -5482,7 +5483,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.getByText('Safe content')).toBeInTheDocument();
     expect(screen.queryByText(/window\.pwned/)).not.toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
@@ -5560,9 +5561,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Ladakh Trip');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - Pangong' })
+      .getByRole('heading', { name: 'Pangong' })
       .closest('article') as HTMLElement;
     // Header exists
     expect(within(article).getByText('Activities & Details')).toBeInTheDocument();
@@ -5656,9 +5657,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa Beach Holiday');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 1 - North Goa' })
+      .getByRole('heading', { name: 'North Goa' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Activities & Details')).toBeInTheDocument();
     expect(within(article).getByText('Fort Aguada')).toBeInTheDocument();
@@ -5764,9 +5765,9 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Per Activity Transfer');
+    await screen.findByText('Custom Package for Mira Shah');
     const article = screen
-      .getByRole('heading', { name: 'Day 2 - Mandai Wildlife Reserve Adventure' })
+      .getByRole('heading', { name: 'Mandai Wildlife Reserve Adventure' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Singapore City Tour')).toBeInTheDocument();
     expect(within(article).getByText('Singapore Zoo')).toBeInTheDocument();
@@ -5843,8 +5844,8 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
-    expect(screen.getByRole('heading', { name: 'Day 3 - Legacy Day' })).toBeInTheDocument();
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(screen.getByRole('heading', { name: 'Legacy Day' })).toBeInTheDocument();
     expect(screen.getByText('Legacy Activity')).toBeInTheDocument();
     expect(screen.getByText('Private Transfer')).toBeInTheDocument();
     // Array meals normalize to booleans; the shared WITH_TRANSFER mode renders per meal.
@@ -5943,7 +5944,7 @@ describe('Phase 8 quotation pages', () => {
 
     // Hotels only: Flights/Hotels shown, everything else omitted.
     render(base);
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     const section = screen
       .getByRole('heading', { name: 'Services Include' })
       .closest('section') as HTMLElement;
@@ -5970,7 +5971,7 @@ describe('Phase 8 quotation pages', () => {
       },
     };
     render(noServices);
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.queryByRole('heading', { name: 'Services Include' })).not.toBeInTheDocument();
   });
 
@@ -6038,7 +6039,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const section = screen
       .getByRole('heading', { name: 'Services Include' })
@@ -6110,7 +6111,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.getByRole('heading', { name: 'Airport Transfers' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Vehicle Details' })).not.toBeInTheDocument();
   });
@@ -6177,7 +6178,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.getByRole('heading', { name: 'Transportation' })).toBeInTheDocument();
   });
 
@@ -6244,7 +6245,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.getByRole('heading', { name: 'Additional Services' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Travel Insurance' })).toBeInTheDocument();
     // Description renders as formatted rich text, not raw HTML.
@@ -6315,7 +6316,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.queryByRole('heading', { name: 'Additional Services' })).not.toBeInTheDocument();
   });
 
@@ -6398,7 +6399,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.getByRole('heading', { name: 'Additional Services' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Singapore Visa' })).toBeInTheDocument();
     // The unselected add-on row must NOT appear.
@@ -6484,7 +6485,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.queryByRole('heading', { name: 'Additional Services' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'other add on' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Singapore Visa' })).not.toBeInTheDocument();
@@ -6554,7 +6555,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     // No Additional Services section, no `other add on`, no Add-ons chip.
     expect(screen.queryByRole('heading', { name: 'Additional Services' })).not.toBeInTheDocument();
     expect(screen.queryByText('other add on')).not.toBeInTheDocument();
@@ -6644,7 +6645,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(await screen.findByText('Cabin: 10 kg+')).toBeInTheDocument();
     expect(screen.queryByText('Cabin: 10kg')).not.toBeInTheDocument();
   });
@@ -6751,7 +6752,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala Escape');
+    await screen.findByText('Custom Package for Mira Shah');
     await screen.findByText('Outbound Journey');
 
     // The note text (with inline white backgrounds) still renders.
@@ -6847,7 +6848,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Cruise Trip');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Saved section title becomes the heading.
     expect(screen.getByRole('heading', { name: 'Ocean Cruise' })).toBeInTheDocument();
@@ -6932,7 +6933,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Cruise Trip');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Empty section title falls back to Cruise Details.
     expect(screen.getByRole('heading', { name: 'Cruise Details' })).toBeInTheDocument();
@@ -7014,7 +7015,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Cruise Trip');
+    await screen.findByText('Custom Package for Mira Shah');
 
     expect(screen.getByText('Dream Genting')).toBeInTheDocument();
     expect(screen.getByText('2 nights')).toBeInTheDocument();
@@ -7077,7 +7078,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Policies Check');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Heading + Inclusions expanded by default; Exclusions collapsed.
     expect(screen.getByRole('heading', { name: 'Policies' })).toBeInTheDocument();
@@ -7157,7 +7158,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('No Policies');
+    await screen.findByText('Custom Package for Mira Shah');
     expect(screen.queryByRole('heading', { name: 'Policies' })).not.toBeInTheDocument();
   });
 
@@ -7211,7 +7212,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     const heading = screen.getByRole('heading', { name: 'Contact Us' });
     expect(heading).toBeInTheDocument();
@@ -7319,7 +7320,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Singapore Package for Vikas Singh');
+    await screen.findByText('Custom Package for Vikas Singh');
 
     const single = encodeURIComponent('QT-34 - Singapore Package for Vikas Singh');
     const duplicate = encodeURIComponent('for Vikas Singh for Vikas Singh');
@@ -7384,7 +7385,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Kerala proposal');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Heading and description remain.
     expect(screen.getByRole('heading', { name: 'Contact Us' })).toBeInTheDocument();
@@ -7449,7 +7450,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     const block = screen.getByText('Prepared By').parentElement!;
     expect(block).toHaveTextContent('Vikas Sahni');
@@ -7521,7 +7522,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     const block = screen.getByText('Prepared By').parentElement!;
     const row = block.querySelector('p[class*="flex"]');
@@ -7580,7 +7581,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     const block = screen.getByText('Prepared By').parentElement!;
     expect(block).toHaveTextContent('Vikas Sahni');
@@ -7722,7 +7723,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Rating Check');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Zero rating: no stars, no "0/5" badge, no review link.
     const zeroCard = screen.getByText('Zero Star Hotel').closest('article') as HTMLElement;
@@ -7853,7 +7854,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Clamp Check');
+    await screen.findByText('Custom Package for Mira Shah');
 
     const fiveCard = screen.getByText('Five Star Hotel').closest('article') as HTMLElement;
     expect(within(fiveCard).getByLabelText('5 star hotel').querySelectorAll('svg').length).toBe(5);
@@ -7921,7 +7922,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
 
     // Copyright line with dynamic year and company name from settings.
     const year = new Date().getFullYear();
@@ -8048,7 +8049,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     // The info card value and the footer both render '#1032', never '#QT-...'
     // or 'QT-...'.
     expect(screen.getByText('#1032')).toBeInTheDocument();
@@ -8107,7 +8108,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Dubai Honeymoon Package');
+    await screen.findByText('Custom Package for Aarav Mehta');
     expect(document.title).toBe('Dubai Honeymoon Package');
     view.unmount();
     expect(document.title).toBe('Travel CRM');
@@ -8212,7 +8213,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    expect(await screen.findByText('Kerala proposal')).toBeInTheDocument();
+    expect(await screen.findByText('Custom Package for Mira Shah')).toBeInTheDocument();
     // The public final-amount/decision box is not rendered.
     expect(screen.queryByText('Final quotation amount')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
@@ -8365,7 +8366,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Address Check');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Each card shows its own full address below the location row.
     const cardA = screen.getByText('V Hotel Lavender').closest('article') as HTMLElement;
@@ -8455,7 +8456,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Legacy Quotation');
+    await screen.findByText('Custom Package for Mira Shah');
     const card = screen.getByText('Legacy Hotel').closest('article') as HTMLElement;
     expect(card).not.toHaveTextContent(/undefined|null/i);
     expect(screen.queryByText('Address unavailable')).not.toBeInTheDocument();
@@ -8543,7 +8544,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Nights Check');
+    await screen.findByText('Custom Package for Mira Shah');
 
     // Stored nights are 4 but 10 Aug → 12 Aug is 2 calendar nights.
     const cardA = screen.getByText('Coastal Bay Resort').closest('article') as HTMLElement;
@@ -8752,7 +8753,7 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
 
-    await screen.findByText('Destination Expert Test');
+    await screen.findByText('Custom Package for Priya Sharma');
     expect(screen.queryByRole('heading', { name: /Destination Expert/i })).not.toBeInTheDocument();
     expect(screen.queryByText('ADITI')).not.toBeInTheDocument();
   });
@@ -8974,7 +8975,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
-    await screen.findByText('Section Order Test');
+    await screen.findByText('Custom Package for Priya Sharma');
 
     const headingNames = [
       'Secure Your Booking Now',
@@ -10717,7 +10718,7 @@ describe.skip('Phase 14 master selectors', () => {
     ]);
   });
 
-  it('renumbers existing sightseeing titles when a day is inserted between them', async () => {
+  it('keeps existing sightseeing titles verbatim when a day is inserted between them', async () => {
     const day = (dayNumber: number, title: string, activityName: string) => ({
       dayNumber,
       title,
@@ -10770,11 +10771,11 @@ describe.skip('Phase 14 master selectors', () => {
         screen
           .getAllByLabelText(/Sightseeing day \d+ title/)
           .map((input) => (input as HTMLInputElement).value),
-      ).toEqual(['Day 1 - Universal Studios', 'Day 2', 'Day 3 - Singapore City Tour']);
+      ).toEqual(['Day 1: Universal Studios', 'Day 2', 'Day 2: Singapore City Tour']);
     });
   });
 
-  it('inserts a new day before day 1 and renumbers the existing days', async () => {
+  it('inserts a new day before day 1 and keeps the existing day titles verbatim', async () => {
     const day = (dayNumber: number, title: string, activityName: string) => ({
       dayNumber,
       title,
@@ -10824,7 +10825,7 @@ describe.skip('Phase 14 master selectors', () => {
         screen
           .getAllByLabelText(/Sightseeing day \d+ title/)
           .map((input) => (input as HTMLInputElement).value),
-      ).toEqual(['Day 1', 'Day 2 - Universal Studios']);
+      ).toEqual(['Day 1', 'Day 1: Universal Studios']);
     });
     expect(
       screen.getAllByRole('button', { name: /Insert sightseeing day before day/ }),
@@ -12026,10 +12027,10 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getByLabelText('Day 5 activity 1 name')).toHaveValue('Gardens by the Bay');
     // No extra prefilled activities; the remaining masters stay in the picker.
     expect(screen.queryByLabelText('Day 1 activity 2 name')).not.toBeInTheDocument();
-    // Meaningful day titles derived from the primary activity (no duplicated prefix).
-    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - City Tour');
+    // Meaningful day titles taken verbatim from the primary activity (no generated separator).
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('City Tour');
     expect(screen.getByLabelText('Sightseeing day 5 title')).toHaveValue(
-      'Day 5 - Gardens by the Bay',
+      'Gardens by the Bay',
     );
   });
 
@@ -12076,11 +12077,11 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Sightseeing');
     await waitFor(() =>
-      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - My Custom Day'),
+      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('My Custom Day'),
     );
   });
 
-  it('copies master sightseeing fields and auto-generates the day title', async () => {
+  it('copies master sightseeing fields and keeps the day title verbatim', async () => {
     const master = {
       id: 'sg-1',
       title: 'City Tour',
@@ -12108,7 +12109,7 @@ describe.skip('Phase 14 master selectors', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue('City Tour'),
     );
-    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - City Tour');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('City Tour');
     expect(screen.getByLabelText('Day 1 activity 1 start time')).toHaveValue('14:00');
     expect(screen.getByLabelText('Day 1 activity 1 description')).toHaveTextContent(
       'Guided tour of the city.',
@@ -12553,7 +12554,7 @@ describe.skip('Phase 14 master selectors', () => {
     );
     // Day at Leisure needs no master id; no image shows (placeholder).
     expect(screen.queryByAltText('Activity')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - Day at Leisure');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day at Leisure');
 
     fireEvent.change(picker, { target: { value: 'Custom Sightseeing' } });
     await waitFor(() => expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue(''));
@@ -14874,7 +14875,7 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Sightseeing');
     // Day 7 (final) gets the departure master
     const day7Title = (await screen.findByLabelText('Sightseeing day 7 title')) as HTMLInputElement;
-    expect(day7Title.value).toBe('Day 7 - Departure from Singapore');
+    expect(day7Title.value).toBe('Departure from Singapore');
     const day7Activity = screen.getByLabelText('Day 7 activity 1');
     fireEvent.focus(day7Activity);
     const day7Listbox = screen.getByRole('listbox', { name: 'Day 7 activity 1' });
@@ -15433,7 +15434,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
 
   it('renders the total, exact tax note and plural traveller breakdown', async () => {
     renderPublic(publicPayload());
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(screen.getAllByText('Total Package Price').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/30,000/).length).toBeGreaterThan(0);
     expect(screen.getByText('Inclusive of all taxes, excluding TCS')).toBeInTheDocument();
@@ -15453,7 +15454,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
         { adults: 1, childrenWithBed: 0, childrenWithoutBed: 0, infants: 1 },
       ),
     );
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(screen.getByText(/1 Adult ×/)).toBeInTheDocument();
     expect(screen.getByText(/1 Infant ×/)).toBeInTheDocument();
     expect(screen.queryByText(/CWB ×/)).not.toBeInTheDocument();
@@ -15462,21 +15463,21 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
 
   it('hides the tax note and never shows the control values publicly', async () => {
     renderPublic(publicPayload({ taxNote: null }));
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(screen.queryByText(/Inclusive of/)).not.toBeInTheDocument();
     cleanup();
     renderPublic(publicPayload({ taxNote: '-- No change (keep existing) --' }));
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(screen.queryByText('-- No change (keep existing) --')).not.toBeInTheDocument();
     cleanup();
     renderPublic(publicPayload({ taxNote: 'Do not show' }));
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(screen.queryByText('Do not show')).not.toBeInTheDocument();
   });
 
   it('shows the Secure Your Booking card only with a valid amount and link', async () => {
     renderPublic(publicPayload());
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     const heading = screen.getByRole('heading', { name: 'Secure Your Booking Now' });
     const card = heading.closest('section') as HTMLElement;
     expect(card).toHaveTextContent('Make an initial payment of');
@@ -15498,7 +15499,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
       { initialPaymentAmount: '0', paymentLink: null }, // both empty
     ]) {
       renderPublic(publicPayload(override));
-      await screen.findByText('Singapore Package');
+      await screen.findByText('Custom Package for Vikas Singh');
       expect(secure()).not.toBeInTheDocument();
       cleanup();
     }
@@ -15506,7 +15507,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
 
   it('renders the Secure Your Booking card as a white card with Pay Now button on the right', async () => {
     renderPublic(publicPayload());
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     const heading = screen.getByRole('heading', { name: 'Secure Your Booking Now' });
     const card = heading.closest('section') as HTMLElement;
     // White background, no green card background
@@ -15529,7 +15530,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
 
   it('Secure Your Booking card hides when amount is zero', async () => {
     renderPublic(publicPayload({ initialPaymentAmount: '0' }));
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(
       screen.queryByRole('heading', { name: 'Secure Your Booking Now' }),
     ).not.toBeInTheDocument();
@@ -15537,7 +15538,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
 
   it('Secure Your Booking card hides when payment link is invalid', async () => {
     renderPublic(publicPayload({ paymentLink: 'not-a-url' }));
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(
       screen.queryByRole('heading', { name: 'Secure Your Booking Now' }),
     ).not.toBeInTheDocument();
@@ -15545,7 +15546,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
 
   it('raw payment URL is not visible', async () => {
     renderPublic(publicPayload());
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     const card = screen
       .getByRole('heading', { name: 'Secure Your Booking Now' })
       .closest('section') as HTMLElement;
@@ -15658,7 +15659,7 @@ describe('Public weblink — section-wise pricing breakdown', () => {
 
   it('renders a distinct section-wise breakdown with every section and the grand total', async () => {
     renderSectionWise(sectionWisePayload());
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
 
     // The hero price card uses a section-wise label (not "Total Package Price").
     expect(screen.getByText('Quotation Total')).toBeInTheDocument();
@@ -15687,7 +15688,7 @@ describe('Public weblink — section-wise pricing breakdown', () => {
 
   it('does not duplicate the visa amount inside the visa card', async () => {
     renderSectionWise(sectionWisePayload());
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     const visaCard = screen
       .getByRole('heading', { name: 'Visa' })
       .closest('section') as HTMLElement;
@@ -15706,7 +15707,7 @@ describe('Public weblink — section-wise pricing breakdown', () => {
         perInfantPrice: '0',
       }),
     );
-    await screen.findByText('Singapore Package');
+    await screen.findByText('Custom Package for Vikas Singh');
     expect(screen.getAllByText('Total Package Price').length).toBeGreaterThan(0);
     // 2 adults × 15000.
     expect(screen.getAllByText('₹30,000').length).toBeGreaterThan(0);

@@ -717,7 +717,8 @@ function DayCard({
     [dayContext.options],
   );
 
-  // Always replace stale prefixes after inserting/removing/reordering days.
+  // Day titles render verbatim: inserting/removing/reordering days never
+  // rewrites them with an auto-generated separator.
   const autoDayTitle = (activityName: string | null): string => {
     return formatItineraryDayTitle(dayIndex + 1, activityName);
   };

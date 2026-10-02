@@ -1064,6 +1064,7 @@ function versionCreateData(
       title: normalized.title,
       introduction: normalized.introduction ?? null,
       weblinkHeading: normalized.weblinkHeading ?? null,
+      packageHeading: normalized.packageHeading ?? null,
       destinationSummary: normalized.destinationSummary,
       travelStartDate: normalized.travelStartDate ?? null,
       travelEndDate: normalized.travelEndDate ?? null,
@@ -1187,6 +1188,7 @@ function versionCreateData(
 function fromVersion(source: FullVersion): QuotationVersionInput {
   return {
     title: source.title,
+    packageHeading: source.packageHeading,
     introduction: source.introduction,
     destinationSummary: source.destinationSummary,
     travelStartDate: source.travelStartDate,
@@ -2385,8 +2387,13 @@ export const quotationsService = {
       destination.split(/[•(→>,]/)[0]?.trim() ||
       destination;
     const defaultTitle = `${primaryDestination} Package for ${lead.customerName}`;
+    // The weblink package heading defaults to the lead-based label (never the
+    // quotation title, never an itinerary city).
+    const defaultPackageHeading = `Custom Package for ${lead.customerName}`;
     const version: QuotationVersionInput = {
       title: input.version?.title ?? source?.title ?? defaultTitle,
+      packageHeading:
+        input.version?.packageHeading ?? source?.packageHeading ?? defaultPackageHeading,
       introduction: input.version?.introduction ?? source?.introduction ?? '',
       destinationSummary: input.version?.destinationSummary ?? destination,
       travelStartDate:

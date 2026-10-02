@@ -29,21 +29,21 @@ describe('formatItineraryDayTitle — stored titles render verbatim', () => {
     ).toBe('Day 4 - Sentosa Island – Cable Car, Madame Tussauds & Wings of Time');
   });
 
-  it('adds the day prefix with a dash separator when the title has none', () => {
-    expect(formatItineraryDayTitle(1, 'Night safari')).toBe('Day 1 - Night safari');
-    expect(formatItineraryDayTitle(5, 'Hanoi')).toBe('Day 5 - Hanoi');
+  it('returns prefix-less titles verbatim without adding a separator', () => {
+    expect(formatItineraryDayTitle(1, 'Night safari')).toBe('Night safari');
+    expect(formatItineraryDayTitle(5, 'Hanoi')).toBe('Hanoi');
     expect(formatItineraryDayTitle(6, 'Departure from Singapore')).toBe(
-      'Day 6 - Departure from Singapore',
+      'Departure from Singapore',
     );
     expect(formatItineraryDayTitle(2, null)).toBe('Day 2');
     expect(formatItineraryDayTitle(2, '   ')).toBe('Day 2');
   });
 
-  it('normalizes colon-style titles to the dash separator', () => {
+  it('leaves colon-style titles untouched instead of normalizing the separator', () => {
     expect(formatItineraryDayTitle(6, 'Day 6: Departure from Singapore')).toBe(
-      'Day 6 - Departure from Singapore',
+      'Day 6: Departure from Singapore',
     );
-    expect(formatItineraryDayTitle(5, 'Day 4: Marina Bay')).toBe('Day 5 - Marina Bay');
+    expect(formatItineraryDayTitle(5, 'Day 4: Marina Bay')).toBe('Day 4: Marina Bay');
   });
 
   it('preserves legitimate colons inside dash-prefixed titles', () => {
@@ -52,7 +52,7 @@ describe('formatItineraryDayTitle — stored titles render verbatim', () => {
     );
   });
 
-  it('treats en/em dashes as stored separators too', () => {
+  it('treats en/em dashes as stored content too', () => {
     expect(formatItineraryDayTitle(3, 'Day 3 – Hanoi | Leisure Day')).toBe(
       'Day 3 – Hanoi | Leisure Day',
     );
@@ -64,9 +64,9 @@ describe('formatItineraryDayTitle — stored titles render verbatim', () => {
     );
   });
 
-  it('still renumbers colon-style stale prefixes (into dash form)', () => {
+  it('never renumbers stale prefixes', () => {
     expect(formatItineraryDayTitle(4, 'Day 3: Singapore City Tour')).toBe(
-      'Day 4 - Singapore City Tour',
+      'Day 3: Singapore City Tour',
     );
   });
 });
@@ -126,7 +126,7 @@ describe('buildWhatsAppSummary — sightseeing day titles', () => {
     expect(summary).not.toContain('Day 3: -');
   });
 
-  it('keeps the day prefix for plain activity names', () => {
+  it('renders plain activity names verbatim', () => {
     const summary = buildWhatsAppSummary({
       quotation,
       version,
@@ -137,7 +137,7 @@ describe('buildWhatsAppSummary — sightseeing day titles', () => {
     expect(summary).not.toContain('Day 1: Day 1');
   });
 
-  it('uses the dash separator for prefix-less titles in the summary', () => {
+  it('uses the plain title without a separator in the summary', () => {
     const plain = {
       sightseeingDetails: {
         include: true,
@@ -159,7 +159,34 @@ describe('buildWhatsAppSummary — sightseeing day titles', () => {
       companyName: 'Test Travel',
       weblinkUrl: null,
     });
-    expect(summary).toContain('Day 6 - Departure from Singapore');
+    expect(summary).toContain('Departure from Singapore');
+    expect(summary).not.toContain('Day 6 - Departure from Singapore');
     expect(summary).not.toContain('Day 6: Departure from Singapore');
+  });
+
+  it('never appends the city to an activity name with a separator', () => {
+    const withCity = {
+      sightseeingDetails: {
+        include: true,
+        days: [
+          {
+            dayNumber: 1,
+            title: null,
+            city: 'Singapore',
+            activities: [{ name: 'Night Safari', city: 'Singapore', description: null }],
+          },
+        ],
+      },
+      hotels: [],
+      includeVisa: false,
+    } as unknown as QuotationVersion;
+    const summary = buildWhatsAppSummary({
+      quotation,
+      version: withCity,
+      companyName: 'Test Travel',
+      weblinkUrl: null,
+    });
+    expect(summary).toContain('Night Safari');
+    expect(summary).not.toContain('Night Safari - Singapore');
   });
 });

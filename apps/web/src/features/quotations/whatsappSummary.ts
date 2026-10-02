@@ -127,11 +127,9 @@ function itineraryLines(version: QuotationVersion): string[] {
         for (const activity of validActivities) {
           const name = sanitizeHeading(activity.name ?? activity.description ?? '');
           if (!name) continue;
-          // Include city when distinct and short clean-up: "Night Safari - Singapore"
-          const city = activity.city?.trim();
-          const label = city && !name.toLowerCase().includes(city.toLowerCase()) ? `${name} - ${city}` : name;
-          // Stored "Day N - ..." titles pass through verbatim (no injected colon).
-          lines.push(formatItineraryDayTitle(dayNumber, label));
+          // Activity name only: never compose a "name - city" title with an
+          // auto-generated separator. The city renders on its own line/meta.
+          lines.push(formatItineraryDayTitle(dayNumber, name));
         }
       } else {
         // Day without explicit activities: use day title/city as fallback.

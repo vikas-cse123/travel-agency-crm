@@ -105,20 +105,35 @@ export function DestinationFormPage() {
     if (isSameId && form.formState.isDirty) return;
     // Guard against partial cached object poisoning – require authoritative fields before hydrating.
     if (!destination.data.countryCode || destination.data.countryCode.length !== 2) return;
-    form.reset({
-      countryCode: destination.data.countryCode,
-      name: destination.data.name,
-      privateName: destination.data.privateName ?? '',
-      destinationType: destination.data.destinationType as Values['destinationType'],
-      cityIds: (destination.data.cities ?? []).map((link) => link.cityId),
-      inclusions: destination.data.inclusions ?? '',
-      exclusions: destination.data.exclusions ?? '',
-      paymentPolicies: destination.data.paymentPolicies ?? '',
-      cancellationPolicies: destination.data.cancellationPolicies ?? '',
-      bookingTerms: destination.data.bookingTerms ?? '',
-      childPolicy: destination.data.childPolicy ?? '',
-      status: destination.data.status as Values['status'],
-    });
+    // A slow first load can resolve after the user has already started typing
+    // (cold cache / slow network on that machine). A blind reset would silently
+    // discard those edits — the editor would show the server content and the
+    // next save would persist the stale values instead — while a faster machine
+    // hydrates before typing starts and works fine. keepDirtyValues preserves
+    // every field the user already touched (and keeps them dirty so subsequent
+    // refetches keep skipping them too) in a single commit, so there is no
+    // intermediate flash of server content either. Full reset only when
+    // switching to a different destination, so one record's edits never leak
+    // into another's form.
+    const switching =
+      hydratedIdRef.current !== null && hydratedIdRef.current !== destinationId;
+    form.reset(
+      {
+        countryCode: destination.data.countryCode,
+        name: destination.data.name,
+        privateName: destination.data.privateName ?? '',
+        destinationType: destination.data.destinationType as Values['destinationType'],
+        cityIds: (destination.data.cities ?? []).map((link) => link.cityId),
+        inclusions: destination.data.inclusions ?? '',
+        exclusions: destination.data.exclusions ?? '',
+        paymentPolicies: destination.data.paymentPolicies ?? '',
+        cancellationPolicies: destination.data.cancellationPolicies ?? '',
+        bookingTerms: destination.data.bookingTerms ?? '',
+        childPolicy: destination.data.childPolicy ?? '',
+        status: destination.data.status as Values['status'],
+      },
+      { keepDirtyValues: !switching },
+    );
     hydratedIdRef.current = destinationId ?? null;
   }, [destination.data, destinationId, form]);
   useEffect(() => {

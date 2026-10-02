@@ -514,6 +514,7 @@ export function normalizeQuotationVersionForBuilder(version: QuotationVersion): 
     ...version,
     introduction: typeof raw.introduction === 'string' ? raw.introduction : null,
     weblinkHeading: typeof raw.weblinkHeading === 'string' ? raw.weblinkHeading : null,
+    packageHeading: typeof raw.packageHeading === 'string' ? raw.packageHeading : null,
     notes: typeof raw.notes === 'string' ? raw.notes : null,
     internalNotes: typeof raw.internalNotes === 'string' ? raw.internalNotes : null,
     inclusionsHtml: typeof raw.inclusionsHtml === 'string' ? raw.inclusionsHtml : null,
@@ -2735,8 +2736,8 @@ export function QuotationBuilderPage() {
         const isLastDay = i === dayCities.length - 1;
         const primary = nextForDay(city, isLastDay);
         return emptySightseeingDay(i + 1, {
-          // Master titles already carrying a "Day N - ..." prefix are kept
-          // verbatim by the formatter; plain names/cities gain "Day N - ".
+          // Day titles render verbatim: the formatter never injects a
+          // separator, so master titles, names and cities are kept as-is.
           title: primary
             ? formatItineraryDayTitle(i + 1, primary.title)
             : city
@@ -2874,6 +2875,7 @@ export function QuotationBuilderPage() {
           : version.title,
       introduction: version.introduction,
       weblinkHeading: version.weblinkHeading ?? null,
+      packageHeading: version.packageHeading ?? null,
       destinationSummary: version.destinationSummary,
       travelStartDate: version.travelStartDate ? new Date(version.travelStartDate) : null,
       travelEndDate: version.travelEndDate ? new Date(version.travelEndDate) : null,
@@ -6282,6 +6284,19 @@ export function QuotationBuilderPage() {
             />
             <p className="mt-1 text-xs font-normal text-slate-400">
               Optional override for the large hero heading on the public weblink.
+            </p>
+          </label>
+          <label className="text-sm font-semibold text-slate-800">
+            Weblink Package Heading
+            <input
+              aria-label="Weblink Package Heading"
+              placeholder="e.g. Goa Family Holiday"
+              {...form.register('packageHeading')}
+              className={`${field} mt-1`}
+            />
+            <p className="mt-1 text-xs font-normal text-slate-400">
+              Third line of the public weblink hero. Leave blank for the default
+              &ldquo;Custom Package for [Lead]&rdquo;.
             </p>
           </label>
           <label className="text-sm font-semibold text-slate-800">

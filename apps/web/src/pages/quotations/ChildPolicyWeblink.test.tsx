@@ -99,7 +99,7 @@ describe('Child Policy - Weblink', () => {
       </Routes>,
       { route: '/q/test-token-child' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     // Accordion label is visible and the first policy panel opens by default.
     await screen.findByText('Child Policy');
     const panel = document.getElementById('policy-panel-child');
@@ -124,7 +124,7 @@ describe('Child Policy - Weblink', () => {
       </Routes>,
       { route: '/q/test-token-child-order' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     const labels = screen
       .getAllByRole('button', { name: /Inclusions|Exclusions|Child Policy|Payment Policies|Cancellation Policies|Booking Terms/ })
       .map((button) => button.textContent);
@@ -146,7 +146,7 @@ describe('Child Policy - Weblink', () => {
       </Routes>,
       { route: '/q/test-token-no-child' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     expect(screen.queryByText('Child Policy')).not.toBeInTheDocument();
   });
 });

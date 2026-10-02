@@ -233,6 +233,7 @@ export interface QuotationVersion {
   title: string;
   introduction: string | null;
   weblinkHeading: string | null;
+  packageHeading: string | null;
   destinationSummary: string;
   travelStartDate: string | null;
   travelEndDate: string | null;

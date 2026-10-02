@@ -84,7 +84,7 @@ describe('Flight pricing breakdown - Weblink', () => {
       </Routes>,
       { route: '/q/test-token-fixed' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     // Should show Flights with aggregate, but not the detailed breakdown
     expect(await screen.findByText('Flights')).toBeInTheDocument();
     expect(screen.queryByText(/Adult:/)).not.toBeInTheDocument();
@@ -116,7 +116,7 @@ describe('Flight pricing breakdown - Weblink', () => {
       </Routes>,
       { route: '/q/test-token-per-traveler' },
     );
-    await screen.findByText('Goa proposal');
+    await screen.findByText('Custom Package for Aarav Mehta');
     expect(await screen.findByText('Flights')).toBeInTheDocument();
     expect(screen.getByText(/Adult:/)).toBeInTheDocument();
     expect(screen.getByText(/Child With Bed:/)).toBeInTheDocument();
