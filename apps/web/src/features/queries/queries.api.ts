@@ -44,6 +44,8 @@ export interface Lead {
   departureCity: string | null;
   travelStartDate: string | null;
   travelEndDate: string | null;
+  travelMonth: number | null;
+  travelYear: number | null;
   flexibleDates: boolean;
   rooms: number;
   adults: number;

@@ -204,7 +204,7 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Flight' }));
     expect(screen.getByRole('checkbox', { name: 'Flight' })).toBeChecked();
   });
-  it('hides Birth Date on the create form but keeps it on the edit form', async () => {
+  it('hides Birth Date on the create form', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => response(lookups)),
@@ -215,7 +215,7 @@ describe('Phase 6 lead pages', () => {
     // Neighboring fields still render (no layout gap left behind).
     expect(screen.getByLabelText('Assigned salesperson')).toBeInTheDocument();
   });
-  it('keeps Birth Date visible on the edit form', async () => {
+  it('hides Birth Date on the edit form while keeping neighboring sections intact', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/queries/lookups')) return response(lookups);
@@ -230,7 +230,172 @@ describe('Phase 6 lead pages', () => {
       { route: `/queries/${lead.id}/edit` },
     );
     await screen.findByRole('heading', { name: 'Edit lead' });
-    expect(screen.getByLabelText('Birth Date')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Birth Date')).not.toBeInTheDocument();
+    expect(screen.queryByText('dd-mm-yyyy')).not.toBeInTheDocument();
+    // Assign To still renders and Services Required follows it directly.
+    expect(screen.getByLabelText('Assigned salesperson')).toBeInTheDocument();
+    expect(screen.getByText(/Services Required/)).toBeInTheDocument();
+  });
+  it('creates a month/year lead with an empty departure city and no invented day', async () => {
+    authState.permissions.delete('queries.assign');
+    const destination = {
+      id: 'dest-1',
+      name: 'Singapore',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-1', sequence: 1, city: { name: 'Singapore' } }],
+    };
+    const year = String(new Date().getFullYear());
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    // Travel Date (exact date) and Travel Month (month/year only) are separate
+    // optional fields; city has no default.
+    expect(screen.getByText('Travel Month')).toBeInTheDocument();
+    expect(screen.getByLabelText('Travel Date')).toBeInTheDocument();
+    expect(screen.queryByText('Travel Month *')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Travel Date *')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Departure city (Optional)')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
+    await userEvent.selectOptions(screen.getByLabelText('Travel year'), year);
+    await waitFor(() => {
+      expect(
+        Array.from(screen.getByLabelText('Destination 1').querySelectorAll('option')).some(
+          (option) => option.textContent === 'Singapore',
+        ),
+      ).toBe(true);
+    });
+    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
+    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
+    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.travelMonth).toBe(12);
+      expect(body.travelYear).toBe(Number(year));
+      expect(body.travelStartDate).toBeNull();
+      expect(body.departureCity).toBeNull();
+    });
+  });
+  it('shows December of the selected year for month/year leads in the list', async () => {
+    const year = new Date().getFullYear();
+    const monthLead = {
+      ...lead,
+      id: '22222222-2222-4222-8222-222222222222',
+      queryNumber: 'QRY-2026-000002',
+      customerName: 'Meera Nair',
+      travelStartDate: null,
+      travelMonth: 12,
+      travelYear: year,
+      departureCity: null,
+    };
+    stubLeadList([monthLead]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Meera Nair');
+    expect(screen.getByText(`December ${year}`)).toBeInTheDocument();
+  });
+  it('preserves a legacy exact travel date when the edit form is saved unchanged', async () => {
+    const legacyLead = { ...lead, travelMonth: null, travelYear: null };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${legacyLead.id}`)) {
+        if (options?.method === 'PATCH')
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: legacyLead }),
+          } as Response;
+        return response(legacyLead);
+      }
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${legacyLead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Travel Date loads the stored exact date; month/year stay empty because the
+    // two fields are semantically separate (no derivation).
+    await waitFor(() =>
+      expect(screen.getByLabelText('Travel Date') as HTMLInputElement).toHaveValue('2026-08-15'),
+    );
+    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('');
+    expect(screen.getByLabelText('Travel year') as HTMLSelectElement).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(patch).toBeDefined();
+      const body = JSON.parse(String(patch![1]!.body));
+      // Exact date round-trips untouched; nothing invented, nothing nulled.
+      expect(String(body.travelStartDate)).toContain('2026-08-15');
+      expect(body.travelMonth).toBeNull();
+      expect(body.travelYear).toBeNull();
+    });
+  });
+  it('keeps the exact date when month/year selects are set alongside it', async () => {
+    const year = String(new Date().getFullYear());
+    const legacyLead = { ...lead, travelMonth: null, travelYear: null };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${legacyLead.id}`)) {
+        if (options?.method === 'PATCH')
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: legacyLead }),
+          } as Response;
+        return response(legacyLead);
+      }
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${legacyLead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Month/year start empty; the exact date input keeps the legacy date.
+    await waitFor(() =>
+      expect(screen.getByLabelText('Travel Date') as HTMLInputElement).toHaveValue('2026-08-15'),
+    );
+    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('');
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
+    await userEvent.selectOptions(screen.getByLabelText('Travel year'), year);
+    await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(patch).toBeDefined();
+      const body = JSON.parse(String(patch![1]!.body));
+      // Both fields coexist; editing month/year never clears the exact date.
+      expect(String(body.travelStartDate)).toContain('2026-08-15');
+      expect(body.travelMonth).toBe(12);
+      expect(body.travelYear).toBe(Number(year));
+    });
   });
   it('creates a new lead without adding Visa', async () => {
     authState.permissions.delete('queries.assign');
@@ -260,7 +425,11 @@ describe('Phase 6 lead pages', () => {
     await screen.findByRole('heading', { name: 'Create lead' });
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
-    fireEvent.change(screen.getByLabelText('Travel Date *'), { target: { value: '2026-09-10' } });
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '9');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Travel year'),
+      String(new Date().getFullYear()),
+    );
     await waitFor(() => {
       const destination = screen.getByLabelText('Destination 1');
       expect(
@@ -2082,7 +2251,11 @@ describe('Admin lead self-assignment (frontend)', () => {
     await userEvent.selectOptions(screen.getByLabelText('Assigned salesperson'), 'me');
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
-    fireEvent.change(screen.getByLabelText('Travel Date *'), { target: { value: '2026-09-10' } });
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '9');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Travel year'),
+      String(new Date().getFullYear()),
+    );
     await waitFor(() => {
       const destinationEl = screen.getByLabelText('Destination 1');
       expect(

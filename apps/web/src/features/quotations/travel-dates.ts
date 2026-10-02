@@ -70,6 +70,36 @@ export function resolveTravelDates(input: TravelDateInput): TravelDateResult {
   return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
 }
 
+/** Month names for month/year-only travel periods (1-based index). */
+export const TRAVEL_MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+/**
+ * Display label for a month/year-only travel period (e.g. "December 2026").
+ * Returns null unless both parts are present. Never invents a day.
+ */
+export function formatTravelMonthYear(
+  month: number | null | undefined,
+  year: number | null | undefined,
+): string | null {
+  if (!month || !year) return null;
+  if (!Number.isInteger(month) || month < 1 || month > 12) return null;
+  if (!Number.isInteger(year)) return null;
+  return `${TRAVEL_MONTH_NAMES[month - 1]} ${year}`;
+}
+
 /**
  * Display label for a lead's travel dates, reusing the same rules. Returns '' so
  * callers can show their existing empty/fallback value.

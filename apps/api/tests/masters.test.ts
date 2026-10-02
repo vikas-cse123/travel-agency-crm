@@ -507,6 +507,102 @@ describe('Phase 13A cities and destinations masters', () => {
     expect((storageService as MemoryStorageService).read(firstKey)).toEqual(firstBody);
   });
 
+  it('stores, updates, clears and searches the internal destination private name', async () => {
+    const client = await owner('private-name@masters.test', 'Private Name Travel');
+    const city = await createCity(client);
+    const created = await client.post('/api/masters/destinations', {
+      countryCode: 'IN',
+      name: 'Vietnam Holiday',
+      privateName: '  VN Supplier Package 2026  ',
+      destinationType: 'DOMESTIC',
+      cityIds: [city.id],
+      status: 'ACTIVE',
+    });
+    expect(created.status).toBe(201);
+    // Trimmed on write; the public name is untouched.
+    expect(created.body.data).toMatchObject({
+      name: 'Vietnam Holiday',
+      privateName: 'VN Supplier Package 2026',
+    });
+    const id = created.body.data.id as string;
+    expect(
+      (await db.destination.findUniqueOrThrow({ where: { id } })).privateName,
+    ).toBe('VN Supplier Package 2026');
+
+    // Edit + clear (whitespace-only clears back to null).
+    expect(
+      (await client.patch(`/api/masters/destinations/${id}`, { privateName: 'Edited Label' }))
+        .body.data.privateName,
+    ).toBe('Edited Label');
+    expect(
+      (await client.patch(`/api/masters/destinations/${id}`, { privateName: '   ' })).body.data
+        .privateName,
+    ).toBeNull();
+
+    // Details + list expose it for the internal admin screens.
+    await client.patch(`/api/masters/destinations/${id}`, { privateName: 'VN Supplier Package 2026' });
+    expect((await client.get(`/api/masters/destinations/${id}`)).body.data.privateName).toBe(
+      'VN Supplier Package 2026',
+    );
+
+    // Admin search finds it by private name as well as by public name.
+    await createDestination(client, [city.id], 'Rajasthan Highlights');
+    const byPrivate = await client.get(
+      '/api/masters/destinations?search=supplier%20package&pageSize=100',
+    );
+    expect(byPrivate.status).toBe(200);
+    expect(byPrivate.body.data.data.map((row: { name: string }) => row.name)).toEqual([
+      'Vietnam Holiday',
+    ]);
+
+    // Over the 200-character limit is rejected.
+    expect(
+      (
+        await client.patch(`/api/masters/destinations/${id}`, {
+          privateName: 'x'.repeat(201),
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('never exposes the destination private name outside the admin masters API', async () => {
+    const client = await owner('private-leak@masters.test', 'Private Leak Travel');
+    const cityResponse = await client.post('/api/masters/cities', {
+      countryCode: 'VN',
+      name: 'Hanoi',
+      airportCode: null,
+      status: 'ACTIVE',
+    });
+    expect(cityResponse.status).toBe(201);
+    const city = cityResponse.body.data as { id: string };
+    const created = await client.post('/api/masters/destinations', {
+      countryCode: 'VN',
+      name: 'Vietnam',
+      privateName: 'SECRET-INTERNAL-LABEL',
+      destinationType: 'INTERNATIONAL',
+      cityIds: [city.id],
+      status: 'ACTIVE',
+    });
+    expect(created.status).toBe(201);
+    const createdSightseeing = await client.post('/api/masters/sightseeing', {
+      destinationId: created.body.data.id,
+      cityId: city.id,
+      title: 'Hanoi City Tour',
+      sequence: 1,
+      status: 'ACTIVE',
+    });
+    expect(createdSightseeing.status).toBe(201);
+    // The quotation-builder dropdown feed projects only id/name pairs.
+    const feed = await client.get(
+      '/api/masters/sightseeing/activities?destination=Vietnam&city=Hanoi',
+    );
+    expect(feed.status).toBe(200);
+    // The activity flows through (proving the projection ran on real data).
+    expect(feed.body.data.activities).toHaveLength(1);
+    expect(JSON.stringify(feed.body)).not.toContain('SECRET-INTERNAL-LABEL');
+    expect(JSON.stringify(feed.body)).not.toContain('privateName');
+  });
+
   it('records city, destination, link and image changes in the audit log', async () => {
     const client = await owner();
     const city = await createCity(client);

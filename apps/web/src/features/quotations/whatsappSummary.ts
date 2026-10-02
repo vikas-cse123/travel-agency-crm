@@ -1,4 +1,5 @@
 import type { Quotation, QuotationVersion } from './quotations.api';
+import { formatItineraryDayTitle } from '@interscale/shared';
 
 function formatTravelDate(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -129,12 +130,13 @@ function itineraryLines(version: QuotationVersion): string[] {
           // Include city when distinct and short clean-up: "Night Safari - Singapore"
           const city = activity.city?.trim();
           const label = city && !name.toLowerCase().includes(city.toLowerCase()) ? `${name} - ${city}` : name;
-          lines.push(`Day ${dayNumber}: ${label}`);
+          // Stored "Day N - ..." titles pass through verbatim (no injected colon).
+          lines.push(formatItineraryDayTitle(dayNumber, label));
         }
       } else {
         // Day without explicit activities: use day title/city as fallback.
         const title = sanitizeHeading(day.title ?? day.city ?? '');
-        if (title) lines.push(`Day ${dayNumber}: ${title}`);
+        if (title) lines.push(formatItineraryDayTitle(dayNumber, title));
       }
     }
     if (lines.length) return lines;
@@ -148,7 +150,7 @@ function itineraryLines(version: QuotationVersion): string[] {
         const title = sanitizeHeading(row.title ?? row.destination ?? row.description ?? '');
         if (!title) return null;
         const dayNumber = row.dayNumber ?? 1;
-        return `Day ${dayNumber}: ${title}`;
+        return formatItineraryDayTitle(dayNumber, title);
       })
       .filter((v): v is string => Boolean(v));
   }

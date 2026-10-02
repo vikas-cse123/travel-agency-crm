@@ -217,6 +217,7 @@ export function DestinationsPage() {
                   <tr>
                     {[
                       'Destination',
+                      'Private Name',
                       'Country',
                       'Type',
                       'Cities',
@@ -251,6 +252,9 @@ export function DestinationsPage() {
                             {destination.isGlobal && <GlobalBadge />}
                           </span>
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {destination.privateName?.trim() ? destination.privateName : '—'}
                       </td>
                       <td className="px-4 py-3">{destination.countryName}</td>
                       <td className="px-4 py-3">
@@ -334,6 +338,11 @@ export function DestinationsPage() {
                           {destination.name}
                           {destination.isGlobal && <GlobalBadge />}
                         </h2>
+                        {destination.privateName?.trim() && (
+                          <p className="truncate text-sm text-slate-500">
+                            {destination.privateName}
+                          </p>
+                        )}
                         <p className="text-sm text-slate-500">
                           {destination.countryName} · {destination._count.cities} cities
                         </p>

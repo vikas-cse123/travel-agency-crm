@@ -402,6 +402,24 @@ export function leadRequestedTabs(
   return requested;
 }
 
+/**
+ * Initial "Include Flight in Quotation" state.
+ *
+ * A brand-new version has no saved `flightDetails` (the backend stores null
+ * until the first save), so the checkbox defaults from the Lead's requested
+ * services — checked only when the lead requested FLIGHT. Once a version is
+ * saved, its own `flightDetails.include` is authoritative and this returns
+ * null (leave the saved value alone, even if the lead changed since). The
+ * checkbox stays fully manual afterwards; this only sets the initial state.
+ */
+export function defaultFlightInclude(
+  savedFlightDetails: unknown,
+  leadRequestedFlight: boolean,
+): boolean | null {
+  if (savedFlightDetails) return null;
+  return leadRequestedFlight;
+}
+
 const defaults: QuotationVersionInput = {
   title: '',
   introduction: null,
@@ -2717,10 +2735,12 @@ export function QuotationBuilderPage() {
         const isLastDay = i === dayCities.length - 1;
         const primary = nextForDay(city, isLastDay);
         return emptySightseeingDay(i + 1, {
+          // Master titles already carrying a "Day N - ..." prefix are kept
+          // verbatim by the formatter; plain names/cities gain "Day N - ".
           title: primary
-            ? `Day ${i + 1}: ${primary.title}`
+            ? formatItineraryDayTitle(i + 1, primary.title)
             : city
-              ? `Day ${i + 1}: ${city}`
+              ? formatItineraryDayTitle(i + 1, city)
               : `Day ${i + 1}`,
           city: city || null,
           date: addDays(startStr, i),
@@ -3114,6 +3134,18 @@ export function QuotationBuilderPage() {
         (row) => row.serviceType === 'VEHICLE_TRANSFER',
       );
       setExcluded((current) => ({ ...current, vehicle: !hasSavedVehicleRow }));
+    }
+    // Flight top-level include: a NEW quotation defaults from the Lead's
+    // requested services; an existing quotation keeps its saved value (see
+    // defaultFlightInclude). The checkbox stays fully manual afterwards.
+    const flightIncludeDefault = defaultFlightInclude(
+      version.flightDetails,
+      leadRequested.has('flight'),
+    );
+    if (flightIncludeDefault !== null) {
+      form.setValue('flightDetails.include', flightIncludeDefault, {
+        shouldDirty: false,
+      });
     }
     // Add-on Services top-level include: a NEW quotation defaults from the
     // Lead's requested services; an existing quotation keeps its saved state.

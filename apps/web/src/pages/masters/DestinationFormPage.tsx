@@ -38,6 +38,7 @@ const DESTINATION_IMAGE_MAX_MB = 4;
 const schema = z.object({
   countryCode: z.string().length(2, 'Select a country.'),
   name: z.string().trim().min(2, 'Enter a destination name.').max(200),
+  privateName: z.string().trim().max(200),
   destinationType: z.enum(['DOMESTIC', 'INTERNATIONAL']),
   cityIds: z.array(z.string().uuid()).min(1, 'Select at least one city.'),
   inclusions: z.string().max(50_000),
@@ -52,6 +53,7 @@ type Values = z.infer<typeof schema>;
 const initial: Values = {
   countryCode: '',
   name: '',
+  privateName: '',
   destinationType: 'DOMESTIC',
   cityIds: [],
   inclusions: '',
@@ -106,6 +108,7 @@ export function DestinationFormPage() {
     form.reset({
       countryCode: destination.data.countryCode,
       name: destination.data.name,
+      privateName: destination.data.privateName ?? '',
       destinationType: destination.data.destinationType as Values['destinationType'],
       cityIds: (destination.data.cities ?? []).map((link) => link.cityId),
       inclusions: destination.data.inclusions ?? '',
@@ -152,6 +155,7 @@ export function DestinationFormPage() {
     setFormError('');
     const payload: DestinationInput = {
       ...values,
+      privateName: values.privateName.trim() ? values.privateName.trim() : null,
       inclusions: values.inclusions || null,
       exclusions: values.exclusions || null,
       paymentPolicies: values.paymentPolicies || null,
@@ -235,6 +239,22 @@ export function DestinationFormPage() {
                 />
                 {form.formState.errors.name && (
                   <span className="text-xs text-red-600">{form.formState.errors.name.message}</span>
+                )}
+              </label>
+              <label className="block text-sm font-medium">
+                Private Name
+                <input
+                  className={fieldClass}
+                  placeholder="e.g. Internal supplier label"
+                  {...form.register('privateName')}
+                />
+                <span className="mt-1 block text-xs font-normal text-slate-500">
+                  Internal name only. This will not appear in quotations or public weblinks.
+                </span>
+                {form.formState.errors.privateName && (
+                  <span className="text-xs text-red-600">
+                    {form.formState.errors.privateName.message}
+                  </span>
                 )}
               </label>
               <fieldset>

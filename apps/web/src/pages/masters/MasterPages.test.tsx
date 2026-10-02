@@ -40,6 +40,7 @@ const destination = {
   countryCode: 'IN',
   countryName: 'India',
   name: 'Rajasthan Highlights',
+  privateName: null,
   destinationType: 'DOMESTIC',
   status: 'ACTIVE',
   inclusions: '<p>Breakfast and <strong>transfers</strong></p>',
@@ -510,5 +511,113 @@ describe('Phase 13A master pages', () => {
     });
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/image/upload'))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/image/confirm'))).toBe(true);
+  });
+
+  describe('destination Private Name (internal-only field)', () => {
+    it('shows the Private Name column with values and placeholders in the table', async () => {
+      const withPrivate = { ...destination, privateName: 'VN Supplier Package 2026' };
+      const withoutPrivate = {
+        ...destination,
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Goa Beaches',
+        privateName: null,
+      };
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: RequestInfo | URL) =>
+          String(request).includes('/lookups')
+            ? response(lookups)
+            : response(page([withPrivate, withoutPrivate])),
+        ),
+      );
+      renderWithProviders(<DestinationsPage />);
+      expect(await screen.findByText('Private Name')).toBeInTheDocument();
+      // Desktop table cell + mobile card both render the value.
+      expect(screen.getAllByText('VN Supplier Package 2026')).toHaveLength(2);
+      expect(screen.getAllByText('Goa Beaches').length).toBeGreaterThan(0);
+      // Null renders a clean placeholder, never "null"/"undefined".
+      expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+      expect(screen.queryByText(/null|undefined/i)).not.toBeInTheDocument();
+    });
+
+    it('sends the trimmed Private Name when creating a destination', async () => {
+      auth.permissions.delete('masters.destinations.manage_images');
+      const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        if (url.includes('/lookups')) return response(lookups);
+        if (url.endsWith('/api/masters/destinations') && init?.method === 'POST')
+          return response({ ...destination, id: 'new-dest-id' });
+        return response(destination);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderWithProviders(
+        <Routes>
+          <Route path="/masters/destinations/new" element={<DestinationFormPage />} />
+          <Route path="/masters/destinations/:destinationId" element={<div>Saved destination</div>} />
+        </Routes>,
+        { route: '/masters/destinations/new' },
+      );
+      await screen.findByRole('heading', { name: 'Create Destination' });
+      // Field sits right after Destination Name with internal-only helper text.
+      expect(screen.getByLabelText(/Private Name/)).toBeInTheDocument();
+      await screen.findByRole('option', { name: 'India' });
+      expect(
+        screen.getByText('Internal name only. This will not appear in quotations or public weblinks.'),
+      ).toBeInTheDocument();
+      await userEvent.selectOptions(screen.getByText('Country *').querySelector('select')!, 'IN');
+      await userEvent.type(
+        screen.getByPlaceholderText('e.g. Rajasthan Highlights'),
+        'Vietnam Holiday',
+      );
+      await userEvent.type(
+        screen.getByPlaceholderText('e.g. Internal supplier label'),
+        '  VN Supplier Package 2026  ',
+      );
+      await userEvent.click(await screen.findByRole('button', { name: 'Jaipur JAI' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Create Destination' }));
+      await screen.findByText('Saved destination');
+      const createCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith('/api/masters/destinations') && init?.method === 'POST',
+      );
+      const body = JSON.parse(String(createCall?.[1]?.body));
+      expect(body.privateName).toBe('VN Supplier Package 2026');
+      expect(body.name).toBe('Vietnam Holiday');
+    });
+
+    it('prefills, edits and clears the Private Name on the edit form', async () => {
+      auth.permissions.delete('masters.destinations.manage_images');
+      const stored = { ...destination, privateName: 'Old Internal Label' };
+      const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        if (url.includes('/lookups')) return response(lookups);
+        if (url.endsWith(`/api/masters/destinations/${destinationId}`) && init?.method === 'PATCH')
+          return response({ ...stored, ...(JSON.parse(String(init?.body)) as object) });
+        return response(stored);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderWithProviders(
+        <Routes>
+          <Route
+            path="/masters/destinations/:destinationId/edit"
+            element={<DestinationFormPage />}
+          />
+          <Route path="/masters/destinations/:destinationId" element={<div>Saved destination</div>} />
+        </Routes>,
+        { route: `/masters/destinations/${destinationId}/edit` },
+      );
+      await screen.findByRole('heading', { name: 'Edit Destination' });
+      // Existing value is prefilled once the detail loads.
+      await waitFor(() =>
+        expect(screen.getByLabelText(/Private Name/)).toHaveValue('Old Internal Label'),
+      );
+      // Clearing saves back as null.
+      await userEvent.clear(screen.getByLabelText(/Private Name/));
+      await userEvent.click(screen.getByRole('button', { name: 'Update Destination' }));
+      await screen.findByText('Saved destination');
+      const patchCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith(`/api/masters/destinations/${destinationId}`) && init?.method === 'PATCH',
+      );
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({ privateName: null });
+    });
   });
 });

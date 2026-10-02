@@ -5,7 +5,6 @@ export interface PublicQuotationFooterProps {
   operatingSince: number | null | undefined;
   tripsSold: number | null | undefined;
   tan: string | null | undefined;
-  gstin: string | null | undefined;
   quotationNumber: string;
   generatedAt: string | null | undefined;
 }
@@ -33,7 +32,6 @@ export function PublicQuotationFooter({
   operatingSince,
   tripsSold,
   tan,
-  gstin,
   quotationNumber,
   generatedAt,
 }: PublicQuotationFooterProps) {
@@ -41,7 +39,6 @@ export function PublicQuotationFooter({
     operatingSince != null && !Number.isNaN(operatingSince) ? `Since: ${operatingSince}` : null,
     tripsSold != null && !Number.isNaN(tripsSold) ? `Trips: ${tripsSold}` : null,
     tan?.trim() ? `TAN: ${tan.trim()}` : null,
-    gstin?.trim() ? `GSTIN: ${gstin.trim()}` : null,
   ].filter(Boolean);
 
   const id = formatPublicQuotationNumber(quotationNumber);

@@ -104,6 +104,7 @@ export interface Destination extends MasterVisibilityMeta {
   countryCode: string;
   countryName: string;
   name: string;
+  privateName: string | null;
   destinationType: string;
   status: string;
   inclusions: string | null;

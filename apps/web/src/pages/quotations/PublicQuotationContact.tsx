@@ -5,6 +5,7 @@ export interface PublicQuotationContactProps {
   companyName: string;
   contactPerson: string | null | undefined;
   phone: string | null | undefined;
+  gstin: string | null | undefined;
   email: string | null | undefined;
   address: string | null | undefined;
   logoUrl: string | null | undefined;
@@ -26,6 +27,7 @@ export function PublicQuotationContact({
   companyName,
   contactPerson,
   phone,
+  gstin,
   email,
   address,
   logoUrl,
@@ -76,6 +78,17 @@ export function PublicQuotationContact({
                 <a href={`tel:${phone}`} className="text-blue-600 hover:underline">
                   {phone}
                 </a>
+              </p>
+            )}
+            {gstin?.trim() && (
+              <p className={infoRow}>
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 inline-flex h-4 shrink-0 items-center rounded bg-emerald-600 px-1 text-[10px] font-bold leading-none text-white"
+                >
+                  GST
+                </span>
+                <span>{gstin.trim()}</span>
               </p>
             )}
             {email && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTravelDates } from './travel-dates';
+import { formatTravelMonthYear, resolveTravelDates } from './travel-dates';
 
 /**
  * Travel-date resolution. "Open" must never appear as an end date; when the end
@@ -138,5 +138,21 @@ describe('resolveTravelDates', () => {
   it('prefers totalDays over nights when both are provided', () => {
     const r = resolveTravelDates({ start: '2026-08-22', end: null, totalDays: 7, nights: 9 });
     expect(r.end!.toISOString().slice(0, 10)).toBe('2026-08-28');
+  });
+});
+
+describe('formatTravelMonthYear', () => {
+  it('formats a month/year period without inventing a day', () => {
+    expect(formatTravelMonthYear(12, 2026)).toBe('December 2026');
+    expect(formatTravelMonthYear(1, 2027)).toBe('January 2027');
+  });
+
+  it('returns null unless both parts are present and valid', () => {
+    expect(formatTravelMonthYear(null, 2026)).toBeNull();
+    expect(formatTravelMonthYear(12, null)).toBeNull();
+    expect(formatTravelMonthYear(undefined, undefined)).toBeNull();
+    expect(formatTravelMonthYear(0, 2026)).toBeNull();
+    expect(formatTravelMonthYear(13, 2026)).toBeNull();
+    expect(formatTravelMonthYear(12.5, 2026)).toBeNull();
   });
 });

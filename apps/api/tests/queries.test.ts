@@ -1456,3 +1456,85 @@ describe('Lead date-range filtering', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('Lead travel month/year and optional departure city', () => {
+  it('creates a month/year lead with an empty departure city and no invented day', async () => {
+    const client = await owner('owner@monthyear.test', 'Month Year Travel');
+    const response = await client.post('/api/queries', {
+      ...payload('+91 98765 40001'),
+      departureCountry: 'India',
+      travelStartDate: null,
+      travelMonth: 12,
+      travelYear: 2026,
+    });
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({ travelMonth: 12, travelYear: 2026 });
+    expect(response.body.data.travelStartDate).toBeNull();
+    expect(response.body.data.departureCity).toBeNull();
+    const row = await db.query.findUniqueOrThrow({ where: { id: response.body.data.id } });
+    expect(row.travelMonth).toBe(12);
+    expect(row.travelYear).toBe(2026);
+    expect(row.travelStartDate).toBeNull();
+    expect(row.departureCity).toBeNull();
+  });
+
+  it('rejects a travel month without its year', async () => {
+    const client = await owner('owner@monthyear2.test', 'Month Year Two');
+    const response = await client.post('/api/queries', {
+      ...payload('+91 98765 40002'),
+      travelMonth: 12,
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('preserves a legacy exact travel date when other fields are updated', async () => {
+    const client = await owner('owner@monthyear3.test', 'Month Year Three');
+    const created = await client.post('/api/queries', {
+      ...payload('+91 98765 40003'),
+      departureCity: 'Mumbai',
+      travelStartDate: '2026-09-01',
+    });
+    expect(created.status).toBe(201);
+    const updated = await client.patch(`/api/queries/${created.body.data.id}`, {
+      internalRemarks: 'Edited without touching dates',
+    });
+    expect(updated.status).toBe(200);
+    const row = await db.query.findUniqueOrThrow({ where: { id: created.body.data.id } });
+    expect(row.travelStartDate).toEqual(new Date('2026-09-01T00:00:00.000Z'));
+    expect(row.travelMonth).toBeNull();
+    expect(row.travelYear).toBeNull();
+  });
+
+  it('accepts an explicit month/year pair on update', async () => {
+    const client = await owner('owner@monthyear4.test', 'Month Year Four');
+    const created = await client.post('/api/queries', {
+      ...payload('+91 98765 40004'),
+      travelStartDate: '2026-09-01',
+    });
+    expect(created.status).toBe(201);
+    const updated = await client.patch(`/api/queries/${created.body.data.id}`, {
+      travelStartDate: null,
+      travelMonth: 12,
+      travelYear: 2026,
+    });
+    expect(updated.status).toBe(200);
+    const row = await db.query.findUniqueOrThrow({ where: { id: created.body.data.id } });
+    expect(row.travelStartDate).toBeNull();
+    expect(row.travelMonth).toBe(12);
+    expect(row.travelYear).toBe(2026);
+  });
+
+  it('creates a quotation from a month/year-only lead without a fake date', async () => {
+    const client = await owner('owner@monthyear5.test', 'Month Year Five');
+    const created = await client.post('/api/queries', {
+      ...payload('+91 98765 40005'),
+      departureCountry: 'India',
+      travelMonth: 9,
+      travelYear: 2026,
+    });
+    expect(created.status).toBe(201);
+    const quotation = await client.post('/api/quotations', { queryId: created.body.data.id });
+    expect(quotation.status).toBe(201);
+    expect(quotation.body.data.travelStartDate).toBeNull();
+  });
+});

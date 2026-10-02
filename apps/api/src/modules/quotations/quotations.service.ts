@@ -1463,31 +1463,117 @@ async function findDestinationImageRecord(
       imageObjectKey: { not: null },
       imageConfirmedAt: { not: null },
     },
-    select: { name: true, normalizedName: true, imageObjectKey: true, imageFileName: true },
+    select: {
+      id: true,
+      name: true,
+      normalizedName: true,
+      imageObjectKey: true,
+      imageFileName: true,
+    },
   });
-  // Exact matches first, in order of appearance in the quotation data.
-  for (const candidate of orderedCandidates) {
-    const exact = destinations.find(
-      (row) =>
-        row.name.trim().toLowerCase() === candidate ||
-        row.normalizedName.trim().toLowerCase() === candidate,
-    );
-    if (exact?.imageObjectKey) {
-      return { imageObjectKey: exact.imageObjectKey, imageFileName: exact.imageFileName };
-    }
-  }
-  // Fuzzy fallback (no loose substring guessing when a direct match exists).
-  for (const candidate of orderedCandidates) {
-    if (candidate.length <= 2) continue;
-    const fuzzy = destinations.find((row) => {
-      const name = row.name.trim().toLowerCase();
-      return name.includes(candidate) || candidate.includes(name);
-    });
-    if (fuzzy?.imageObjectKey) {
-      return { imageObjectKey: fuzzy.imageObjectKey, imageFileName: fuzzy.imageFileName };
-    }
+  const selected = selectDestinationImageRecord(
+    destinations,
+    fullImageNameCandidates(destinationSummary, itinerary),
+    orderedCandidates,
+  );
+  if (selected?.imageObjectKey) {
+    return { imageObjectKey: selected.imageObjectKey, imageFileName: selected.imageFileName };
   }
   return null;
+}
+
+/**
+ * Pure destination-image row selection (no I/O; exported for focused tests).
+ *
+ * Resolution order, most precise first:
+ *   1. full-string exact match — the whole destination summary or a whole
+ *      itinerary country/destination (e.g. a "Vietnam - Ho Chi Minh • Da Nang
+ *      • Hanoi - 6 Nights" master) wins over any of its fragments;
+ *   2. per-part exact match, in quotation-data order (unchanged legacy rule);
+ *   3. fuzzy fallback per candidate, keeping the LONGEST (most specific)
+ *      destination name with deterministic name/id tiebreaks — never the
+ *      arbitrary heap-order first row. Candidate priority order is preserved:
+ *      an earlier candidate's hit always beats a later candidate's hit.
+ */
+export function selectDestinationImageRecord(
+  destinations: Array<{
+    id: string;
+    name: string;
+    normalizedName: string;
+    imageObjectKey: string | null;
+    imageFileName: string | null;
+  }>,
+  fullCandidates: string[],
+  orderedCandidates: string[],
+): {
+  id: string;
+  name: string;
+  normalizedName: string;
+  imageObjectKey: string | null;
+  imageFileName: string | null;
+} | null {
+  const normalized = (value: string) => value.trim().toLowerCase();
+  const withImage = destinations.filter((row) => row.imageObjectKey);
+  // 1. Full-string exact matches, most precise first.
+  for (const candidate of fullCandidates) {
+    if (!candidate) continue;
+    const exact = withImage.find(
+      (row) => normalized(row.name) === candidate || normalized(row.normalizedName) === candidate,
+    );
+    if (exact) return exact;
+  }
+  // 2. Per-part exact matches, in order of appearance in the quotation data.
+  for (const candidate of orderedCandidates) {
+    const exact = withImage.find(
+      (row) => normalized(row.name) === candidate || normalized(row.normalizedName) === candidate,
+    );
+    if (exact) return exact;
+  }
+  // 3. Fuzzy fallback: most specific (longest) name per candidate.
+  for (const candidate of orderedCandidates) {
+    if (candidate.length <= 2) continue;
+    const hits = withImage
+      .filter((row) => {
+        const name = normalized(row.name);
+        return name.includes(candidate) || candidate.includes(name);
+      })
+      .sort(
+        (a, b) =>
+          normalized(b.name).length - normalized(a.name).length ||
+          normalized(a.name).localeCompare(normalized(b.name)) ||
+          a.id.localeCompare(b.id),
+      );
+    if (hits[0]) return hits[0];
+  }
+  return null;
+}
+
+/**
+ * Whole-string candidate names for Destination-image lookup: the full
+ * destination summary plus each full itinerary country/destination, normalized
+ * and de-duplicated. The split-fragment list from destinationImageCandidates
+ * can never equal a long master name, so without these a quotation for
+ * "Vietnam - Ho Chi Minh • Da Nang • Hanoi - 6 Nights" can only ever match
+ * short fragments ("vietnam", "da nang") and land on a stale record.
+ * Pure and exported for focused tests.
+ */
+export function fullImageNameCandidates(
+  destinationSummary: string | null | undefined,
+  itinerary: Array<{ country?: string | null; destination?: string | null }> | null | undefined,
+): string[] {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string | null | undefined) => {
+    const normalized = (value ?? '').trim().toLowerCase();
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      ordered.push(normalized);
+    }
+  };
+  add(destinationSummary);
+  for (const row of itinerary ?? []) add(row.country);
+  for (const row of itinerary ?? []) add(row.destination);
+  return ordered;
 }
 
 /** Signed weblink hero URL; null when no destination image matches. */

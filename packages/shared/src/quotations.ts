@@ -65,20 +65,55 @@ export function isPublicTaxNote(taxNote: string | null | undefined): taxNote is 
   );
 }
 
-/** Remove one or more stale leading "Day N:" prefixes from an itinerary title. */
+/**
+ * Remove stale leading day-number markers ("Day N:" or bare "Day N ") from an
+ * itinerary title. A dash separator ("Day N - ...") is NOT a marker — it is a
+ * complete stored title (e.g. from Sightseeing Master) and must survive
+ * untouched, so the bare-number branch explicitly refuses to match it.
+ */
 export function stripItineraryDayPrefixes(value: string | null | undefined): string {
   let title = (value ?? '').replace(/\s+/g, ' ').trim();
-  while (/^day\s+\d+\s*:?\s*/i.test(title)) title = title.replace(/^day\s+\d+\s*:?\s*/i, '').trim();
+  for (;;) {
+    const colon = title.match(/^day\s+\d+\s*:\s*/i);
+    if (colon) {
+      title = title.slice(colon[0].length).trim();
+      continue;
+    }
+    // Bare "Day N " (no punctuation) is a stale position marker, but never
+    // consume the dash of a "Day N - ..." stored title (hyphen, en dash or
+    // em dash all count as the stored separator).
+    const bare = title.match(/^day\s+\d+\s+(?![-–—])/i);
+    if (!bare) break;
+    title = title.slice(bare[0].length).trim();
+  }
   return title;
 }
 
-/** Format an itinerary title with exactly one prefix for its current position. */
+/** True when a title already carries a complete "Day N - ..." stored prefix. */
+function hasStoredDayDashPrefix(value: string): boolean {
+  return /^day\s+\d+\s*[-–—]\s*/i.test(value);
+}
+
+/**
+ * Format an itinerary title for its current position.
+ *
+ * The canonical separator is " - " (never ": "). A stored title that already
+ * carries a day prefix is rendered VERBATIM and never rebuilt — "Day 3 -
+ * Hanoi" stays exactly that (no injected colon, no renumbering), so
+ * legitimate colons inside it ("Day 3 - Hanoi: City Tour") are preserved too.
+ * Prefix-less titles gain the "Day N - " prefix, and stale colon-style
+ * prefixes are normalized to the dash form ("Day 4: Marina Bay" at position 5
+ * becomes "Day 5 - Marina Bay").
+ */
 export function formatItineraryDayTitle(
   dayNumber: number,
   value: string | null | undefined,
 ): string {
-  const title = stripItineraryDayPrefixes(value);
-  return title ? `Day ${dayNumber}: ${title}` : `Day ${dayNumber}`;
+  const raw = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (!raw) return `Day ${dayNumber}`;
+  if (hasStoredDayDashPrefix(raw)) return raw;
+  const title = stripItineraryDayPrefixes(raw);
+  return title ? `Day ${dayNumber} - ${title}` : `Day ${dayNumber}`;
 }
 
 /** True when an activity name duplicates the day title (after stripping Day N: prefixes). */

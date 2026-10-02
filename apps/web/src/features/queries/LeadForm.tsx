@@ -17,6 +17,7 @@ import { useSearchParams } from 'react-router-dom';
 import { type QueryInput } from '@interscale/shared';
 import countries from 'world-countries';
 import { Button } from '@/components/ui/Button';
+import { TRAVEL_MONTH_NAMES } from '@/features/quotations/travel-dates';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useLead, useLeadLookups, usePhoneSearch, type Lead, type UserOption } from './queries.api';
 import { useCustomer } from '@/features/customers/customers.api';
@@ -50,6 +51,8 @@ interface FormValues {
   departureCountry: string;
   departureCity: string;
   travelStartDate: string;
+  travelMonth: string;
+  travelYear: string;
   travelEndDate: string;
   flexibleDates: boolean;
   rooms: number;
@@ -88,6 +91,23 @@ const emptyRow = (sequence = 1): ItineraryForm => ({
   notes: '',
 });
 const dateValue = (value?: string | null) => (value ? value.slice(0, 10) : '');
+
+/** Month/year selects state loaded independently from the stored pair only.
+ * An exact travelStartDate never populates these selects: Travel Date and
+ * Travel Month are semantically separate pieces of information. */
+function travelMonthYearDefaults(lead?: Lead): { travelMonth: string; travelYear: string } {
+  if (lead?.travelMonth && lead?.travelYear)
+    return { travelMonth: String(lead.travelMonth), travelYear: String(lead.travelYear) };
+  return { travelMonth: '', travelYear: '' };
+}
+
+/** Year options: a small past window plus a generous future planning horizon. */
+function travelYearOptions(): string[] {
+  const current = new Date().getFullYear();
+  const years: string[] = [];
+  for (let year = current - 2; year <= current + 10; year += 1) years.push(String(year));
+  return years;
+}
 function defaults(lead?: Lead): FormValues {
   return {
     customerId: lead?.customer?.id ?? '',
@@ -103,8 +123,9 @@ function defaults(lead?: Lead): FormValues {
     leadStage: lead?.leadStage ?? 'NEW_LEAD',
     priority: lead?.priority ?? 'MEDIUM',
     departureCountry: lead?.departureCountry ?? 'India',
-    departureCity: lead?.departureCity ?? 'Mumbai',
+    departureCity: lead?.departureCity ?? '',
     travelStartDate: dateValue(lead?.travelStartDate),
+    ...travelMonthYearDefaults(lead),
     travelEndDate: '',
     flexibleDates: lead?.flexibleDates ?? false,
     rooms: lead?.rooms ?? 1,
@@ -392,10 +413,14 @@ export function LeadForm({
       setLocalError('Please fix the following errors: Assign To is required.');
       return;
     }
-    if (!v.travelStartDate) {
-      setLocalError('Please fix the following errors: Travel date is required.');
-      return;
-    }
+    // Travel Date and Travel Month are independent optional fields. An
+    // incomplete month/year pair (only one side selected) is treated as empty
+    // so an invalid combination is never saved; the backend pair rule agrees.
+    const monthSelected = v.travelMonth ? Number(v.travelMonth) : null;
+    const yearSelected = v.travelYear ? Number(v.travelYear) : null;
+    const travelMonth = monthSelected != null && yearSelected != null ? monthSelected : null;
+    const travelYear = monthSelected != null && yearSelected != null ? yearSelected : null;
+    const travelStartDate = v.travelStartDate ? new Date(v.travelStartDate) : null;
     if (v.services.length === 0) {
       setLocalError('Please fix the following errors: Select at least one service required.');
       return;
@@ -417,8 +442,12 @@ export function LeadForm({
       dateOfBirth: v.dateOfBirth ? new Date(v.dateOfBirth) : null,
       departureCountry: v.departureCountry || null,
       departureCity: v.departureCity || null,
-      travelStartDate: v.travelStartDate ? new Date(v.travelStartDate) : null,
+      // Exact date and month/year are stored semantically separate: never
+      // derive one from the other and never invent a day from month/year.
+      travelStartDate,
       travelEndDate: null,
+      travelMonth,
+      travelYear,
       // Per-child ages: drop blank inputs so partial entries render correctly
       // ("CWB 1: 8, CWB 2: empty" → [8]) and never become NaN/undefined.
       childrenWithBedAges: (v.childrenWithBedAges ?? []).filter(
@@ -592,19 +621,37 @@ export function LeadForm({
                 ))}
               </select>
             </Field>
-            {lead ? (
-              <div className="md:col-span-2 lg:col-span-3">
-                <Field label="Birth Date">
-                  <input className={inputClass} type="date" {...register('dateOfBirth')} />
-                </Field>
-              </div>
-            ) : null}
           </div>
         </Section>
         <Section title="Travel Details" tone="teal">
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Travel Date *">
-              <input className={inputClass} type="date" {...register('travelStartDate')} />
+            <Field label="Travel Date">
+              <input
+                aria-label="Travel Date"
+                type="date"
+                className={inputClass}
+                {...register('travelStartDate')}
+              />
+            </Field>
+            <Field label="Travel Month">
+              <div className="grid grid-cols-2 gap-2">
+                <select aria-label="Travel month" className={inputClass} {...register('travelMonth')}>
+                  <option value="">Month</option>
+                  {TRAVEL_MONTH_NAMES.map((month, index) => (
+                    <option key={month} value={index + 1}>
+                      {month}
+                    </option>
+                  ))}
+                </select>
+                <select aria-label="Travel year" className={inputClass} {...register('travelYear')}>
+                  <option value="">Year</option>
+                  {travelYearOptions().map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </Field>
             <Field label="Departure country">
               <select
@@ -621,7 +668,7 @@ export function LeadForm({
                 ))}
               </select>
             </Field>
-            <Field label="Departure city">
+            <Field label="Departure city (Optional)">
               <select className={inputClass} {...register('departureCity')}>
                 <option value="">Select city</option>
                 {cityOptions.map((city) => (

@@ -45,6 +45,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { labelForLookup } from '@interscale/shared';
 import type { LeadDateFilterType } from '@interscale/shared';
 import { LeadServicesCell } from '@/features/queries/LeadServicesCell';
+import { formatTravelMonthYear } from '@/features/quotations/travel-dates';
 import { cn } from '@/utils/cn';
 import { MetricInfoTooltip } from '@/components/ui/Tooltip';
 import { LeadImportModal } from './LeadImportModal';
@@ -281,10 +282,15 @@ function TravellersInfoCell({ lead }: { lead: Lead }) {
       <span className="leads-traveller-block leads-traveller-block--city">
         <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" /> {lead.departureCity || 'N/A'}
       </span>
-      <span className="leads-traveller-block leads-traveller-block--date">
-        <Calendar className="h-3 w-3 shrink-0" aria-hidden="true" />
-        {leadDate(lead.travelStartDate) ?? 'Flexible dates'}
-      </span>
+        <span className="leads-traveller-block leads-traveller-block--date">
+          <Calendar className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {[
+            leadDate(lead.travelStartDate),
+            formatTravelMonthYear(lead.travelMonth, lead.travelYear),
+          ]
+            .filter(Boolean)
+            .join(' • ') || 'Flexible dates'}
+        </span>
       <span className="leads-traveller-block leads-traveller-block--rooms">
         {displayTravellerSummary(lead.travellerSummary) || 'No traveller details'}
       </span>

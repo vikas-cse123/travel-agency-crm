@@ -1542,6 +1542,9 @@ model Destination {
   countryName           String           @db.VarChar(120)
   name                  String           @db.VarChar(200)
   normalizedName        String           @db.VarChar(200)
+  /// Internal-only label for agency staff. Never rendered in quotations,
+  /// weblinks, PDFs or any other customer-facing output.
+  privateName           String?          @db.VarChar(200)
   destinationType       DestinationType
   imageStorageProvider  StorageProvider?
   imageBucket           String?          @db.VarChar(255)
@@ -2844,6 +2847,12 @@ model Query {
   departureCity            String?                  @db.VarChar(100)
   travelStartDate          DateTime?                @db.Date
   travelEndDate            DateTime?                @db.Date
+  /// Expected travel month (1-12) without a day. Used instead of an exact
+  /// travelStartDate for month/year-only leads; legacy exact dates keep
+  /// travelStartDate and leave these null. Never invent a day from these.
+  travelMonth              Int?
+  /// Expected travel year for month/year-only leads. See travelMonth.
+  travelYear               Int?
   flexibleDates            Boolean                  @default(false)
   rooms                    Int                      @default(1)
   adults                   Int                      @default(1)

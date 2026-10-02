@@ -1444,7 +1444,7 @@ describe('PDF rendering with long content', () => {
     // City-specific content stays Kuala Lumpur.
     expect(visible).toContain('Kuala Lumpur');
     expect(visible).toContain('Grand KL Hotel');
-    expect(visible.replace(/\s+/g, ' ')).toContain('Day 1: Kuala Lumpur');
+    expect(visible.replace(/\s+/g, ' ')).toContain('Day 1 - Kuala Lumpur');
   });
 
   it('renders a quotation PDF with missing optional data without junk or broken blocks', async () => {
@@ -2591,9 +2591,9 @@ describe('PDF rendering with long content', () => {
     expect(stripItineraryDayPrefixes('Day 5: Day 4: Day 3: Singapore City Tour')).toBe(
       'Singapore City Tour',
     );
-    expect(formatItineraryDayTitle(5, 'Day 4: Marina Bay')).toBe('Day 5: Marina Bay');
+    expect(formatItineraryDayTitle(5, 'Day 4: Marina Bay')).toBe('Day 5 - Marina Bay');
     expect(formatItineraryDayTitle(4, 'Day 3: Singapore City Tour')).toBe(
-      'Day 4: Singapore City Tour',
+      'Day 4 - Singapore City Tour',
     );
   });
 
@@ -2625,7 +2625,7 @@ describe('PDF rendering with long content', () => {
       },
       images: { cover: PNG_1PX },
     });
-    expect(pdfText(pdf)).toContain('Day 5: Day at Leisure');
+    expect(pdfText(pdf)).toContain('Day 5 - Day at Leisure');
     expect(
       (pdf.toString('latin1').match(/\/Subtype\s*\/Image/g) ?? []).length,
     ).toBeGreaterThanOrEqual(2);
@@ -2822,7 +2822,7 @@ describe('PDF rendering with long content', () => {
     });
     expect(isPdf(pdf)).toBe(true);
     const visible = pdfText(pdf);
-    expect(visible).toContain('Day 2: Mandai Wildlife Reserve Adventure');
+    expect(visible).toContain('Day 2 - Mandai Wildlife Reserve Adventure');
     expect(visible).toContain('Singapore City Tour');
     expect(visible).toContain('Singapore Zoo');
     expect(visible).toContain('Day at Cruise');

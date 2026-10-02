@@ -32,6 +32,11 @@ export const cityUpdateSchema = cityInputSchema
 const destinationBaseSchema = z.object({
   countryCode,
   name: z.string().trim().min(2).max(200),
+  // Internal-only label for agency staff (trimmed; blank becomes null
+  // server-side). Never used as the customer-facing destination name and
+  // never matched, resolved, or rendered in quotation flows.
+  // (Inline max() because the shared optionalText helper is declared below.)
+  privateName: z.string().trim().max(200).nullable().optional(),
   destinationType: z.enum(DESTINATION_TYPES),
   cityIds: z.array(z.string().uuid()).min(1, 'Select at least one city.').max(100),
   inclusions: optionalRichText,

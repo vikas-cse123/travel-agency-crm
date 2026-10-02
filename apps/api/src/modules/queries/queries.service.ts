@@ -556,6 +556,8 @@ function scalarData(input: QueryInput | QueryUpdateInput) {
     'departureCity',
     'travelStartDate',
     'travelEndDate',
+    'travelMonth',
+    'travelYear',
     'flexibleDates',
     'rooms',
     'adults',

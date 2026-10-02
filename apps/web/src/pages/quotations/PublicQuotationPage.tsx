@@ -2871,6 +2871,7 @@ export function PublicQuotationPage() {
             companyName={company.name}
             contactPerson={preparedBy}
             phone={company.phone}
+            gstin={company.taxRegistrationNumber}
             email={company.email}
             address={company.address}
             logoUrl={company.logoUrl}
@@ -2886,7 +2887,6 @@ export function PublicQuotationPage() {
         operatingSince={company.operatingSince}
         tripsSold={company.tripsSold}
         tan={company.tan}
-        gstin={company.taxRegistrationNumber}
         quotationNumber={q.quotationNumber}
         generatedAt={q.createdAt}
       />

@@ -35,7 +35,7 @@ import {
   useNotes,
   useTimeline,
 } from '@/features/queries/queries.api';
-import { leadTravelDatesLabel } from '@/features/quotations/travel-dates';
+import { formatTravelMonthYear, leadTravelDatesLabel } from '@/features/quotations/travel-dates';
 
 const displayTravellerSummary = (summary: string | null | undefined): string => {
   if (!summary) return '';
@@ -469,13 +469,18 @@ export function LeadDetailsPage() {
             <h2 className="font-semibold">Travel and travellers</h2>
             <dl className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
               <Info label="Dates">
-                {leadTravelDatesLabel(
-                  q.travelStartDate,
-                  q.travelEndDate,
-                  q.itinerary.length
-                    ? q.itinerary.reduce((sum, row) => sum + row.nights, 0) + 1
-                    : undefined,
-                ) || 'Flexible'}
+                {[
+                  leadTravelDatesLabel(
+                    q.travelStartDate,
+                    q.travelEndDate,
+                    q.itinerary.length
+                      ? q.itinerary.reduce((sum, row) => sum + row.nights, 0) + 1
+                      : undefined,
+                  ),
+                  formatTravelMonthYear(q.travelMonth, q.travelYear),
+                ]
+                  .filter(Boolean)
+                  .join(' • ') || 'Flexible'}
               </Info>
               <Info label="Departure">
                 {[q.departureCity, q.departureCountry].filter(Boolean).join(', ')}

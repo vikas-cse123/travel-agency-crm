@@ -16,6 +16,7 @@ import { QuotationTemplateFormPage } from './QuotationTemplateFormPage';
 import { QuotationsPage } from './QuotationsPage';
 import { NewQuotationPage } from './NewQuotationPage';
 import { PublicQuotationPage } from './PublicQuotationPage';
+import { PublicQuotationContact } from './PublicQuotationContact';
 import {
   buildQuotationDescription,
   formatPublicQuotationNumber,
@@ -4149,11 +4150,11 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getByText('Explore the highlights.')).toBeInTheDocument();
     expect(screen.queryByText(/<p>/)).not.toBeInTheDocument();
     // Deduplicated day title (never "Day 1: Day 1: …").
-    expect(screen.getByRole('heading', { name: 'Day 1: City Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Day 1 - City Tour' })).toBeInTheDocument();
     expect(screen.queryByText('Day 1: Day 1: City Tour')).not.toBeInTheDocument();
     // Metadata: city + formatted date.
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Singapore')).toBeInTheDocument();
     expect(within(article).getByText(/Mon, 10 Aug 2026/)).toBeInTheDocument();
@@ -4260,7 +4261,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Per Meal Options');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     expect(
       within(article).getByText(
@@ -4345,7 +4346,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Legacy Meals');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     // The shared legacy WITH_TRANSFER mode now renders per meal.
     expect(
@@ -4430,7 +4431,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('No Detail Meal');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     // WITH_TRANSFER with blank details renders without a trailing colon.
     expect(within(article).getByText('Dinner (With Transfer)')).toBeInTheDocument();
@@ -4518,7 +4519,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Legacy Variants');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     // Each variant normalizes to its canonical label; none becomes (Hotel).
     expect(
@@ -4603,7 +4604,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Unknown Mode');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     // A present-but-unknown per-meal mode shows no suffix (never (Hotel)).
     expect(within(article).getByText('Meals:')).toBeInTheDocument();
@@ -4696,7 +4697,7 @@ describe('Phase 8 quotation pages', () => {
     await screen.findByText('Thumbnails');
 
     const article = screen
-      .getByRole('heading', { name: 'Day 1: City Tour' })
+      .getByRole('heading', { name: 'Day 1 - City Tour' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Activities & Details')).toBeInTheDocument();
     // Each activity owns its image; the second resolves its signed presentation.
@@ -5115,7 +5116,7 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
     await screen.findByText('Kerala Escape');
-    expect(screen.getByRole('heading', { name: 'Day 2: Sentosa Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Day 2 - Sentosa Tour' })).toBeInTheDocument();
     // No transfer badge for NO_TRANSFER, no meals row when nothing selected.
     expect(screen.queryByText('Shared Transfer')).not.toBeInTheDocument();
     expect(screen.queryByText('Private Transfer')).not.toBeInTheDocument();
@@ -5216,7 +5217,7 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.queryByText(/alert/)).not.toBeInTheDocument();
     // The green itinerary timeline remains directly below the box.
     expect(screen.getByRole('heading', { name: 'Your Itinerary' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Day 1: City Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Day 1 - City Tour' })).toBeInTheDocument();
   });
 
   it('hides the Instructions box when the section description is empty', async () => {
@@ -5296,7 +5297,7 @@ describe('Phase 8 quotation pages', () => {
 
     expect(screen.queryByText('Instructions')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Your Itinerary' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Day 1: City Tour' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Day 1 - City Tour' })).toBeInTheDocument();
   });
 
   it('hides empty sightseeing days and renders multiple activities in one card', async () => {
@@ -5391,12 +5392,12 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
     await screen.findByText('Kerala Escape');
-    expect(screen.getByRole('heading', { name: 'Day 1: Full Day' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Day 1 - Full Day' })).toBeInTheDocument();
     // The empty day 2 is hidden entirely.
     expect(screen.queryByRole('heading', { name: 'Day 2:' })).not.toBeInTheDocument();
     // Both activities render inside the same day card, in order.
     const article = screen
-      .getByRole('heading', { name: 'Day 1: Full Day' })
+      .getByRole('heading', { name: 'Day 1 - Full Day' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Morning Tour')).toBeInTheDocument();
     expect(within(article).getByText('Evening Dinner Cruise')).toBeInTheDocument();
@@ -5561,7 +5562,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Ladakh Trip');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: Pangong' })
+      .getByRole('heading', { name: 'Day 1 - Pangong' })
       .closest('article') as HTMLElement;
     // Header exists
     expect(within(article).getByText('Activities & Details')).toBeInTheDocument();
@@ -5657,7 +5658,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Goa Beach Holiday');
     const article = screen
-      .getByRole('heading', { name: 'Day 1: North Goa' })
+      .getByRole('heading', { name: 'Day 1 - North Goa' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Activities & Details')).toBeInTheDocument();
     expect(within(article).getByText('Fort Aguada')).toBeInTheDocument();
@@ -5765,7 +5766,7 @@ describe('Phase 8 quotation pages', () => {
     );
     await screen.findByText('Per Activity Transfer');
     const article = screen
-      .getByRole('heading', { name: 'Day 2: Mandai Wildlife Reserve Adventure' })
+      .getByRole('heading', { name: 'Day 2 - Mandai Wildlife Reserve Adventure' })
       .closest('article') as HTMLElement;
     expect(within(article).getByText('Singapore City Tour')).toBeInTheDocument();
     expect(within(article).getByText('Singapore Zoo')).toBeInTheDocument();
@@ -5843,7 +5844,7 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
     await screen.findByText('Kerala Escape');
-    expect(screen.getByRole('heading', { name: 'Day 3: Legacy Day' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Day 3 - Legacy Day' })).toBeInTheDocument();
     expect(screen.getByText('Legacy Activity')).toBeInTheDocument();
     expect(screen.getByText('Private Transfer')).toBeInTheDocument();
     // Array meals normalize to booleans; the shared WITH_TRANSFER mode renders per meal.
@@ -7925,10 +7926,9 @@ describe('Phase 8 quotation pages', () => {
     // Copyright line with dynamic year and company name from settings.
     const year = new Date().getFullYear();
     expect(screen.getByText(`© ${year} Alpha Travel. All rights reserved.`)).toBeInTheDocument();
-    // Secondary metadata line joins only present values.
-    expect(
-      screen.getByText('Since: 2015 | Trips: 4200 | TAN: ABCD12345E | GSTIN: 29ABCDE1234F1Z5'),
-    ).toBeInTheDocument();
+    // Secondary metadata line joins only present values (GSTIN moved to Contact Us).
+    expect(screen.getByText('Since: 2015 | Trips: 4200 | TAN: ABCD12345E')).toBeInTheDocument();
+    expect(screen.queryByText(/GSTIN/)).not.toBeInTheDocument();
     // Right side: quotation number + formatted generated date.
     expect(
       screen.getByText('Quotation ID: #QT-2026-000001 | Generated: 04 Aug 2026'),
@@ -7941,6 +7941,56 @@ describe('Phase 8 quotation pages', () => {
         'https://storage.example.test/alpha-logo.png',
       ),
     );
+  });
+
+  describe('Public quotation Contact Us GST row', () => {
+    const contactProps = {
+      companyName: 'Alpha Travel',
+      contactPerson: 'Aditi Rao',
+      phone: '+91 90000 00000',
+      gstin: '29ABCDE1234F1Z5',
+      email: 'hello@alpha.test',
+      address: '1 MG Road, Bengaluru',
+      logoUrl: null,
+      quotationId: 'QT-2026-000001',
+      quotationTitle: 'Goa proposal',
+      leadName: 'Aarav Mehta',
+    };
+
+    it('shows the GST badge with the number directly below the phone row', () => {
+      renderWithProviders(<PublicQuotationContact {...contactProps} />);
+      // Badge carries only "GST" (never "GSTIN"); the number is dynamic.
+      expect(screen.getByText('GST', { exact: true })).toBeInTheDocument();
+      expect(screen.getByText('29ABCDE1234F1Z5')).toBeInTheDocument();
+      expect(screen.queryByText(/GSTIN/)).not.toBeInTheDocument();
+      // Order: phone row, then GST row, then email row.
+      const phone = screen.getByText('+91 90000 00000');
+      const gst = screen.getByText('29ABCDE1234F1Z5');
+      const email = screen.getByText('hello@alpha.test');
+      expect(
+        // eslint-disable-next-line no-bitwise
+        phone.compareDocumentPosition(gst) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        // eslint-disable-next-line no-bitwise
+        gst.compareDocumentPosition(email) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      // Phone, email, buttons unchanged.
+      expect(screen.getByText('Call Now')).toBeInTheDocument();
+      expect(screen.getByText('WhatsApp')).toBeInTheDocument();
+    });
+
+    it('hides the GST row when no GSTIN is present', () => {
+      renderWithProviders(<PublicQuotationContact {...contactProps} gstin={null} />);
+      expect(screen.queryByText('GST', { exact: true })).not.toBeInTheDocument();
+      expect(screen.getByText('+91 90000 00000')).toBeInTheDocument();
+      expect(screen.getByText('hello@alpha.test')).toBeInTheDocument();
+    });
+
+    it('hides the GST row for a blank GSTIN', () => {
+      renderWithProviders(<PublicQuotationContact {...contactProps} gstin="   " />);
+      expect(screen.queryByText('GST', { exact: true })).not.toBeInTheDocument();
+    });
   });
 
   it('shows the quotation ID as "#1032" in the info card and the footer', async () => {
@@ -10720,7 +10770,7 @@ describe.skip('Phase 14 master selectors', () => {
         screen
           .getAllByLabelText(/Sightseeing day \d+ title/)
           .map((input) => (input as HTMLInputElement).value),
-      ).toEqual(['Day 1: Universal Studios', 'Day 2', 'Day 3: Singapore City Tour']);
+      ).toEqual(['Day 1 - Universal Studios', 'Day 2', 'Day 3 - Singapore City Tour']);
     });
   });
 
@@ -10774,7 +10824,7 @@ describe.skip('Phase 14 master selectors', () => {
         screen
           .getAllByLabelText(/Sightseeing day \d+ title/)
           .map((input) => (input as HTMLInputElement).value),
-      ).toEqual(['Day 1', 'Day 2: Universal Studios']);
+      ).toEqual(['Day 1', 'Day 2 - Universal Studios']);
     });
     expect(
       screen.getAllByRole('button', { name: /Insert sightseeing day before day/ }),
@@ -11977,9 +12027,9 @@ describe.skip('Phase 14 master selectors', () => {
     // No extra prefilled activities; the remaining masters stay in the picker.
     expect(screen.queryByLabelText('Day 1 activity 2 name')).not.toBeInTheDocument();
     // Meaningful day titles derived from the primary activity (no duplicated prefix).
-    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1: City Tour');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - City Tour');
     expect(screen.getByLabelText('Sightseeing day 5 title')).toHaveValue(
-      'Day 5: Gardens by the Bay',
+      'Day 5 - Gardens by the Bay',
     );
   });
 
@@ -12026,7 +12076,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Sightseeing');
     await waitFor(() =>
-      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1: My Custom Day'),
+      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - My Custom Day'),
     );
   });
 
@@ -12058,7 +12108,7 @@ describe.skip('Phase 14 master selectors', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue('City Tour'),
     );
-    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1: City Tour');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - City Tour');
     expect(screen.getByLabelText('Day 1 activity 1 start time')).toHaveValue('14:00');
     expect(screen.getByLabelText('Day 1 activity 1 description')).toHaveTextContent(
       'Guided tour of the city.',
@@ -12503,7 +12553,7 @@ describe.skip('Phase 14 master selectors', () => {
     );
     // Day at Leisure needs no master id; no image shows (placeholder).
     expect(screen.queryByAltText('Activity')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1: Day at Leisure');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Day 1 - Day at Leisure');
 
     fireEvent.change(picker, { target: { value: 'Custom Sightseeing' } });
     await waitFor(() => expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue(''));
@@ -14824,7 +14874,7 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Sightseeing');
     // Day 7 (final) gets the departure master
     const day7Title = (await screen.findByLabelText('Sightseeing day 7 title')) as HTMLInputElement;
-    expect(day7Title.value).toBe('Day 7: Departure from Singapore');
+    expect(day7Title.value).toBe('Day 7 - Departure from Singapore');
     const day7Activity = screen.getByLabelText('Day 7 activity 1');
     fireEvent.focus(day7Activity);
     const day7Listbox = screen.getByRole('listbox', { name: 'Day 7 activity 1' });

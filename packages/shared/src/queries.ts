@@ -80,6 +80,24 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
 const optionalDate = z.coerce.date().nullable().optional();
 const optionalMoney = z.coerce.number().min(0).max(999999999999).nullable().optional();
 
+/**
+ * Month/year pair rule (both or neither; absent counts as neither so partial
+ * updates and legacy exact-date payloads without the pair stay valid).
+ */
+function assertTravelMonthYearPair(
+  v: { travelMonth?: number | null | undefined; travelYear?: number | null | undefined },
+  ctx: z.RefinementCtx,
+) {
+  const monthSet = v.travelMonth !== undefined && v.travelMonth !== null;
+  const yearSet = v.travelYear !== undefined && v.travelYear !== null;
+  if (monthSet !== yearSet)
+    ctx.addIssue({
+      code: 'custom',
+      path: ['travelMonth'],
+      message: 'Travel month and year must be set together.',
+    });
+}
+
 export const itineraryInputSchema = z
   .object({
     country: z.string().trim().min(1).max(80),
@@ -119,6 +137,11 @@ export const queryInputSchema = z
     departureCity: optionalText(100),
     travelStartDate: optionalDate,
     travelEndDate: optionalDate,
+    // Expected travel month/year without a day (month-only leads). Legacy
+    // exact-date records keep travelStartDate and leave these null. The pair
+    // rule below enforces both-or-neither; callers must never invent a day.
+    travelMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
+    travelYear: z.coerce.number().int().min(1900).max(2100).nullable().optional(),
     flexibleDates: z.boolean().default(false),
     rooms: z.coerce.number().int().min(1).max(100).default(1),
     adults: z.coerce.number().int().min(1).max(200).default(1),
@@ -150,6 +173,7 @@ export const queryInputSchema = z
     initialFollowUp: followUpInputSchema.optional(),
   })
   .superRefine((v, ctx) => {
+    assertTravelMonthYearPair(v, ctx);
     if (v.travelStartDate && v.travelEndDate && v.travelStartDate > v.travelEndDate)
       ctx.addIssue({
         code: 'custom',
@@ -196,6 +220,7 @@ export const queryUpdateSchema = queryInputSchema
     createAnyway: true,
   })
   .partial()
+  .superRefine((v, ctx) => assertTravelMonthYearPair(v, ctx))
   .refine((v) => Object.keys(v).length > 0);
 export const stageInputSchema = z.object({
   stage: z.enum(LEAD_STAGES),

@@ -44,6 +44,8 @@ import {
 } from './master-images.js';
 
 export type MastersRequestContext = { ipAddress: string | null; userAgent: string | null };
+const blankToNull = (value: string | null | undefined): string | null =>
+  value?.trim() ? value.trim() : null;
 const userSelect = { id: true, fullName: true } as const;
 const has = (auth: AuthContext, permission: string) =>
   permissionsService.userHasPermission(auth.userId, permission);
@@ -568,6 +570,7 @@ export const destinationsService = {
         ? {
             OR: [
               { name: { contains: search, mode: 'insensitive' } },
+              { privateName: { contains: search, mode: 'insensitive' } },
               { countryName: { contains: search, mode: 'insensitive' } },
               { cities: { some: { city: { name: { contains: search, mode: 'insensitive' } } } } },
             ],
@@ -627,6 +630,9 @@ export const destinationsService = {
             countryName: countrySnapshot(input.countryCode),
             name: input.name.trim(),
             normalizedName: normalizeCustomerName(input.name),
+            // Internal-only label; blank becomes null. Never used for
+            // customer-facing naming or matching.
+            privateName: blankToNull(input.privateName),
             destinationType: input.destinationType,
             status: input.status,
             createdById: auth.userId,
@@ -697,6 +703,7 @@ export const destinationsService = {
             ...(input.name
               ? { name: input.name.trim(), normalizedName: normalizeCustomerName(input.name) }
               : {}),
+            ...('privateName' in input ? { privateName: blankToNull(input.privateName) } : {}),
             ...(input.destinationType ? { destinationType: input.destinationType } : {}),
             ...(input.status
               ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
