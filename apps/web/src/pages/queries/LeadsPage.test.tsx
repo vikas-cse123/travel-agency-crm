@@ -451,6 +451,159 @@ describe('Phase 6 lead pages', () => {
       expect(body.services).toContain('SIGHTSEEING');
     });
   });
+  it('shows private names in destination options but stores only the destination name', async () => {
+    authState.permissions.delete('queries.assign');
+    const destinations = [
+      {
+        id: 'dest-goa',
+        name: 'Goa Beach Escape',
+        privateName: 'GBE',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-goa', sequence: 1, city: { name: 'Goa' } }],
+      },
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        privateName: null,
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
+      },
+      {
+        id: 'dest-lko',
+        name: 'Lucknow',
+        privateName: '   ',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-lko', sequence: 1, city: { name: 'Lucknow' } }],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: destinations,
+          pagination: { page: 1, pageSize: 100, total: 3, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    const destSelect = screen.getByLabelText('Destination 1') as HTMLSelectElement;
+    await waitFor(() => {
+      const options = Array.from(destSelect.querySelectorAll('option')).map(
+        (option) => option.textContent,
+      );
+      // Helper labels visible in the open list; whitespace-only treated as empty.
+      expect(options).toContain('Goa Beach Escape — GBE');
+      expect(options).toContain('Singapore');
+      expect(options).toContain('Lucknow');
+      expect(options).not.toContain('Lucknow —');
+    });
+    await userEvent.selectOptions(destSelect, 'Goa Beach Escape');
+    // Closed/selected field shows only the public name, value is the plain name.
+    expect(destSelect.value).toBe('Goa Beach Escape');
+    expect(destSelect.selectedOptions[0]?.textContent).toBe('Goa Beach Escape');
+    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
+    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Goa');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.itinerary[0].country).toBe('Goa Beach Escape');
+      // Private name never persisted anywhere in the payload.
+      expect(JSON.stringify(body)).not.toContain('GBE');
+    });
+  });
+  it('shows only the destination name for a stored itinerary on edit', async () => {
+    const editLead = {
+      ...lead,
+      travelMonth: null,
+      travelYear: null,
+      itinerary: [
+        {
+          id: 'itinerary-1',
+          country: 'Goa Beach Escape',
+          destination: 'Goa',
+          nights: 3,
+          sequence: 1,
+          arrivalDate: null,
+          departureDate: null,
+          notes: null,
+        },
+      ],
+    };
+    const destinations = [
+      {
+        id: 'dest-goa',
+        name: 'Goa Beach Escape',
+        privateName: 'GBE',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-goa', sequence: 1, city: { name: 'Goa' } }],
+      },
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        privateName: null,
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
+      },
+      {
+        id: 'dest-lko',
+        name: 'Lucknow',
+        privateName: 'avd',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-lko', sequence: 1, city: { name: 'Lucknow' } }],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: destinations,
+          pagination: { page: 1, pageSize: 100, total: 3, totalPages: 1 },
+        });
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${editLead.id}`)) {
+        if (options?.method === 'PATCH')
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: editLead }),
+          } as Response;
+        return response(editLead);
+      }
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${editLead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    const destSelect = (await screen.findByLabelText(
+      'Destination 1',
+    )) as HTMLSelectElement;
+    await waitFor(() => expect(destSelect.value).toBe('Goa Beach Escape'));
+    // Stored destination loads correctly; selected field shows the public name only.
+    expect(destSelect.selectedOptions[0]?.textContent).toBe('Goa Beach Escape');
+    // Unselected options still carry the internal helper.
+    const options = Array.from(destSelect.querySelectorAll('option')).map(
+      (option) => option.textContent,
+    );
+    expect(options).toContain('Singapore');
+    expect(options).toContain('Lucknow — avd');
+  });
   it('hides Visa in the edit form and preserves a stored Visa selection on save', async () => {
     const editLead = {
       ...lead,

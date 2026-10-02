@@ -101,6 +101,23 @@ function travelMonthYearDefaults(lead?: Lead): { travelMonth: string; travelYear
   return { travelMonth: '', travelYear: '' };
 }
 
+/**
+ * Dropdown-only helper label for the Lead Itinerary destination selector.
+ * Unselected options show "Destination Name — Private Name" so staff can
+ * identify destinations internally; the selected option always renders the
+ * plain public name because a native <select> displays the selected option's
+ * text in its closed field. The stored/submitted value is always the
+ * destination name — privateName never leaves this dropdown.
+ */
+function destinationOptionLabel(
+  destination: { name: string; privateName?: string | null },
+  selected: boolean,
+): string {
+  if (selected) return destination.name;
+  const privateName = destination.privateName?.trim();
+  return privateName ? `${destination.name} — ${privateName}` : destination.name;
+}
+
 /** Year options: a small past window plus a generous future planning horizon. */
 function travelYearOptions(): string[] {
   const current = new Date().getFullYear();
@@ -824,11 +841,15 @@ export function LeadForm({
                   })}
                 >
                   <option value="">Select Destination</option>
-                  {(itineraryDestinations.data?.data ?? []).map((destination) => (
-                    <option key={destination.id} value={destination.name}>
-                      {destination.name}
-                    </option>
-                  ))}
+                  {(itineraryDestinations.data?.data ?? []).map((destination) => {
+                    const isSelected =
+                      itineraryRows?.[index]?.country === destination.name;
+                    return (
+                      <option key={destination.id} value={destination.name}>
+                        {destinationOptionLabel(destination, isSelected)}
+                      </option>
+                    );
+                  })}
                 </select>
               </Field>
               <Field label={`City ${index + 1}`}>
