@@ -482,6 +482,8 @@ const addOnServiceBaseSchema = z.object({
   // Single optional price — empty is valid. Stored as null when not provided.
   price: optionalMoney,
   currency: currency.default('INR'),
+  // Free-text pricing basis (e.g. "Per Person"). Optional, never restricted.
+  pricingBasis: optionalText(80),
   status: z.enum(MASTER_STATUSES).default('ACTIVE'),
 });
 
@@ -489,6 +491,19 @@ export const addOnServiceInputSchema = addOnServiceBaseSchema;
 export const addOnServiceUpdateSchema = addOnServiceBaseSchema
   .partial()
   .refine((value) => Object.keys(value).length > 0, 'At least one field is required.');
+
+export const ADD_ON_SERVICE_IMAGE_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+] as const;
+
+export const addOnServiceImageUploadSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.enum(ADD_ON_SERVICE_IMAGE_MIME_TYPES),
+  fileSize: z.coerce.number().int().positive(),
+});
 
 // ---------------------------------------------------------------------------
 // Visa Types
@@ -611,6 +626,7 @@ export type SightseeingImageUploadInput = z.infer<typeof sightseeingImageUploadS
 export type SightseeingReorderInput = z.infer<typeof sightseeingReorderSchema>;
 export type AddOnServiceInput = z.infer<typeof addOnServiceInputSchema>;
 export type AddOnServiceUpdateInput = z.infer<typeof addOnServiceUpdateSchema>;
+export type AddOnServiceImageUploadInput = z.infer<typeof addOnServiceImageUploadSchema>;
 export type VisaTypeSectionInput = z.infer<typeof visaTypeSectionSchema>;
 export type VisaTypeInput = z.infer<typeof visaTypeInputSchema>;
 export type VisaTypeUpdateInput = z.infer<typeof visaTypeUpdateSchema>;

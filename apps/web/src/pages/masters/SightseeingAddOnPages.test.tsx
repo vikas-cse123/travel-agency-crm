@@ -432,6 +432,105 @@ describe('Phase 13D master pages', () => {
     expect(screen.getAllByText(/3,800/).length).toBeGreaterThan(0);
     expect(screen.getByText('Created By')).toBeInTheDocument();
     expect(screen.getByText('Aditi Rao')).toBeInTheDocument();
+    // No images on the fixture → no gallery section, same as before.
+    expect(screen.queryByText('Images')).not.toBeInTheDocument();
+  });
+
+  it('shows the Service Images gallery on create when media is permitted', async () => {
+    auth.permissions = new Set([...ALL, 'masters.add_on_services.manage_media']);
+    stubApi();
+    renderWithProviders(<AddOnServiceFormPage />, { route: '/masters/add-on-services/new' });
+
+    expect(await screen.findByText('Service Images')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add service images')).toBeInTheDocument();
+    expect(
+      screen.getByText(/The first image is the primary image. Maximum 5 MB per image./),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the Service Images gallery without the media permission', async () => {
+    auth.permissions = new Set(
+      ALL.filter((permission) => permission !== 'masters.add_on_services.manage_media'),
+    );
+    stubApi();
+    renderWithProviders(<AddOnServiceFormPage />, { route: '/masters/add-on-services/new' });
+
+    await screen.findByRole('heading', { name: 'Create Add-On Service' });
+    expect(screen.queryByText('Service Images')).not.toBeInTheDocument();
+  });
+
+  it('loads existing images into the edit form and the details view', async () => {
+    auth.permissions = new Set([...ALL, 'masters.add_on_services.manage_media']);
+    const withImages = {
+      ...service,
+      hasImage: true,
+      images: [
+        {
+          id: 'img-1',
+          fileName: 'visa.png',
+          mimeType: 'image/png',
+          fileSize: 1234,
+          isPrimary: true,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes(`/masters/add-on-services/${serviceId}`)) return response(withImages);
+        if (url.includes('/masters/add-on-services')) return response(page([withImages]));
+        return response(page([]));
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/masters/add-on-services/:addOnServiceId/edit"
+          element={<AddOnServiceFormPage />}
+        />
+      </Routes>,
+      { route: `/masters/add-on-services/${serviceId}/edit` },
+    );
+
+    // Existing gallery tile renders with primary badge and file name.
+    expect(await screen.findByText('visa.png')).toBeInTheDocument();
+    expect(screen.getByText('Primary')).toBeInTheDocument();
+  });
+
+  it('shows saved images in the details view', async () => {
+    const withImages = {
+      ...service,
+      hasImage: true,
+      images: [
+        {
+          id: 'img-1',
+          fileName: 'visa.png',
+          mimeType: 'image/png',
+          fileSize: 1234,
+          isPrimary: true,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes(`/masters/add-on-services/${serviceId}`)) return response(withImages);
+        if (url.includes('/masters/add-on-services')) return response(page([withImages]));
+        return response(page([]));
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/masters/add-on-services/:addOnServiceId"
+          element={<AddOnServiceDetailsPage />}
+        />
+      </Routes>,
+      { route: `/masters/add-on-services/${serviceId}` },
+    );
+    expect(await screen.findByText('Images')).toBeInTheDocument();
   });
 });
 

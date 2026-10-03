@@ -897,6 +897,9 @@ enum ActivityAction {
   ADD_ON_SERVICE_STATUS_CHANGED
   ADD_ON_SERVICE_ARCHIVED
   ADD_ON_SERVICE_RESTORED
+  ADD_ON_SERVICE_IMAGE_UPLOADED
+  ADD_ON_SERVICE_IMAGE_REPLACED
+  ADD_ON_SERVICE_IMAGE_DELETED
   VISA_TYPE_CREATED
   VISA_TYPE_UPDATED
   VISA_TYPE_STATUS_CHANGED
@@ -2026,7 +2029,8 @@ model Sightseeing {
 ///
 /// The reference form exposes exactly four fields — name, description, price
 /// and an active toggle — so there is deliberately no category, pricing basis,
-/// tax, internal cost or image here.
+/// tax or internal cost here. Gallery images mirror the hotel/sightseeing
+/// multi-image implementation.
 model AddOnService {
   id             String  @id @default(uuid()) @db.Uuid
   companyId      String  @db.Uuid
@@ -2038,6 +2042,22 @@ model AddOnService {
   /// Single public price. Optional — empty means no prefilled price.
   price    Decimal? @db.Decimal(14, 2)
   currency String   @default("INR") @db.VarChar(3)
+  /// Free-text pricing basis shown with the price (e.g. "Per Person").
+  pricingBasis String? @db.VarChar(80)
+
+  imageStorageProvider  StorageProvider?
+  imageBucket           String?          @db.VarChar(255)
+  imageObjectKey        String?          @db.VarChar(1000)
+  imageFileName         String?          @db.VarChar(255)
+  imageMimeType         String?          @db.VarChar(120)
+  imageFileSize         Int?
+  imageConfirmedAt      DateTime?
+  pendingImageObjectKey String?          @db.VarChar(1000)
+  pendingImageFileName  String?          @db.VarChar(255)
+  pendingImageMimeType  String?          @db.VarChar(120)
+  pendingImageFileSize  Int?
+  /// Ordered multi-image metadata. Legacy single-image columns remain the fallback.
+  images                Json?            @db.Json
 
   status      MasterStatus @default(ACTIVE)
   createdById String       @db.Uuid
@@ -3817,6 +3837,9 @@ model QuotationVersionService {
   // What the unit selling price represents (PER_DAY/PER_HOUR/PER_TRANSFER/
   // PER_VEHICLE/PER_TRAVELER/PER_UNIT/FIXED). NULL keeps legacy semantics.
   pricingBasis       String?          @db.VarChar(20)
+  /// Free-text master pricing basis snapshot (e.g. "Per Person") carried
+  /// from the Add-On Service master. NULL for legacy rows and other types.
+  pricingBasisLabel  String?          @db.VarChar(80)
   taxCategory        String?          @db.VarChar(80)
   notes              String?          @db.VarChar(2000)
   /// Ordered, quotation-owned image snapshot copied from a selected Master.

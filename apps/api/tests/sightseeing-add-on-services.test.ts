@@ -677,6 +677,37 @@ describe('Add-on services master', () => {
     expect(updated.body.data).toMatchObject({ price: 4200, status: 'INACTIVE' });
   });
 
+  it('persists the free-text pricing basis on create, update and reload', async () => {
+    const client = await owner();
+    const created = await client.post('/api/masters/add-on-services', {
+      name: 'Ferry Service',
+      price: 3000,
+      pricingBasis: 'Per Person',
+      status: 'ACTIVE',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({ pricingBasis: 'Per Person' });
+
+    const reloaded = await client.get(
+      `/api/masters/add-on-services/${created.body.data.id}`,
+    );
+    expect(reloaded.body.data).toMatchObject({ pricingBasis: 'Per Person' });
+
+    const updated = await client.patch(
+      `/api/masters/add-on-services/${created.body.data.id}`,
+      { pricingBasis: '  Per Couple  ' },
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.data).toMatchObject({ pricingBasis: 'Per Couple' });
+
+    const cleared = await client.patch(
+      `/api/masters/add-on-services/${created.body.data.id}`,
+      { pricingBasis: '' },
+    );
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.data.pricingBasis).toBeNull();
+  });
+
   it('searches by name', async () => {
     const client = await owner();
     await createService(client, { name: 'Bali eVISA' });
@@ -759,5 +790,137 @@ describe('Add-on services master', () => {
     expect(actions).toContain('ADD_ON_SERVICE_UPDATED');
     expect(actions).toContain('ADD_ON_SERVICE_ARCHIVED');
     expect(actions).toContain('ADD_ON_SERVICE_RESTORED');
+  });
+
+  it('validates image MIME type and size, and scopes the key to the tenant', async () => {
+    const client = await owner();
+    const service = await createService(client);
+
+    expect(
+      (
+        await client.post(`/api/masters/add-on-services/${service.id}/image/upload`, {
+          fileName: 'service.svg',
+          mimeType: 'image/svg+xml',
+          fileSize: 10,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await client.post(`/api/masters/add-on-services/${service.id}/image/upload`, {
+          fileName: 'service.png',
+          mimeType: 'image/png',
+          fileSize: 50 * 1024 * 1024,
+        })
+      ).status,
+    ).toBe(400);
+
+    const body = Buffer.from('add-on-service-image');
+    const approval = await client.post(`/api/masters/add-on-services/${service.id}/image/upload`, {
+      fileName: '../../Visa.png',
+      mimeType: 'image/png',
+      fileSize: body.length,
+    });
+    expect(approval.status).toBe(201);
+    expect(JSON.stringify(approval.body.data)).not.toContain('companies/');
+
+    const pending = await db.addOnService.findUniqueOrThrow({ where: { id: service.id } });
+    expect(pending.pendingImageObjectKey).toMatch(
+      new RegExp(`^companies/${pending.companyId}/masters/add-on-services/${service.id}/images/`),
+    );
+    expect(pending.pendingImageObjectKey).not.toContain('..');
+
+    await (storageService as MemoryStorageService).putObject({
+      key: pending.pendingImageObjectKey!,
+      body,
+      contentType: 'image/png',
+    });
+    const confirmed = await client.post(
+      `/api/masters/add-on-services/${service.id}/image/confirm`,
+    );
+    expect(confirmed.body.data).toMatchObject({ hasImage: true, imageMimeType: 'image/png' });
+    expect(confirmed.body.data).not.toHaveProperty('imageObjectKey');
+
+    const download = await client.get(
+      `/api/masters/add-on-services/${service.id}/image/download-url`,
+    );
+    expect(download.body.data.url).toMatch(/^memory:\/\/download\//);
+    expect(
+      (await client.delete(`/api/masters/add-on-services/${service.id}/image`)).status,
+    ).toBe(200);
+  });
+
+  it('confirms a second image, reorders the gallery and audits the lifecycle', async () => {
+    const client = await owner();
+    const service = await createService(client);
+
+    const upload = async (fileName: string, mimeType: string, content: string) => {
+      const body = Buffer.from(content);
+      await client.post(`/api/masters/add-on-services/${service.id}/image/upload`, {
+        fileName,
+        mimeType,
+        fileSize: body.length,
+      });
+      const pending = await db.addOnService.findUniqueOrThrow({ where: { id: service.id } });
+      await (storageService as MemoryStorageService).putObject({
+        key: pending.pendingImageObjectKey!,
+        body,
+        contentType: mimeType,
+      });
+      const confirmed = await client.post(
+        `/api/masters/add-on-services/${service.id}/image/confirm`,
+      );
+      expect(confirmed.status).toBe(200);
+      return confirmed.body.data as { images: Array<{ id: string }> };
+    };
+
+    await upload('visa.png', 'image/png', 'add-on-image-1');
+    const second = await upload('insurance.webp', 'image/webp', 'add-on-image-2');
+    expect(second.images).toHaveLength(2);
+    const [firstImageId, secondImageId] = second.images.map((image) => image.id);
+
+    const reordered = await client.patch(
+      `/api/masters/add-on-services/${service.id}/images/order`,
+      { imageIds: [secondImageId, firstImageId] },
+    );
+    expect(reordered.status).toBe(200);
+    expect(reordered.body.data.images.map((image: { id: string }) => image.id)).toEqual([
+      secondImageId,
+      firstImageId,
+    ]);
+
+    // Tenant isolation: another company cannot touch this gallery.
+    const other = await owner('other@sa.test', 'Other Company');
+    expect(
+      (await other.get(`/api/masters/add-on-services/${service.id}/image/download-url`)).status,
+    ).toBe(404);
+    expect(
+      (
+        await other.post(`/api/masters/add-on-services/${service.id}/image/upload`, {
+          fileName: 'hijack.png',
+          mimeType: 'image/png',
+          fileSize: 10,
+        })
+      ).status,
+    ).toBe(404);
+
+    expect(
+      (await client.delete(`/api/masters/add-on-services/${service.id}/image`)).status,
+    ).toBe(200);
+    const remaining = await client.get(`/api/masters/add-on-services/${service.id}`);
+    expect(remaining.body.data).toMatchObject({ hasImage: true });
+    expect(remaining.body.data.images).toHaveLength(1);
+    expect(
+      (await client.delete(`/api/masters/add-on-services/${service.id}/image`)).status,
+    ).toBe(200);
+    const cleared = await client.get(`/api/masters/add-on-services/${service.id}`);
+    expect(cleared.body.data).toMatchObject({ hasImage: false });
+    expect(cleared.body.data.images).toHaveLength(0);
+
+    const actions = (await db.activityLog.findMany({ where: { entityId: service.id } })).map(
+      (log) => log.action,
+    );
+    expect(actions).toContain('ADD_ON_SERVICE_IMAGE_UPLOADED');
+    expect(actions).toContain('ADD_ON_SERVICE_IMAGE_DELETED');
   });
 });

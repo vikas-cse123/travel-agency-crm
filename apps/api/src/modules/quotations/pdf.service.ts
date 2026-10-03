@@ -2678,22 +2678,83 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
       addonServices.forEach((row) => {
         const plainDescLines = htmlToLines(row.description);
         const hasEmoji = containsPdfEmoji(row.description ?? '');
-        const nameH = hOf(row.name, 12, CONTENT_W, 'Bold') + 3;
+        // One bordered card per add-on: single primary image (when resolved)
+        // on the left, service name + description on the right, all inside the
+        // same box. Geometry mirrors buildServiceCard (vehicle/cruise).
+        const serviceImage = images.services?.[serviceIndex(row)] ?? null;
+        const CARD_PAD = 14;
+        const CARD_IMG_W = 150;
+        const CARD_IMG_H = 110;
+        const CARD_GAP = 16;
+        const tx = serviceImage ? M + CARD_PAD + CARD_IMG_W + CARD_GAP : M + CARD_PAD;
+        const tw = PDF_PAGE_WIDTH - M - CARD_PAD - tx;
+        const nameH = hOf(row.name, 12, tw, 'Bold') + 3;
+        const imgH = serviceImage ? CARD_IMG_H : 0;
+        // Description budget left on a page once the card header is placed;
+        // anything beyond the first fitting chunk flows as regular full-width
+        // blocks after the card (same pagination model as activity headers).
+        const descBudget =
+          PDF_MAX_CONTENT_HEIGHT - CARD_PAD - Math.max(imgH, nameH) - 4 - CARD_PAD;
+        const inCardDesc =
+          plainDescLines.length || hasEmoji
+            ? hasEmoji
+              ? colorEmojiFlowBlocks(htmlToRichTextLines(row.description), tx, tw, 10.5, 2, descBudget)
+              : flowBlocks(plainDescLines, tx, tw, 10.5, 2, descBudget)
+            : [];
+        const firstDesc = inCardDesc[0] ?? null;
+        const restDesc = inCardDesc.slice(1);
+        const textH = nameH + (firstDesc ? 4 + firstDesc.height : 0);
+        const cardH = CARD_PAD + Math.max(imgH, textH) + CARD_PAD;
+        if (!restDesc.length) {
+          planner.add({
+            height: cardH + 8,
+            render: (y0) => {
+              const top = y0;
+              doc.save().roundedRect(M, top, CONTENT_W, cardH, 6).stroke(BORDER).restore();
+              if (serviceImage)
+                drawImage(serviceImage, M + CARD_PAD, top + CARD_PAD, CARD_IMG_W, CARD_IMG_H, 'Add-on service');
+              let yy = top + CARD_PAD;
+              doc
+                .font('Bold')
+                .fontSize(12)
+                .fillColor(DARK)
+                .text(row.name, tx, yy, { width: tw });
+              yy += nameH;
+              if (firstDesc) yy = firstDesc.render(yy + 4);
+              return top + cardH;
+            },
+          });
+          planner.add({ height: 8, render: (y0) => y0 + 8 });
+          return;
+        }
+        // Oversized description: bordered header card (image + name) keeps the
+        // row identity together, the remainder flows as regular full-width
+        // description blocks so nothing is clipped or pushed into the footer.
+        const headerH = CARD_PAD + Math.max(imgH, nameH) + CARD_PAD;
         planner.add({
-          height: nameH,
+          height: headerH + 8,
+          keepWithNext: true,
           render: (y0) => {
+            const top = y0;
+            doc.save().roundedRect(M, top, CONTENT_W, headerH, 6).stroke(BORDER).restore();
+            if (serviceImage)
+              drawImage(serviceImage, M + CARD_PAD, top + CARD_PAD, CARD_IMG_W, CARD_IMG_H, 'Add-on service');
             doc
               .font('Bold')
               .fontSize(12)
               .fillColor(DARK)
-              .text(row.name, M, y0, { width: CONTENT_W });
-            return y0 + nameH;
+              .text(row.name, tx, top + CARD_PAD, { width: tw });
+            return top + headerH;
           },
         });
         const descriptionBlocks = hasEmoji
           ? colorEmojiFlowBlocks(htmlToRichTextLines(row.description), M, CONTENT_W, 10.5, 2)
           : flowBlocks(plainDescLines, M, CONTENT_W, 10.5, 2);
         descriptionBlocks.forEach((block) => planner.add(block));
+        // Visible vertical gap between cards. The planner positions blocks by
+        // their render cursor (not reserved height), so the gap must be an
+        // explicit spacer block — same pattern as the FAQ rows.
+        planner.add({ height: 8, render: (y0) => y0 + 8 });
       });
       if (hasVisa) {
         const visaLines = [

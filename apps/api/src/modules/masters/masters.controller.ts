@@ -873,6 +873,49 @@ export const addOnServicesController = {
       await addOnServicesService.archive(auth(req), req.params.addOnServiceId!, context(req)),
       'Add-on service archived.',
     ),
+  imageUpload: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await addOnServicesService.createImageUpload(auth(req), req.params.addOnServiceId!, req.body),
+      'Add-on service image upload authorized.',
+      201,
+    ),
+  imageConfirm: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await addOnServicesService.confirmImage(auth(req), req.params.addOnServiceId!, context(req)),
+      'Add-on service image confirmed.',
+    ),
+  imageDownload: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await addOnServicesService.imageDownload(
+        auth(req),
+        req.params.addOnServiceId!,
+        req.query.imageId as string | undefined,
+      ),
+    ),
+  imageDelete: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await addOnServicesService.deleteImage(
+        auth(req),
+        req.params.addOnServiceId!,
+        context(req),
+        req.query.imageId as string | undefined,
+      ),
+      'Add-on service image deleted.',
+    ),
+  imageReorder: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await addOnServicesService.reorderImages(
+        auth(req),
+        req.params.addOnServiceId!,
+        req.body.imageIds,
+        context(req),
+      ),
+    ),
 };
 
 export const visaTypesController = {

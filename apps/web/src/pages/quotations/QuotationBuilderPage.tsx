@@ -75,6 +75,7 @@ import { useSettings } from '@/features/settings/settings.api';
 import { useDestinationExpertPresets } from '@/features/destination-expert/destination-expert.api';
 import { apiClient } from '@/api/client';
 import {
+  addOnServiceImageUrl,
   cruiseImageUrl,
   hotelImageUrl,
   useAddOnServices,
@@ -5881,6 +5882,8 @@ export function QuotationBuilderPage() {
     ];
      const toggle = (master: (typeof masters)[number], checked: boolean) => {
       if (checked) {
+        const newIndex = services.fields.length;
+        const snapshot = masterGallerySnapshot(master.images, master.name);
         services.append({
           serviceType: 'OTHER_ADD_ON',
           ...CLEARED_SERVICE_MASTERS,
@@ -5893,10 +5896,28 @@ export function QuotationBuilderPage() {
           pricingBasis: 'FIXED' as never,
           internalCost: 0,
           sellingPrice: master.price != null ? Number(master.price) : 0,
+          pricingBasisLabel: master.pricingBasis ?? null,
           taxCategory: null,
           notes: null,
           sequence: services.fields.length + 1,
+          images: snapshot,
+          imageSnapshotPresent: masterGalleryPresence(master),
+          pdfImageUrl: snapshot[0] ? quotationSnapshotImageIdentity(snapshot[0]) : null,
         });
+        if (master?.images?.length)
+          void importMasterGalleryPreviews(master.id, snapshot, addOnServiceImageUrl).then(
+            (images) => {
+              if (form.getValues(`services.${newIndex}.addOnServiceId`) !== master.id) return;
+              form.setValue(
+                `services.${newIndex}.images`,
+                mergeMasterGalleryPreviews(
+                  form.getValues(`services.${newIndex}.images`),
+                  images,
+                ) as never,
+                { shouldDirty: true },
+              );
+            },
+          );
       } else {
         const index = includedIndex(master.id);
         if (index >= 0) services.remove(index);
@@ -5958,18 +5979,33 @@ export function QuotationBuilderPage() {
                         <td className="px-4 py-3 font-medium text-slate-800">{master.name}</td>
                         <td className="min-w-[18rem] px-4 py-3">
                           {included ? (
-                            <RichTextEditor
-                              ariaLabel={`${master.name} description`}
-                              value={(watchedServices?.[index]?.description as string) ?? ''}
-                              onChange={(html) =>
-                                form.setValue(
-                                  `services.${index}.description` as 'services.0.description',
-                                  html as never,
-                                  { shouldDirty: true },
-                                )
-                              }
-                              placeholder="Describe this add-on for the customer…"
-                            />
+                            <>
+                              <RichTextEditor
+                                ariaLabel={`${master.name} description`}
+                                value={(watchedServices?.[index]?.description as string) ?? ''}
+                                onChange={(html) =>
+                                  form.setValue(
+                                    `services.${index}.description` as 'services.0.description',
+                                    html as never,
+                                    { shouldDirty: true },
+                                  )
+                                }
+                                placeholder="Describe this add-on for the customer…"
+                              />
+                              <QuotationImageManager
+                                label={`${master.name} Images`}
+                                ariaPrefix={`addon-${index}`}
+                                images={
+                                  (watchedServices?.[index]?.images ?? []) as QuotationImage[]
+                                }
+                                pdfImageUrl={watchedServices?.[index]?.pdfImageUrl}
+                                onMove={(imageIndex, direction) =>
+                                  moveServiceImage(index, imageIndex, direction)
+                                }
+                                onRemove={(imageIndex) => removeServiceImage(index, imageIndex)}
+                                onSelectPdf={(identity) => setServicePdfImage(index, identity)}
+                              />
+                            </>
                           ) : (
                             <p className="text-slate-500">
                               {master.description

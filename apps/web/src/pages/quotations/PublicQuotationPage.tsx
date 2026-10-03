@@ -2756,13 +2756,39 @@ export function PublicQuotationPage() {
                         .replace(/<[^>]*>/g, ' ')
                         .replace(/\s+/g, ' ')
                         .trim();
+                      // Snapshot gallery only (same as every other service card);
+                      // there is no live add-on presentation endpoint.
+                      const displayImages = quotationGalleryImages(service.images);
+                      // "₹3000 Per Person": unit price plus the master pricing
+                      // basis snapshot. Shown only when a basis is saved, so
+                      // legacy rows render exactly as before.
+                      const basis = service.pricingBasisLabel?.trim() ?? '';
+                      const unitPrice =
+                        service.unitSellingPrice != null && service.unitSellingPrice !== ''
+                          ? Number(service.unitSellingPrice)
+                          : null;
+                      const priceLine = basis
+                        ? `${unitPrice != null && Number.isFinite(unitPrice) ? `${fmt(unitPrice)} ` : ''}${basis}`
+                        : '';
                       return (
                         <article key={service.id} className="rounded-2xl bg-card p-6 shadow-sm">
+                          {displayImages.length > 0 && (
+                            <div className="mb-4">
+                              <QuotationMediaFrame
+                                images={displayImages}
+                                label="Add-on"
+                                imageAlt={service.name}
+                              />
+                            </div>
+                          )}
                           <h3 className="text-lg font-bold text-[#000000]">{service.name}</h3>
                           {plainText && (
                             <div className="mt-2">
                               <RichHtml html={service.description ?? ''} />
                             </div>
+                          )}
+                          {priceLine && (
+                            <p className="mt-2 text-sm font-semibold text-[#000000]">{priceLine}</p>
                           )}
                         </article>
                       );

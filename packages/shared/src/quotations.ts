@@ -516,6 +516,9 @@ export const quotationServiceSchema = z.object({
   // What the unit price represents (days/hours/transfers/cabins/travelers).
   // Legacy snapshots (null) keep the plain quantity × unit-price semantics.
   pricingBasis: z.enum(SERVICE_PRICING_BASES).nullish(),
+  // Free-text master pricing basis snapshot (e.g. "Per Person"), carried
+  // from the Add-On Service master. NULL for legacy rows and other types.
+  pricingBasisLabel: optionalText(80),
   taxCategory: optionalText(80),
   notes: optionalText(2000),
   // Cruise-specific structured duration and multi-room allocation.

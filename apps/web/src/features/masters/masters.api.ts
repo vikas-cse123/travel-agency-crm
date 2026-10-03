@@ -13,6 +13,7 @@ import type {
   SightseeingImageUploadInput,
   SightseeingInput,
   SightseeingUpdateInput,
+  AddOnServiceImageUploadInput,
   AddOnServiceInput,
   AddOnServiceUpdateInput,
   VisaTypeInput,
@@ -1371,12 +1372,37 @@ export interface AddOnService extends MasterVisibilityMeta {
   description: string | null;
   price: number | null;
   currency: string;
+  pricingBasis: string | null;
   status: string;
+  hasImage: boolean;
+  images: MasterImageMeta[];
   createdAt: string;
   updatedAt: string;
   createdBy: { id: string; fullName: string };
   updatedBy?: { id: string; fullName: string } | null;
 }
+
+export async function approveAddOnServiceImage(id: string, input: AddOnServiceImageUploadInput) {
+  return apiClient.post<{ uploadUrl: string; expiresInSeconds: number }>(
+    `/masters/add-on-services/${id}/image/upload`,
+    input,
+  );
+}
+export async function confirmAddOnServiceImage(id: string) {
+  return apiClient.post<AddOnService>(`/masters/add-on-services/${id}/image/confirm`);
+}
+export async function addOnServiceImageUrl(id: string, imageId?: string) {
+  return apiClient.get<{ url: string; expiresInSeconds: number }>(
+    `/masters/add-on-services/${id}/image/download-url${imageId ? `?imageId=${encodeURIComponent(imageId)}` : ''}`,
+  );
+}
+export async function deleteAddOnServiceImage(id: string, imageId?: string) {
+  return apiClient.delete<{ deleted: true }>(
+    `/masters/add-on-services/${id}/image${imageId ? `?imageId=${encodeURIComponent(imageId)}` : ''}`,
+  );
+}
+export const reorderAddOnServiceImages = (id: string, imageIds: string[]) =>
+  apiClient.patch<AddOnService>(`/masters/add-on-services/${id}/images/order`, { imageIds });
 
 const addOnServiceKeys = {
   all: ['masters', 'add-on-services'] as const,
@@ -1660,7 +1686,13 @@ export function useArchiveFaq() {
 }
 
 export type MasterImageQueryScope =
-  'destinations' | 'hotels' | 'cruises' | 'vehicles' | 'sightseeing' | 'testimonials';
+  | 'destinations'
+  | 'hotels'
+  | 'cruises'
+  | 'vehicles'
+  | 'sightseeing'
+  | 'add-on-services'
+  | 'testimonials';
 
 const masterImageQueryRoot = (scope: MasterImageQueryScope) => {
   switch (scope) {
@@ -1674,6 +1706,8 @@ const masterImageQueryRoot = (scope: MasterImageQueryScope) => {
       return vehicleKeys.all;
     case 'sightseeing':
       return sightseeingKeys.all;
+    case 'add-on-services':
+      return addOnServiceKeys.all;
     case 'testimonials':
       return testimonialKeys.all;
   }

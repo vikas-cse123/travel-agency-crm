@@ -947,7 +947,7 @@ async function hydrateQuotationImageSnapshots(
     addOnServiceIds.length
       ? db.addOnService.findMany({
           where: { id: { in: addOnServiceIds }, companyId: { in: imageOwnerCompanyIds } },
-          select: { id: true, price: true, currency: true },
+          select: { ...imageMasterSelect, id: true, price: true, currency: true },
         })
       : [],
   ]);
@@ -1171,6 +1171,7 @@ function versionCreateData(
       totalCost: serviceLines[index]?.totalCost ?? 0,
       totalSellingPrice: serviceLines[index]?.totalSellingPrice ?? 0,
       pricingBasis: row.pricingBasis ?? null,
+      pricingBasisLabel: row.pricingBasisLabel ?? null,
       taxCategory: row.taxCategory,
       notes: row.notes,
       images: row.imageSnapshotPresent

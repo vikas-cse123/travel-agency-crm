@@ -2436,13 +2436,28 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
             ]
           : []),
       ];
+      // Add-on snapshot image per service row (same inputs.services index as the
+      // vehicle/cruise cards). Rows without a resolved image keep the legacy
+      // text-only card untouched.
+      const ADDON_IMAGE_W = 150;
+      const ADDON_IMAGE_H = 110;
+      const ADDON_IMAGE_GAP = 16;
       const measuredCards = cards.map((card) => {
+        const image = card.index != null ? (input.images?.services?.[card.index] ?? null) : null;
+        const textW = image ? CONTENT_W - 60 - ADDON_IMAGE_W - ADDON_IMAGE_GAP : CONTENT_W - 60;
         // Pre-wrap and measure exactly like drawRichLines so the card height
         // matches the real content; an estimated height can undershoot and push
         // long copy into the footer.
-        const lines = wrapRichLinesToWidth(htmlToRichTextLines(card.description), CONTENT_W - 60, 10, 1.32);
-        const descriptionHeight = measureRichHeight(lines, CONTENT_W - 60, 10, 1.32);
-        return { ...card, lines, height: Math.min(610, Math.max(190, 116 + descriptionHeight)) };
+        const lines = wrapRichLinesToWidth(htmlToRichTextLines(card.description), textW, 10, 1.32);
+        const descriptionHeight = measureRichHeight(lines, textW, 10, 1.32);
+        const bodyHeight = image ? Math.max(descriptionHeight, ADDON_IMAGE_H) : descriptionHeight;
+        return {
+          ...card,
+          lines,
+          image,
+          textW,
+          height: Math.min(610, Math.max(190, 116 + bodyHeight)),
+        };
       });
       for (const [cardIndex, card] of measuredCards.entries()) {
         // A dedicated page per service gives customer-facing copy enough room
@@ -2491,11 +2506,21 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           .fill('#f5f7fb')
           .restore();
         const cardLineHeight = 10 * 1.32;
+        const textX = M + 30 + (card.image ? ADDON_IMAGE_W + ADDON_IMAGE_GAP : 0);
+        if (card.image) {
+          if (!drawImage(card.image, M + 30, top + 92, ADDON_IMAGE_W, ADDON_IMAGE_H, 'cover', 8)) {
+            doc
+              .save()
+              .roundedRect(M + 30, top + 92, ADDON_IMAGE_W, ADDON_IMAGE_H, 8)
+              .fill('#e5edf4')
+              .restore();
+          }
+        }
         const onCard = card.lines.slice(
           0,
           Math.max(0, Math.floor((card.height - 92) / cardLineHeight)),
         );
-        drawRichLines(onCard, M + 30, top + 92, CONTENT_W - 60, 10, INK, 1.32);
+        drawRichLines(onCard, textX, top + 92, card.textW, 10, INK, 1.32);
         y = top + card.height + 14;
         // A description taller than the card flows onto continuation pages as
         // plain text under the same heading, so it can never be drawn into the

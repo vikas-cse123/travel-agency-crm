@@ -136,6 +136,15 @@ export function sightseeingImageObjectKey(input: {
   return `companies/${input.companyId}/masters/sightseeing/${input.sightseeingId}/images/${input.imageId}/${sanitizeFileName(input.fileName)}`;
 }
 
+export function addOnServiceImageObjectKey(input: {
+  companyId: string;
+  addOnServiceId: string;
+  imageId: string;
+  fileName: string;
+}): string {
+  return `companies/${input.companyId}/masters/add-on-services/${input.addOnServiceId}/images/${input.imageId}/${sanitizeFileName(input.fileName)}`;
+}
+
 export function testimonialImageObjectKey(input: {
   companyId: string;
   testimonialId: string;

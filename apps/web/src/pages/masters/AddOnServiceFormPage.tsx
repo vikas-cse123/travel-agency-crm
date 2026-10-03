@@ -2,13 +2,24 @@ import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { Save, X } from 'lucide-react';
+import { ADD_ON_SERVICE_IMAGE_MIME_TYPES, PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/features/auth/AuthProvider';
 import {
+  approveAddOnServiceImage,
+  confirmAddOnServiceImage,
+  deleteAddOnServiceImage,
+  reorderAddOnServiceImages,
+  useRefreshMasterImageQueries,
+  addOnServiceImageUrl,
   useAddOnService,
   useCreateAddOnService,
   useUpdateAddOnService,
 } from '@/features/masters/masters.api';
 import { fieldClass, MasterHeader, RichTextEditor, CurrencySelect } from './MasterUi';
+import { MasterImageGalleryField, useMasterImageGallery } from './MasterImageGallery';
+
+const MAX_IMAGE_MB = 5;
 
 interface FormValues {
   name: string;
@@ -16,6 +27,7 @@ interface FormValues {
   price: string;
   /** Carried through so editing never resets a non-default currency. */
   currency: string;
+  pricingBasis: string;
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
 }
 
@@ -32,7 +44,24 @@ export function AddOnServiceFormPage() {
   const record = useAddOnService(addOnServiceId);
   const create = useCreateAddOnService();
   const update = useUpdateAddOnService(addOnServiceId ?? '');
+  const { hasPermission } = useAuth();
+  const canManageMedia = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_MANAGE_MEDIA);
   const [formError, setFormError] = useState('');
+  const refreshImageQueries = useRefreshMasterImageQueries('add-on-services');
+  const imageGallery = useMasterImageGallery({
+    masterId: addOnServiceId,
+    entity: record.data,
+    allowedMimeTypes: ADD_ON_SERVICE_IMAGE_MIME_TYPES,
+    maxSizeMb: MAX_IMAGE_MB,
+    api: {
+      approve: approveAddOnServiceImage,
+      confirm: confirmAddOnServiceImage,
+      download: addOnServiceImageUrl,
+      remove: deleteAddOnServiceImage,
+      reorder: reorderAddOnServiceImages,
+    },
+    onExistingChange: refreshImageQueries,
+  });
 
   const form = useForm<FormValues>({
     defaultValues: {
@@ -40,6 +69,7 @@ export function AddOnServiceFormPage() {
       description: '',
       price: '',
       currency: 'INR',
+      pricingBasis: '',
       status: 'ACTIVE',
     },
   });
@@ -52,6 +82,7 @@ export function AddOnServiceFormPage() {
       description: value.description ?? '',
       price: value.price != null ? String(value.price) : '',
       currency: value.currency ?? 'INR',
+      pricingBasis: value.pricingBasis ?? '',
       status: value.status as FormValues['status'],
     });
   }, [record.data, form]);
@@ -66,12 +97,14 @@ export function AddOnServiceFormPage() {
       description: values.description || null,
       price: values.price === '' ? null : Number(values.price),
       currency: values.currency || 'INR',
+      pricingBasis: values.pricingBasis.trim() ? values.pricingBasis.trim() : null,
       status: values.status,
     };
     try {
       const saved = addOnServiceId
         ? await update.mutateAsync(payload)
         : await create.mutateAsync(payload);
+      if (canManageMedia) await imageGallery.persist(saved.id);
       navigate(`/masters/add-on-services/${saved.id}`);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The service could not be saved.');
@@ -164,6 +197,26 @@ export function AddOnServiceFormPage() {
               )}
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-slate-700">
+                Pricing Basis
+                <input
+                  className={fieldClass}
+                  placeholder="e.g. Per Person"
+                  {...form.register('pricingBasis')}
+                />
+              </label>
+            </div>
+
+            {canManageMedia && (
+              <MasterImageGalleryField
+                label="Service Images"
+                controller={imageGallery}
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                maxSizeMb={MAX_IMAGE_MB}
+              />
+            )}
+
             <label className="block text-sm font-medium text-slate-700">
               Status
               <select className={fieldClass} {...form.register('status')}>
@@ -177,7 +230,10 @@ export function AddOnServiceFormPage() {
             <Button variant="secondary" onClick={() => navigate('/masters/add-on-services')}>
               <X className="h-4 w-4" /> Cancel
             </Button>
-            <Button type="submit" isLoading={mutation.isPending || form.formState.isSubmitting}>
+            <Button
+              type="submit"
+              isLoading={mutation.isPending || imageGallery.isBusy || form.formState.isSubmitting}
+            >
               <Save className="h-4 w-4" /> {addOnServiceId ? 'Update' : 'Create'}
             </Button>
           </div>

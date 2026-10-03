@@ -46,6 +46,7 @@ import {
   vehicleInputSchema,
   vehicleUpdateSchema,
   sightseeingImageUploadSchema,
+  addOnServiceImageUploadSchema,
   sightseeingInputSchema,
   sightseeingReorderSchema,
   sightseeingUpdateSchema,
@@ -1015,6 +1016,36 @@ router.delete(
   requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_DELETE),
   validateRequest({ params: addOnServiceId }),
   asyncHandler(addOnServices.archive),
+);
+router.post(
+  '/add-on-services/:addOnServiceId/image/upload',
+  requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_MANAGE_MEDIA),
+  validateRequest({ params: addOnServiceId, body: addOnServiceImageUploadSchema }),
+  asyncHandler(addOnServices.imageUpload),
+);
+router.post(
+  '/add-on-services/:addOnServiceId/image/confirm',
+  requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_MANAGE_MEDIA),
+  validateRequest({ params: addOnServiceId }),
+  asyncHandler(addOnServices.imageConfirm),
+);
+router.get(
+  '/add-on-services/:addOnServiceId/image/download-url',
+  requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_VIEW),
+  validateRequest({ params: addOnServiceId, query: imageQuery }),
+  asyncHandler(addOnServices.imageDownload),
+);
+router.delete(
+  '/add-on-services/:addOnServiceId/image',
+  requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_MANAGE_MEDIA),
+  validateRequest({ params: addOnServiceId, query: imageQuery }),
+  asyncHandler(addOnServices.imageDelete),
+);
+router.patch(
+  '/add-on-services/:addOnServiceId/images/order',
+  requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_MANAGE_MEDIA),
+  validateRequest({ params: addOnServiceId, body: imageReorder }),
+  asyncHandler(addOnServices.imageReorder),
 );
 
 // ---------------------------------------------------------------------------

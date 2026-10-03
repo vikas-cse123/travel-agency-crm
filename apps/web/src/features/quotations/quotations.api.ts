@@ -90,6 +90,7 @@ export interface TemplateService extends MasterServiceRefs {
   internalCost?: string;
   sellingPrice: string | null;
   pricingBasis?: string | null;
+  pricingBasisLabel?: string | null;
   taxCategory: string | null;
   notes: string | null;
   images?: QuotationSnapshotImage[];

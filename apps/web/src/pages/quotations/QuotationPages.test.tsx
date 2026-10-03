@@ -3095,7 +3095,8 @@ describe('Phase 8 quotation pages', () => {
     expect(destination.className).toContain('lg:text-[48px]');
     const packageTitle = screen.getByText('Custom Package for Riya Kapoor');
     expect(packageTitle.className).toContain('font-bold');
-    expect(packageTitle.className).toContain('lg:text-[28px]');
+    expect(packageTitle.className).toContain('text-[16px]');
+    expect(packageTitle.className).toContain('mt-2');
     // The package heading is not uppercased.
     expect(packageTitle.textContent).toBe('Custom Package for Riya Kapoor');
 
@@ -6252,6 +6253,79 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getByText('Cover')).toBeInTheDocument();
     expect(screen.getByText('for the trip.')).toBeInTheDocument();
     expect(screen.queryByText(/<p>/)).not.toBeInTheDocument();
+  });
+
+  it('renders add-on snapshot images in the Additional Services cards', async () => {
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'a@b.test',
+        phone: null,
+        website: null,
+        address: null,
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000002',
+        customerName: 'Mira Shah',
+        destinationSummary: 'Kerala',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Kerala Escape',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [
+          {
+            id: 's-addon',
+            serviceType: 'TRAVEL_INSURANCE',
+            addOnServiceId: 'addon-master-1',
+            name: 'Travel Insurance',
+            description: '<p><strong>Cover</strong> for the trip.</p>',
+            dayNumber: null,
+            city: null,
+            quantity: '1',
+            unitSellingPrice: '1500',
+            totalSellingPrice: '1500',
+            sellingPrice: '1500',
+            taxCategory: null,
+            notes: null,
+            sequence: 1,
+            images: [
+              { url: 'https://cdn.example.test/visa.png', alt: 'Travel Insurance image 1' },
+            ],
+            imageSnapshotPresent: true,
+          },
+        ],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+      },
+      downloadUrl: null,
+    };
+    const fetchMock = vi.fn(async () => response(publicData));
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(
+      await screen.findByAltText('Travel Insurance image 1'),
+    ).toBeInTheDocument();
   });
 
   it('hides Additional Services when no add-on service is included', async () => {
@@ -13590,6 +13664,48 @@ describe.skip('Phase 14 master selectors', () => {
       const addonRow = services.find((service) => service.serviceType === 'OTHER_ADD_ON');
       expect(addonRow?.description ?? '').toContain('airfare assistance');
       expect(Number(addonRow?.sellingPrice)).toBe(4200);
+    });
+  });
+
+  it('imports an add-on master gallery into the quotation row with PDF selection', async () => {
+    const masterWithImages = {
+      ...addOn,
+      hasImage: true,
+      images: [
+        { id: 'm-img-1', fileName: 'visa.png', mimeType: 'image/png', fileSize: 10, isPrimary: true },
+        { id: 'm-img-2', fileName: 'docs.png', mimeType: 'image/png', fileSize: 12, isPrimary: false },
+      ],
+    };
+    const fetchMock = masterFetch(builderQuotation(), {
+      '/masters/add-on-services': page([masterWithImages]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await userEvent.click(await screen.findByLabelText('Include Visa Assistance'));
+    // Same manager as cruise/vehicle rows: primary badge, move/remove, Use in PDF.
+    expect(await screen.findByLabelText('Remove addon-0 image 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Use addon-0 image 1 in PDF')).toBeChecked();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(patchCall).toBeDefined();
+      const body = JSON.parse(String(patchCall?.[1]?.body)) as {
+        services: Array<Record<string, unknown>>;
+      };
+      const addonRow = body.services.find(
+        (service) => service.serviceType === 'OTHER_ADD_ON',
+      ) as unknown as {
+        images: Array<{ masterImageId: string; alt: string }>;
+        imageSnapshotPresent: boolean;
+        pdfImageUrl: string;
+      };
+      expect(addonRow.images).toEqual([
+        { masterImageId: 'm-img-1', alt: 'Visa Assistance image 1' },
+        { masterImageId: 'm-img-2', alt: 'Visa Assistance image 2' },
+      ]);
+      expect(addonRow.imageSnapshotPresent).toBe(true);
+      expect(addonRow.pdfImageUrl).toBe('m-img-1');
     });
   });
 

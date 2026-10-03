@@ -2151,6 +2151,129 @@ describe('PDF rendering with long content', () => {
     expect(pdfTextPage(pdf, count)).toContain('THANK');
   });
 
+  it('renders add-on service snapshot images in both PDF styles', async () => {
+    const addonService = {
+      serviceType: 'OTHER_ADD_ON',
+      addOnServiceId: 'addon-visa-1',
+      name: 'Singapore Visa',
+      description: '<p>Visa assistance with documentation.</p>',
+      city: null,
+      quantity: '1',
+      unitSellingPrice: '100',
+      notes: null,
+    };
+    const versionWithImage = {
+      ...baseVersionOverlap(),
+      title: 'Add-on Image Package',
+      services: [addonService],
+    };
+    const countImages = (pdf: Buffer) =>
+      (pdf.toString('latin1').match(/\/Subtype\s*\/Image/g) ?? []).length;
+
+    const classicWithImage = await renderQuotationPdf({
+      company,
+      quotation: quotationOverlap(),
+      version: versionWithImage,
+      images: { cover: PNG_1PX, services: [PNG_1PX] },
+    });
+    expect(isPdf(classicWithImage)).toBe(true);
+    const classicWithoutImage = await renderQuotationPdf({
+      company,
+      quotation: quotationOverlap(),
+      version: versionWithImage,
+      images: { cover: PNG_1PX, services: [] },
+    });
+    expect(isPdf(classicWithoutImage)).toBe(true);
+    // The image-carrying row embeds one more image object than the legacy text block.
+    expect(countImages(classicWithImage)).toBeGreaterThan(countImages(classicWithoutImage));
+
+    const stylishInputBase = {
+      company: footerEmptyCompanyForOverlap(),
+      quotation: quotationOverlap(),
+      version: versionWithImage,
+    };
+    const stylishWithImage = await renderStylishQuotationPdf({
+      ...stylishInputBase,
+      images: { cover: PNG_1PX, services: [PNG_1PX] },
+    });
+    expect(isPdf(stylishWithImage)).toBe(true);
+    const stylishWithoutImage = await renderStylishQuotationPdf({
+      ...stylishInputBase,
+      images: { cover: PNG_1PX, services: [] },
+    });
+    expect(isPdf(stylishWithoutImage)).toBe(true);
+    expect(countImages(stylishWithImage)).toBeGreaterThan(countImages(stylishWithoutImage));
+  });
+
+  it('leaves a uniform vertical gap between classic add-on cards', async () => {
+    const pdf = await renderQuotationPdf({
+      company,
+      quotation: quotationOverlap(),
+      version: {
+        ...baseVersionOverlap(),
+        title: 'Add-on Spacing Package',
+        services: ['BUY COFFEE', 'VISA SERVICE', 'CITY TOUR'].map((name, index) => ({
+          serviceType: 'OTHER_ADD_ON',
+          addOnServiceId: `addon-${index + 1}`,
+          name,
+          description: '<p>Short desc.</p>',
+          city: null,
+          quantity: '1',
+          unitSellingPrice: '100',
+          notes: null,
+          sequence: index + 1,
+        })),
+      },
+      images: { cover: PNG_1PX, services: [PNG_1PX, PNG_1PX, PNG_1PX] },
+    });
+    expect(isPdf(pdf)).toBe(true);
+    // Bordered card outlines are stroked rounded rects spanning the content
+    // width: top edge `46 Y m ... 549.28 Y l`, bottom edge ending `... 46 Y l`.
+    const raw = pdf.toString('latin1');
+    const streams: string[] = [];
+    const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let streamMatch: RegExpExecArray | null;
+    while ((streamMatch = streamRe.exec(raw))) {
+      try {
+        streams.push(zlib.inflateSync(Buffer.from(streamMatch[1] ?? '', 'latin1')).toString('latin1'));
+      } catch {
+        streams.push(streamMatch[1] ?? '');
+      }
+    }
+    const joined = streams.join('\n');
+    const tops = [...joined.matchAll(/46 ([\d.]+) m\n549\.28 \1 l/g)].map((m) => Number(m[1]));
+    const bottoms = [...joined.matchAll(/ c\n46 ([\d.]+) l\n/g)].map((m) => Number(m[1]));
+    const seen = new Set<string>();
+    const boxes: Array<{ top: number; bottom: number }> = [];
+    for (const top of tops) {
+      const bottom = bottoms
+        .filter((candidate) => candidate > top)
+        .sort((a, b) => a - b)[0];
+      if (bottom === undefined) continue;
+      const key = `${top}:${bottom}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      boxes.push({ top, bottom });
+    }
+    // The three identical add-on cards share one exact height; any other
+    // bordered element differs.
+    const byHeight = new Map<number, Array<{ top: number; bottom: number }>>();
+    for (const box of boxes) {
+      const height = Math.round((box.bottom - box.top) * 100) / 100;
+      byHeight.set(height, [...(byHeight.get(height) ?? []), box]);
+    }
+    const trios = [...byHeight.values()].filter((group) => group.length === 3);
+    expect(trios).toHaveLength(1);
+    const cards = trios[0]!.sort((a, b) => a.top - b.top);
+    const gaps = cards.slice(1).map((card, index) => card.top - cards[index]!.bottom);
+    expect(gaps).toHaveLength(2);
+    // No touching or overlap: the explicit spacer block separates every card.
+    for (const gap of gaps) {
+      expect(gap).toBeGreaterThan(7.5);
+      expect(gap).toBeLessThan(8.5);
+    }
+  });
+
   it('keeps cruise PDF layout stable when description is absent', async () => {
     const pdf = await renderQuotationPdf({
       company,

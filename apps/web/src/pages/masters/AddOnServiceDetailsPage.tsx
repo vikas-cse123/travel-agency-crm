@@ -4,11 +4,13 @@ import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
+  addOnServiceImageUrl,
   useAddOnService,
   useArchiveAddOnService,
   useRestoreAddOnService,
 } from '@/features/masters/masters.api';
 import { Breadcrumbs, formatMasterDate, LoadingCard, SafeRichText, StatusBadge } from './MasterUi';
+import { MasterImageGalleryView } from './MasterImageGallery';
 
 function money(amount: number, currency: string): string {
   try {
@@ -88,6 +90,17 @@ export function AddOnServiceDetailsPage() {
           <h3 className="mb-2 text-sm font-semibold text-slate-800">Description</h3>
           <SafeRichText html={value.description} empty="No description added." />
         </div>
+        {value.hasImage && (
+          <div className="border-b p-4">
+            <h3 className="mb-2 text-sm font-semibold text-slate-800">Images</h3>
+            <MasterImageGalleryView
+              masterId={value.id}
+              entity={value}
+              download={addOnServiceImageUrl}
+              alt={value.name}
+            />
+          </div>
+        )}
         <table className="w-full text-left text-sm">
           <tbody className="divide-y">
             <tr>
@@ -97,6 +110,12 @@ export function AddOnServiceDetailsPage() {
               <td className="px-4 py-2.5 font-medium text-slate-900">
                 {money(value.price ?? 0, value.currency)}
               </td>
+            </tr>
+            <tr>
+              <th scope="row" className="bg-slate-50 px-4 py-2.5 font-medium text-slate-700">
+                Pricing Basis
+              </th>
+              <td className="px-4 py-2.5 text-slate-800">{value.pricingBasis?.trim() || '—'}</td>
             </tr>
             <tr>
               <th scope="row" className="bg-slate-50 px-4 py-2.5 font-medium text-slate-700">

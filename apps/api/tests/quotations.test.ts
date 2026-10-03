@@ -1965,6 +1965,126 @@ describe('Phase 14 quotation master references', () => {
     ).toEqual([]);
   });
 
+  it('snapshots a linked Add-On gallery, preserves Master order, reloads, and keeps remove-all', async () => {
+    const client = await owner();
+    const created = await client.post('/api/masters/add-on-services', {
+      name: 'Singapore Visa',
+      status: 'ACTIVE',
+    });
+    expect(created.status).toBe(201);
+    const serviceId = created.body.data.id as string;
+    const stored = await db.addOnService.findUniqueOrThrow({ where: { id: serviceId } });
+    const masterImages = ['a', 'b', 'c'].map((suffix, index) => ({
+      id: `addon-image-${suffix}`,
+      objectKey: `companies/${stored.companyId}/masters/add-on-services/${serviceId}/${suffix}.png`,
+      fileName: `${suffix}.png`,
+      mimeType: 'image/png',
+      fileSize: PNG_1PX.length,
+      confirmedAt: new Date(Date.UTC(2026, 7, 20, 10, index)).toISOString(),
+    }));
+    for (const image of masterImages)
+      await storageService.putObject({
+        key: image.objectKey,
+        body: PNG_1PX,
+        contentType: image.mimeType,
+      });
+    await db.addOnService.update({
+      where: { id: serviceId },
+      data: { images: masterImages },
+    });
+
+    const lead = (await client.post('/api/queries', leadPayload())).body.data;
+    const createdQuotation = await client.post('/api/quotations', {
+      queryId: lead.id,
+      version: {
+        title: 'Add-on gallery',
+        hotels: [],
+        services: [
+          {
+            serviceType: 'OTHER_ADD_ON',
+            addOnServiceId: serviceId,
+            name: 'Singapore Visa',
+            quantity: 1,
+            sellingPrice: 100,
+            sequence: 1,
+            images: [{ masterImageId: 'addon-image-a' }, { masterImageId: 'addon-image-b' }],
+            pdfImageUrl: 'addon-image-b',
+          },
+        ],
+      },
+    });
+    expect(createdQuotation.status, JSON.stringify(createdQuotation.body)).toBe(201);
+    const quotation = createdQuotation.body.data;
+    const versionId = quotation.versions[0].id;
+    const initialStored = await db.quotationVersionService.findFirstOrThrow({
+      where: { quotationVersionId: versionId, addOnServiceId: serviceId },
+    });
+    expect((initialStored.images as Array<{ id: string }>).map((image) => image.id)).toEqual([
+      'addon-image-a',
+      'addon-image-b',
+    ]);
+    expect(initialStored.pdfImageUrl).toBe('addon-image-b');
+
+    const reordered = await client.patch(`/api/quotations/${quotation.id}/versions/${versionId}`, {
+      services: [
+        {
+          serviceType: 'OTHER_ADD_ON',
+          addOnServiceId: serviceId,
+          name: 'Singapore Visa',
+          quantity: 1,
+          sellingPrice: 100,
+          sequence: 1,
+          images: [{ masterImageId: 'addon-image-c' }, { masterImageId: 'addon-image-a' }],
+          imageSnapshotPresent: true,
+          pdfImageUrl: 'addon-image-a',
+        },
+      ],
+    });
+    expect(reordered.status, JSON.stringify(reordered.body)).toBe(200);
+    expect(reordered.body.data.services[0]).toMatchObject({
+      imageSnapshotPresent: true,
+      pdfImageUrl: 'addon-image-a',
+    });
+    expect(reordered.body.data.services[0].images.map((image: { id: string }) => image.id)).toEqual(
+      ['addon-image-c', 'addon-image-a'],
+    );
+
+    const reloaded = await client.get(`/api/quotations/${quotation.id}`);
+    expect(
+      reloaded.body.data.versions[0].services[0].images.map((image: { id: string }) => image.id),
+    ).toEqual(['addon-image-c', 'addon-image-a']);
+    expect(reloaded.body.data.versions[0].services[0].pdfImageUrl).toBe('addon-image-a');
+
+    const emptied = await client.patch(`/api/quotations/${quotation.id}/versions/${versionId}`, {
+      services: [
+        {
+          serviceType: 'OTHER_ADD_ON',
+          addOnServiceId: serviceId,
+          name: 'Singapore Visa',
+          quantity: 1,
+          sellingPrice: 100,
+          sequence: 1,
+          images: [],
+          imageSnapshotPresent: true,
+          pdfImageUrl: null,
+        },
+      ],
+    });
+    expect(emptied.status, JSON.stringify(emptied.body)).toBe(200);
+    expect(emptied.body.data.services[0]).toMatchObject({
+      images: [],
+      imageSnapshotPresent: true,
+      pdfImageUrl: null,
+    });
+    expect(
+      (
+        await db.quotationVersionService.findFirstOrThrow({
+          where: { quotationVersionId: versionId, addOnServiceId: serviceId },
+        })
+      ).images,
+    ).toEqual([]);
+  });
+
   it('keeps the pre-feature linked Hotel image fallback when section images is empty', async () => {
     const client = await owner();
     const m = await masters(client);
