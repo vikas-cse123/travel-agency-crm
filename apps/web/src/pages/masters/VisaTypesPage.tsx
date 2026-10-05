@@ -1,10 +1,10 @@
-import { Archive, Eye, EyeOff, FileText, Pencil, Plus, Search } from 'lucide-react';
+import { Eye, EyeOff, FileText, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useArchiveVisaType,
+  useDeleteVisaType,
   useDestinations,
   useHideGlobalMaster,
   useVisaTypes,
@@ -23,12 +23,12 @@ export function VisaTypesPage() {
   const [params, setParams] = useSearchParams();
   const visaTypes = useVisaTypes(params);
   const destinations = useDestinations(LARGE);
-  const archive = useArchiveVisaType();
+  const remove = useDeleteVisaType();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_VISA_TYPES_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_VISA_TYPES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_VISA_TYPES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_VISA_TYPES_DELETE);
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -36,8 +36,9 @@ export function VisaTypesPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this visa type?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete visa type ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -96,7 +97,6 @@ export function VisaTypesPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -173,13 +173,14 @@ export function VisaTypesPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive && visa.status !== 'ARCHIVED' && !visa.isGlobal && (
+                          {canDelete && !visa.isGlobal && (
                             <button
-                              aria-label={`Archive ${visa.name}`}
-                              onClick={() => archiveRow(visa.id)}
+                              aria-label={`Delete ${visa.name}`}
+                              title="Permanently delete"
+                              onClick={() => deleteRow(visa.id, visa.name)}
                               className="rounded bg-red-600 p-2 text-white"
                             >
-                              <Archive className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           )}
                         </div>

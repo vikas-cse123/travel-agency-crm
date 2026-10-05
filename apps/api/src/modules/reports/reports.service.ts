@@ -137,7 +137,7 @@ async function quotationWhere(auth: AuthContext, extra: Prisma.QuotationWhereInp
     companyId: auth.companyId,
     deletedAt: null,
     query: {
-      is: { companyId: auth.companyId, deletedAt: null, ...(await queryVisibility(auth)) },
+      is: { companyId: auth.companyId, ...(await queryVisibility(auth)) },
     },
     ...extra,
   } satisfies Prisma.QuotationWhereInput;

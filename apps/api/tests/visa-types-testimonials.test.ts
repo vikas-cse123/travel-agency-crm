@@ -161,7 +161,7 @@ describe('Phase 21 visa types master', () => {
     ]);
   });
 
-  it('archives without hard delete, excludes archived from read-only roles, and isolates tenants', async () => {
+  it('hard-deletes, excludes deleted from read-only roles, and isolates tenants', async () => {
     const client = await owner();
     const destination = await createDestination(client);
     const visa = await client.post('/api/masters/visa-types', {
@@ -169,13 +169,11 @@ describe('Phase 21 visa types master', () => {
       name: 'Tourist Visa',
     });
     expect((await client.delete(`/api/masters/visa-types/${visa.body.data.id}`)).status).toBe(200);
-    const stored = await db.visaType.findUniqueOrThrow({ where: { id: visa.body.data.id } });
-    expect(stored).toMatchObject({ status: 'ARCHIVED' });
-    expect(stored.deletedAt).not.toBeNull();
+    expect(await db.visaType.findUnique({ where: { id: visa.body.data.id } })).toBeNull();
 
-    // A read-only role cannot see archived rows even when filtering for them.
+    // A read-only role cannot see deleted rows.
     const viewer = await roleClient('owner@vt.test', 'View Only', 'viewer@vt.test');
-    const viewerList = await viewer.get('/api/masters/visa-types?status=ARCHIVED');
+    const viewerList = await viewer.get('/api/masters/visa-types?status=ACTIVE');
     expect(viewerList.status).toBe(200);
     expect(viewerList.body.data.data).toHaveLength(0);
 
@@ -183,7 +181,7 @@ describe('Phase 21 visa types master', () => {
     expect((await other.get(`/api/masters/visa-types/${visa.body.data.id}`)).status).toBe(404);
   });
 
-  it('enforces permissions and records activity for create/update/archive', async () => {
+  it('enforces permissions and records activity for create/update/delete', async () => {
     const client = await owner();
     const destination = await createDestination(client);
     const visa = await client.post('/api/masters/visa-types', {
@@ -205,7 +203,7 @@ describe('Phase 21 visa types master', () => {
     await client.delete(`/api/masters/visa-types/${visa.body.data.id}`);
     const actions = (await db.activityLog.findMany()).map((log) => log.action);
     expect(actions).toEqual(
-      expect.arrayContaining(['VISA_TYPE_CREATED', 'VISA_TYPE_UPDATED', 'VISA_TYPE_ARCHIVED']),
+      expect.arrayContaining(['VISA_TYPE_CREATED', 'VISA_TYPE_UPDATED', 'VISA_TYPE_DELETED']),
     );
   });
 });
@@ -262,7 +260,7 @@ describe('Phase 21 testimonials master', () => {
     expect(updated.body.data).toMatchObject({ isVisible: false, description: 'Updated review.' });
   });
 
-  it('archives softly, excludes archived from read-only roles, isolates tenants, and enforces permissions', async () => {
+  it('hard-deletes, excludes deleted from read-only roles, isolates tenants, and enforces permissions', async () => {
     const client = await owner();
     const t = await createTestimonial(client);
     const viewer = await roleClient('owner@vt.test', 'View Only', 'viewer@vt.test');
@@ -272,10 +270,8 @@ describe('Phase 21 testimonials master', () => {
     ).toBe(403);
 
     expect((await client.delete(`/api/masters/testimonials/${t.body.data.id}`)).status).toBe(200);
-    expect(await db.testimonial.count({ where: { id: t.body.data.id, status: 'ARCHIVED' } })).toBe(
-      1,
-    );
-    const viewerList = await viewer.get('/api/masters/testimonials?status=ARCHIVED');
+    expect(await db.testimonial.findUnique({ where: { id: t.body.data.id } })).toBeNull();
+    const viewerList = await viewer.get('/api/masters/testimonials?status=ACTIVE');
     expect(viewerList.body.data.data).toHaveLength(0);
 
     const other = await owner('iso2@vt.test', 'Iso Testi');
@@ -343,7 +339,7 @@ describe('Phase 22 FAQ master', () => {
     });
   }
 
-  it('creates, lists, searches, updates and archives FAQs; hides archived from read-only', async () => {
+  it('creates, lists, searches, updates and deletes FAQs; hides deleted from read-only', async () => {
     const client = await owner();
     const created = await createFaq(client);
     expect(created.status).toBe(201);
@@ -381,13 +377,11 @@ describe('Phase 22 FAQ master', () => {
     expect(updated.body.data.destinations).toEqual(['Singapore', 'Phuket']);
 
     expect((await client.delete(`/api/masters/faqs/${created.body.data.id}`)).status).toBe(200);
-    expect(
-      await db.faq.count({ where: { id: created.body.data.id, status: 'ARCHIVED' } }),
-    ).toBe(1);
+    expect(await db.faq.findUnique({ where: { id: created.body.data.id } })).toBeNull();
 
     const actions = (await db.activityLog.findMany()).map((log) => log.action);
     expect(actions).toEqual(
-      expect.arrayContaining(['FAQ_CREATED', 'FAQ_UPDATED', 'FAQ_ARCHIVED']),
+      expect.arrayContaining(['FAQ_CREATED', 'FAQ_UPDATED', 'FAQ_DELETED']),
     );
   });
 
@@ -403,7 +397,7 @@ describe('Phase 22 FAQ master', () => {
 
     const faq = await createFaq(client);
     await client.delete(`/api/masters/faqs/${faq.body.data.id}`);
-    const viewerList = await viewer.get('/api/masters/faqs?status=ARCHIVED');
+    const viewerList = await viewer.get('/api/masters/faqs?status=ACTIVE');
     expect(viewerList.body.data.data).toHaveLength(0);
 
     const other = await owner('iso-faq@vt.test', 'Iso Faq');

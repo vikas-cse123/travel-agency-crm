@@ -192,31 +192,22 @@ describe('Cruise master', () => {
     expect((await other.get('/api/masters/cruises')).body.data.data).toHaveLength(0);
   });
 
-  it('archives, filters by status and restores', async () => {
+  it('hard-deletes and drops the row from the default list', async () => {
     const client = await owner();
-    const cruise = await createCruise(client, 'Archivable');
+    const cruise = await createCruise(client, 'Deletable');
 
     expect((await client.delete(`/api/masters/cruises/${cruise.id}`)).status).toBe(200);
-    // Archived rows drop out of the default list.
+    // Deleted rows drop out of the default list.
     expect((await client.get('/api/masters/cruises')).body.data.data).toHaveLength(0);
-    expect((await client.get('/api/masters/cruises?status=ARCHIVED')).body.data.data).toHaveLength(
-      1,
-    );
-
-    const restored = await client.patch(`/api/masters/cruises/${cruise.id}/status`, {
-      status: 'ACTIVE',
-    });
-    expect(restored.status).toBe(200);
-    expect(restored.body.data.status).toBe('ACTIVE');
-    const row = await db.cruise.findUniqueOrThrow({ where: { id: cruise.id } });
-    expect(row.deletedAt).toBeNull();
+    expect(await db.cruise.findUnique({ where: { id: cruise.id } })).toBeNull();
+    expect((await client.delete(`/api/masters/cruises/${cruise.id}`)).status).toBe(404);
   });
 
   it('returns active cruises through the lookup endpoint only', async () => {
     const client = await owner();
     const active = await createCruise(client, 'Lookup Active', [{ name: 'Interior' }]);
-    const archived = await createCruise(client, 'Lookup Archived');
-    await client.delete(`/api/masters/cruises/${archived.id}`);
+    const removed = await createCruise(client, 'Lookup Removed');
+    await client.delete(`/api/masters/cruises/${removed.id}`);
 
     const lookups = await client.get('/api/masters/cruises/lookups');
     expect(lookups.status).toBe(200);
@@ -349,15 +340,13 @@ describe('Cruise master', () => {
     const cruise = await createCruise(client, 'Audited Cruise');
     await client.patch(`/api/masters/cruises/${cruise.id}`, { name: 'Audited Cruise Renamed' });
     await client.delete(`/api/masters/cruises/${cruise.id}`);
-    await client.patch(`/api/masters/cruises/${cruise.id}/status`, { status: 'ACTIVE' });
 
     const actions = (await db.activityLog.findMany({ where: { entityId: cruise.id } })).map(
       (log) => log.action,
     );
     expect(actions).toContain('CRUISE_CREATED');
     expect(actions).toContain('CRUISE_UPDATED');
-    expect(actions).toContain('CRUISE_ARCHIVED');
-    expect(actions).toContain('CRUISE_RESTORED');
+    expect(actions).toContain('CRUISE_DELETED');
     // Logs must never carry storage keys.
     const logs = await db.activityLog.findMany({ where: { entityId: cruise.id } });
     expect(JSON.stringify(logs)).not.toContain('companies/');
@@ -485,29 +474,21 @@ describe('Vehicle master', () => {
     expect(types.body.data.vehicleTypes).toEqual(['AC Coach', 'Standard MPV (Family Vehicle)']);
   });
 
-  it('archives, filters by status and restores', async () => {
+  it('hard-deletes and drops the row from the default list', async () => {
     const client = await owner();
-    const vehicle = await createVehicle(client, 'Archivable Vehicle');
+    const vehicle = await createVehicle(client, 'Deletable Vehicle');
 
     expect((await client.delete(`/api/masters/vehicles/${vehicle.id}`)).status).toBe(200);
     expect((await client.get('/api/masters/vehicles')).body.data.data).toHaveLength(0);
-    expect((await client.get('/api/masters/vehicles?status=ARCHIVED')).body.data.data).toHaveLength(
-      1,
-    );
-
-    const restored = await client.patch(`/api/masters/vehicles/${vehicle.id}/status`, {
-      status: 'ACTIVE',
-    });
-    expect(restored.body.data.status).toBe('ACTIVE');
-    const row = await db.vehicle.findUniqueOrThrow({ where: { id: vehicle.id } });
-    expect(row.deletedAt).toBeNull();
+    expect(await db.vehicle.findUnique({ where: { id: vehicle.id } })).toBeNull();
+    expect((await client.delete(`/api/masters/vehicles/${vehicle.id}`)).status).toBe(404);
   });
 
   it('returns active vehicles through the lookup endpoint only', async () => {
     const client = await owner();
     const active = await createVehicle(client, 'Lookup Vehicle');
-    const archived = await createVehicle(client, 'Archived Vehicle');
-    await client.delete(`/api/masters/vehicles/${archived.id}`);
+    const removed = await createVehicle(client, 'Removed Vehicle');
+    await client.delete(`/api/masters/vehicles/${removed.id}`);
 
     const lookups = await client.get('/api/masters/vehicles/lookups');
     expect(lookups.body.data.vehicles).toHaveLength(1);
@@ -630,14 +611,12 @@ describe('Vehicle master', () => {
     const vehicle = await createVehicle(client, 'Audited Vehicle');
     await client.patch(`/api/masters/vehicles/${vehicle.id}`, { capacity: 4 });
     await client.delete(`/api/masters/vehicles/${vehicle.id}`);
-    await client.patch(`/api/masters/vehicles/${vehicle.id}/status`, { status: 'ACTIVE' });
 
     const actions = (await db.activityLog.findMany({ where: { entityId: vehicle.id } })).map(
       (log) => log.action,
     );
     expect(actions).toContain('VEHICLE_CREATED');
     expect(actions).toContain('VEHICLE_UPDATED');
-    expect(actions).toContain('VEHICLE_ARCHIVED');
-    expect(actions).toContain('VEHICLE_RESTORED');
+    expect(actions).toContain('VEHICLE_DELETED');
   });
 });

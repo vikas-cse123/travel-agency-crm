@@ -126,7 +126,7 @@ export function StatusBadge({ value }: { value: string }) {
 
 /**
  * Marks a record owned by the System Global Masters company. It is visible to
- * every tenant, and tenants can only hide it — never edit or archive it.
+ * every tenant, and tenants can only hide it — never edit or delete it.
  */
 export function GlobalBadge({ withTooltip = true }: { withTooltip?: boolean }) {
   const label = 'Global master record shared with every company';

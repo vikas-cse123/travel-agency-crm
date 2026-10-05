@@ -35,6 +35,13 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText(/^password/i)).toBeInTheDocument();
   });
 
+  it('shows the Travel Agency CRM product logo', () => {
+    renderWithProviders(<LoginPage />, { route: '/login' });
+    const logo = document.querySelector('img[src="/logo.png"]');
+    expect(logo).not.toBeNull();
+    expect(logo).toHaveAttribute('alt', 'Travel Agency CRM');
+  });
+
   it('validates required fields before submitting', async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.fn();

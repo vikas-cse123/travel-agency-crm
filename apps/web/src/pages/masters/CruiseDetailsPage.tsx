@@ -1,13 +1,12 @@
-import { Link, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, BedDouble, Pencil, RotateCcw, Ship } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, BedDouble, Pencil, Ship, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   cruiseImageUrl,
-  useArchiveCruise,
+  useDeleteCruise,
   useCruise,
-  useRestoreCruise,
 } from '@/features/masters/masters.api';
 import { MasterImageGalleryView } from './MasterImageGallery';
 import { Breadcrumbs, formatMasterDate, LoadingCard, SafeRichText, StatusBadge } from './MasterUi';
@@ -18,12 +17,12 @@ function money(amount: number, currency: string): string {
 
 export function CruiseDetailsPage() {
   const { cruiseId = '' } = useParams<{ cruiseId: string }>();
+  const navigate = useNavigate();
   const cruise = useCruise(cruiseId);
-  const archive = useArchiveCruise();
-  const restore = useRestoreCruise();
+  const remove = useDeleteCruise();
   const { hasPermission } = useAuth();
   const canUpdate = hasPermission(PERMISSIONS.MASTER_CRUISES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_CRUISES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_CRUISES_DELETE);
   const canViewCosting = hasPermission(PERMISSIONS.MASTER_CRUISES_VIEW_COSTING);
 
   if (cruise.isPending) return <LoadingCard />;
@@ -64,21 +63,21 @@ export function CruiseDetailsPage() {
               </Button>
             </Link>
           )}
-          {canArchive && value.status !== 'ARCHIVED' && (
+          {canDelete && (
             <Button
               variant="danger"
+              isLoading={remove.isPending}
               onClick={() => {
-                if (window.confirm('Are you sure you want to delete this cruise?')) {
-                  archive.mutate(cruiseId);
+                if (
+                  window.confirm(
+                    `Permanently delete cruise ${value.name}? This action cannot be undone.`,
+                  )
+                ) {
+                  remove.mutate(cruiseId, { onSuccess: () => navigate('/masters/cruises') });
                 }
               }}
             >
-              <Archive className="h-4 w-4" /> Archive
-            </Button>
-          )}
-          {canUpdate && value.status === 'ARCHIVED' && (
-            <Button variant="secondary" onClick={() => restore.mutate(cruiseId)}>
-              <RotateCcw className="h-4 w-4" /> Restore
+              <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
         </div>

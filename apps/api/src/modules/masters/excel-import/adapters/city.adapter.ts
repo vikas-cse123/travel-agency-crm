@@ -68,7 +68,7 @@ export const cityAdapter = {
   },
   existingKeys: async (companyId: string) => {
     const rows = await prisma.city.findMany({
-      where: { companyId, deletedAt: null },
+      where: { companyId },
       select: { countryCode: true, normalizedName: true },
     });
     return new Set(rows.map((r) => `${r.countryCode}:${r.normalizedName}`));

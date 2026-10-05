@@ -354,10 +354,10 @@ describe('Mobile drawer', () => {
   });
 });
 
-describe('WhatsApp CRM cross-app launcher', () => {
+describe('WhatsApp Max cross-app launcher', () => {
   it('renders the sister-app launcher pinned in the sidebar', () => {
     renderSidebar();
-    const link = screen.getByRole('link', { name: /whatsapp crm/i });
+    const link = screen.getByRole('link', { name: /whatsapp max/i });
     expect(link).toHaveAttribute('href', 'https://interscalechat.co.in/inbox');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link.getAttribute('rel')).toContain('noopener');
@@ -365,7 +365,27 @@ describe('WhatsApp CRM cross-app launcher', () => {
 
   it('stays reachable on the collapsed rail and in the mobile drawer', () => {
     renderSidebar({ collapsed: true, mobileOpen: true });
-    expect(screen.getByRole('link', { name: /whatsapp crm/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /whatsapp max/i })).toBeInTheDocument();
+  });
+});
+
+describe('Removed Call Recordings module', () => {
+  it('does not render a Call Recordings link anywhere', () => {
+    renderSidebar();
+    expect(screen.queryByRole('link', { name: /call recording/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/call recording/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps it out of the collapsed rail and the mobile drawer', () => {
+    renderSidebar({ collapsed: true, mobileOpen: true });
+    expect(screen.queryByRole('link', { name: /call recording/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/call recording/i)).not.toBeInTheDocument();
+  });
+
+  it('goes directly from Notes to Reminders under GENERAL', () => {
+    renderSidebar();
+    expect(screen.getByRole('link', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reminders' })).toBeInTheDocument();
   });
 });
 

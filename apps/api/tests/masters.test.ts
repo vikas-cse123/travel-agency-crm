@@ -251,18 +251,25 @@ describe('Phase 13A cities and destinations masters', () => {
     ).toBe(404);
   });
 
-  it('archives without hard deletion and preserves destination relationships', async () => {
+  it('hard-deletes unreferenced cities and blocks deletion of referenced ones', async () => {
     const client = await owner();
     const city = await createCity(client);
     const destination = await createDestination(client, [city.id]);
-    expect((await client.delete(`/api/masters/cities/${city.id}`)).status).toBe(200);
-    const storedCity = await db.city.findUniqueOrThrow({ where: { id: city.id } });
-    expect(storedCity).toMatchObject({ status: 'ARCHIVED' });
-    expect(storedCity.deletedAt).not.toBeNull();
-    const detail = await client.get(`/api/masters/destinations/${destination.id}`);
-    expect(detail.body.data.cities[0].city).toMatchObject({ id: city.id, status: 'ARCHIVED' });
+    // Referenced by a destination → 409, nothing removed.
+    const blocked = await client.delete(`/api/masters/cities/${city.id}`);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error.message).toMatch(/being used/i);
+    expect(await db.city.findUnique({ where: { id: city.id } })).not.toBeNull();
+    // Destination with no other blockers → hard delete cascades its city links.
     expect((await client.delete(`/api/masters/destinations/${destination.id}`)).status).toBe(200);
-    expect(await db.destination.count({ where: { id: destination.id } })).toBe(1);
+    expect(await db.destination.findUnique({ where: { id: destination.id } })).toBeNull();
+    expect(await db.destinationCity.count({ where: { destinationId: destination.id } })).toBe(0);
+    // City is now unreferenced → hard delete removes the row.
+    const removed = await client.delete(`/api/masters/cities/${city.id}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body.data).toMatchObject({ deleted: true, id: city.id });
+    expect(await db.city.findUnique({ where: { id: city.id } })).toBeNull();
+    expect((await client.delete(`/api/masters/cities/${city.id}`)).status).toBe(404);
   });
 
   it('enforces role permissions and active-only visibility for read-only roles', async () => {

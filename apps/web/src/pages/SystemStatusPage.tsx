@@ -1,7 +1,7 @@
-import { Plane } from 'lucide-react';
 import { APP_NAME } from '@interscale/shared';
 import { useApiHealth, useDatabaseHealth } from '@/api/health';
 import { SystemStatusCard } from '@/components/feedback/SystemStatusCard';
+import { AppLogo } from '@/components/layout/AppLogo';
 
 /**
  * Phase 1 landing page.
@@ -20,7 +20,7 @@ export function SystemStatusPage() {
     <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-16">
       <header className="mb-8 flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-600 text-white">
-          <Plane className="h-6 w-6" aria-hidden="true" />
+          <AppLogo />
         </span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-slate-900">{APP_NAME}</h1>

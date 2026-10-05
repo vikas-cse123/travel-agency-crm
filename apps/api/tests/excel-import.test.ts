@@ -483,14 +483,15 @@ describe('excel import', () => {
     expect(preview.rows[1]!.errors.some((e) => /Duplicate/i.test(e.message))).toBe(true);
   });
 
-  it('allows re-importing a city whose active record was archived', async () => {
-    await owner('owner-archive@excel.test');
+  it('allows re-importing a city whose record was deleted', async () => {
+    const client = await owner('owner-archive@excel.test');
     const user = await db.user.findFirst({ where: { normalizedEmail: 'owner-archive@excel.test' } });
     const { previewImport, executeImport } = await import('../src/modules/masters/excel-import/excel-import.service.js');
     const headers = ['Country', 'City Name'];
     const buf = await createWorkbook([{ 'City Name': 'Agra', 'Country': 'India' }], headers);
     await executeImport(buf, 'CITY', { companyId: user!.companyId, userId: user!.id } as never, { ipAddress: null, userAgent: null });
-    await db.city.updateMany({ where: { companyId: user!.companyId }, data: { status: 'ARCHIVED', deletedAt: new Date() } });
+    const created = await db.city.findFirstOrThrow({ where: { companyId: user!.companyId } });
+    expect((await client.delete(`/api/masters/cities/${created.id}`)).status).toBe(200);
 
     const preview = await previewImport(buf, 'CITY', authOf(user!));
     expect(preview.invalidCount).toBe(0);
@@ -2693,10 +2694,10 @@ describe('excel import', () => {
       });
     });
 
-  describe('soft-deleted duplicates', () => {
-    // Cruise/Vehicle/AddOnService enforce @@unique([companyId, normalizedName])
-    // across soft-deleted rows (archiving keeps the record), so an archived name
-    // still blocks a re-import — the same rule the manual create flow obeys.
+  describe('deleted duplicates', () => {
+    // Cruise/Vehicle/AddOnService enforce @@unique([companyId, normalizedName]).
+    // Hard-deleted rows free the name, so the same name can be re-imported —
+    // the same rule the manual create flow obeys.
     // Cities have no such constraint and are covered by the re-import test above.
     const fixtures = [
       {
@@ -2704,47 +2705,45 @@ describe('excel import', () => {
         email: 'soft-cruise@excel.test',
         headers: ['Cruise Name'],
         rows: [{ 'Cruise Name': 'Soft Cruise' }],
-        update: (companyId: string) =>
-          db.cruise.updateMany({ where: { companyId }, data: { status: 'ARCHIVED', deletedAt: new Date() } }),
-        count: (companyId: string) => db.cruise.count({ where: { companyId, deletedAt: null } }),
+        remove: (companyId: string) =>
+          db.cruise.deleteMany({ where: { companyId } }),
+        count: (companyId: string) => db.cruise.count({ where: { companyId } }),
       },
       {
         masterType: 'VEHICLE' as const,
         email: 'soft-vehicle@excel.test',
         headers: ['Vehicle Name', 'Vehicle Type'],
         rows: [{ 'Vehicle Name': 'Soft Van', 'Vehicle Type': 'Van' }],
-        update: (companyId: string) =>
-          db.vehicle.updateMany({ where: { companyId }, data: { status: 'ARCHIVED', deletedAt: new Date() } }),
-        count: (companyId: string) => db.vehicle.count({ where: { companyId, deletedAt: null } }),
+        remove: (companyId: string) =>
+          db.vehicle.deleteMany({ where: { companyId } }),
+        count: (companyId: string) => db.vehicle.count({ where: { companyId } }),
       },
       {
         masterType: 'ADD_ON_SERVICE' as const,
         email: 'soft-addon@excel.test',
         headers: ['Service Name'],
         rows: [{ 'Service Name': 'Soft Addon' }],
-        update: (companyId: string) =>
-          db.addOnService.updateMany({ where: { companyId }, data: { status: 'ARCHIVED', deletedAt: new Date() } }),
-        count: (companyId: string) => db.addOnService.count({ where: { companyId, deletedAt: null } }),
+        remove: (companyId: string) =>
+          db.addOnService.deleteMany({ where: { companyId } }),
+        count: (companyId: string) => db.addOnService.count({ where: { companyId } }),
       },
     ];
 
     for (const fixture of fixtures) {
-      it(`still blocks a re-import of an archived ${fixture.masterType}`, async () => {
+      it(`allows re-import of a deleted ${fixture.masterType}`, async () => {
         await owner(fixture.email);
         const user = await db.user.findFirst({ where: { normalizedEmail: fixture.email } });
         const { previewImport, executeImport } = await import('../src/modules/masters/excel-import/excel-import.service.js');
         const buf = await createWorkbook(fixture.rows, fixture.headers);
         const auth = { companyId: user!.companyId, userId: user!.id } as never;
         await executeImport(buf, fixture.masterType, auth, { ipAddress: null, userAgent: null });
-        await fixture.update(user!.companyId);
+        await fixture.remove(user!.companyId);
 
         const preview = await previewImport(buf, fixture.masterType, authOf(user!));
-        expect(preview.invalidCount).toBe(1);
-        expect(preview.rows[0]!.errors.some((e) => /already exists/i.test(e.message))).toBe(true);
+        expect(preview.invalidCount).toBe(0);
         const result = await executeImport(buf, fixture.masterType, auth, { ipAddress: null, userAgent: null });
-        expect(result.createdCount).toBe(0);
-        expect(result.skippedCount).toBe(1);
-        expect(await fixture.count(user!.companyId)).toBe(0);
+        expect(result.createdCount).toBe(1);
+        expect(await fixture.count(user!.companyId)).toBe(1);
       });
     }
   });

@@ -126,7 +126,7 @@ describe('Phase 21 visa type and testimonial pages', () => {
     expect((await screen.findAllByText('Tourist Visa')).length).toBeGreaterThan(0);
   });
 
-  it('renders the visa type list, the # sections and destination filter, and archive action', async () => {
+  it('renders the visa type list, the # sections and destination filter, and delete action', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: RequestInfo | URL) =>
@@ -138,7 +138,7 @@ describe('Phase 21 visa type and testimonial pages', () => {
     renderWithProviders(<VisaTypesPage />);
     expect((await screen.findAllByText('Tourist Visa')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('Thailand').length).toBeGreaterThan(0);
-    expect(screen.getByLabelText('Archive Tourist Visa')).toBeInTheDocument();
+    expect(screen.getByLabelText('Delete Tourist Visa')).toBeInTheDocument();
   });
 
   it('shows visa type loading, empty and error states', async () => {
@@ -217,7 +217,7 @@ describe('Phase 21 visa type and testimonial pages', () => {
     expect(screen.getByText('Visa overview')).toBeInTheDocument();
   });
 
-  it('hides visa type create/archive controls from a read-only role', async () => {
+  it('hides visa type create/delete controls from a read-only role', async () => {
     auth.permissions = new Set(['masters.visa_types.view']);
     vi.stubGlobal(
       'fetch',
@@ -230,7 +230,7 @@ describe('Phase 21 visa type and testimonial pages', () => {
     renderWithProviders(<VisaTypesPage />);
     await screen.findAllByText('Tourist Visa');
     expect(screen.queryByRole('link', { name: 'Add New Visa Type' })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Archive Tourist Visa')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Delete Tourist Visa')).not.toBeInTheDocument();
   });
 
   it('renders the testimonial list (incl. mobile cards) and validates the create form', async () => {

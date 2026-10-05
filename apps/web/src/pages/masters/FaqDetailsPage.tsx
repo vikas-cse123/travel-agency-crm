@@ -1,14 +1,18 @@
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Pencil, Trash2 } from 'lucide-react';
+import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
-import { useArchiveFaq, useFaq } from '@/features/masters/masters.api';
+import { useAuth } from '@/features/auth/AuthProvider';
+import { useDeleteFaq, useFaq } from '@/features/masters/masters.api';
 import { MasterHeader, StatusBadge } from './MasterUi';
 
 export function FaqDetailsPage() {
   const { faqId } = useParams();
   const navigate = useNavigate();
   const faq = useFaq(faqId);
-  const archive = useArchiveFaq();
+  const remove = useDeleteFaq();
+  const { hasPermission } = useAuth();
+  const canDelete = hasPermission(PERMISSIONS.MASTER_FAQS_DELETE);
 
   if (faq.isError) return <Navigate to="/masters/faqs" replace />;
   if (faq.isPending) return <div className="h-64 animate-pulse rounded-xl bg-card" />;
@@ -16,9 +20,9 @@ export function FaqDetailsPage() {
 
   const row = faq.data;
 
-  const onArchive = () => {
-    if (window.confirm('Archive this FAQ?')) {
-      archive.mutate(row.id, { onSuccess: () => navigate('/masters/faqs') });
+  const onDelete = () => {
+    if (window.confirm(`Permanently delete FAQ ${row.question}? This action cannot be undone.`)) {
+      remove.mutate(row.id, { onSuccess: () => navigate('/masters/faqs') });
     }
   };
 
@@ -74,10 +78,12 @@ export function FaqDetailsPage() {
                 Edit
               </Button>
             </Link>
-            <Button variant="danger" onClick={onArchive} isLoading={archive.isPending}>
-              <Trash2 className="h-4 w-4" />
-              Archive
-            </Button>
+            {canDelete && (
+              <Button variant="danger" onClick={onDelete} isLoading={remove.isPending}>
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </Button>
+            )}
             <Link to="/masters/faqs">
               <Button variant="secondary">Back to list</Button>
             </Link>

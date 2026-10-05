@@ -368,7 +368,6 @@ export const remindersService = {
       prisma.query.findMany({
         where: {
           companyId: auth.companyId,
-          deletedAt: null,
           ...(owned.OR
             ? { OR: [{ assignedToId: auth.userId }, { createdById: auth.userId }] }
             : {}),

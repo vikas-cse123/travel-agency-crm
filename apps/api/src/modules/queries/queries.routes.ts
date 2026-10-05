@@ -214,7 +214,7 @@ router.delete(
   '/:queryId',
   requirePermission(PERMISSIONS.QUERIES_DELETE),
   validateRequest({ params: queryId }),
-  asyncHandler(queriesController.archive),
+  asyncHandler(queriesController.remove),
 );
 router.patch(
   '/:queryId/stage',

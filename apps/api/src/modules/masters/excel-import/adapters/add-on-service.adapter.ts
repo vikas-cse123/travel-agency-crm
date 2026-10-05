@@ -1,4 +1,5 @@
 import { addOnServiceInputSchema } from '@interscale/shared';
+import crypto from 'node:crypto';
 import { prisma } from '../../../../config/prisma.js';
 import type { Prisma } from '@prisma/client';
 import { normalizeCustomerName } from '../../../../utils/normalize.js';
@@ -67,14 +68,33 @@ export const addOnServiceAdapter = {
     tx: Prisma.TransactionClient,
   ) => {
     const normalizedName = normalizeCustomerName(String(input.name));
+    const price =
+      input.price != null && input.price !== '' && Number.isFinite(Number(input.price))
+        ? Number(input.price)
+        : null;
+    const currency = input.currency ? String(input.currency).toUpperCase() : 'INR';
+    // Excel carries a single price: seed the repeatable pricing list with one
+    // entry so imports render everywhere the multi-price UI does.
+    const pricing =
+      price != null
+        ? [
+            {
+              id: crypto.randomUUID(),
+              label: '',
+              price,
+              currency: /^[A-Z]{3}$/.test(currency) ? currency : 'INR',
+            },
+          ]
+        : null;
     const created = await tx.addOnService.create({
       data: {
         companyId: auth.companyId,
         name: String(input.name).trim(),
         normalizedName,
         description: sanitizeRichText(input.description as string | null | undefined),
-        price: input.price != null && input.price !== '' ? (input.price as number) : null,
-        currency: input.currency ? String(input.currency).toUpperCase() : 'INR',
+        price,
+        currency,
+        pricing: pricing as unknown as Prisma.InputJsonValue,
         status: ((input.status as string) ?? 'ACTIVE') as never,
         createdById: auth.userId,
       },

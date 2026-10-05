@@ -17,6 +17,7 @@ export interface CompanySettings {
     phone: string | null;
     website: string | null;
     address: string | null;
+    googleMapsUrl: string | null;
     operatingSince: number | null;
     totalReviews: number | null;
     tripsSold: number | null;

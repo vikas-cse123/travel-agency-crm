@@ -36,7 +36,7 @@ async function candidates(
   const lookahead = new Date(Date.now() + env.REMINDER_PROCESSING_LOOKAHEAD_DAYS * 86_400_000);
   if (rule.ruleType === 'LEAD_STAGE' && rule.leadStage) {
     const rows = await prisma.query.findMany({
-      where: { companyId, deletedAt: null, leadStage: rule.leadStage },
+      where: { companyId, leadStage: rule.leadStage },
       take,
       orderBy: { updatedAt: 'asc' },
     });

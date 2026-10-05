@@ -713,6 +713,7 @@ enum ActivityAction {
   QUERY_STAGE_CHANGED
   QUERY_ASSIGNED
   QUERY_ARCHIVED
+  QUERY_DELETED
   QUERY_NOTE_ADDED
   QUERY_NOTE_UPDATED
   QUERY_NOTE_DELETED
@@ -835,10 +836,12 @@ enum ActivityAction {
   CITY_UPDATED
   CITY_STATUS_CHANGED
   CITY_ARCHIVED
+  CITY_DELETED
   DESTINATION_CREATED
   DESTINATION_UPDATED
   DESTINATION_STATUS_CHANGED
   DESTINATION_ARCHIVED
+  DESTINATION_DELETED
   DESTINATION_CITY_ADDED
   DESTINATION_CITY_REMOVED
   DESTINATION_CITY_REORDERED
@@ -849,6 +852,7 @@ enum ActivityAction {
   HOTEL_UPDATED
   HOTEL_STATUS_CHANGED
   HOTEL_ARCHIVED
+  HOTEL_DELETED
   HOTEL_DEFAULT_CHANGED
   HOTEL_IMAGE_UPLOADED
   HOTEL_IMAGE_REPLACED
@@ -863,6 +867,7 @@ enum ActivityAction {
   AIRLINE_UPDATED
   AIRLINE_STATUS_CHANGED
   AIRLINE_ARCHIVED
+  AIRLINE_DELETED
   AIRLINE_LOGO_UPLOADED
   AIRLINE_LOGO_REPLACED
   AIRLINE_LOGO_IMPORTED
@@ -872,6 +877,7 @@ enum ActivityAction {
   CRUISE_STATUS_CHANGED
   CRUISE_ARCHIVED
   CRUISE_RESTORED
+  CRUISE_DELETED
   CRUISE_IMAGE_UPLOADED
   CRUISE_IMAGE_REPLACED
   CRUISE_IMAGE_DELETED
@@ -880,6 +886,7 @@ enum ActivityAction {
   VEHICLE_STATUS_CHANGED
   VEHICLE_ARCHIVED
   VEHICLE_RESTORED
+  VEHICLE_DELETED
   VEHICLE_IMAGE_UPLOADED
   VEHICLE_IMAGE_REPLACED
   VEHICLE_IMAGE_DELETED
@@ -888,6 +895,7 @@ enum ActivityAction {
   SIGHTSEEING_STATUS_CHANGED
   SIGHTSEEING_ARCHIVED
   SIGHTSEEING_RESTORED
+  SIGHTSEEING_DELETED
   SIGHTSEEING_REORDERED
   SIGHTSEEING_IMAGE_UPLOADED
   SIGHTSEEING_IMAGE_REPLACED
@@ -897,6 +905,7 @@ enum ActivityAction {
   ADD_ON_SERVICE_STATUS_CHANGED
   ADD_ON_SERVICE_ARCHIVED
   ADD_ON_SERVICE_RESTORED
+  ADD_ON_SERVICE_DELETED
   ADD_ON_SERVICE_IMAGE_UPLOADED
   ADD_ON_SERVICE_IMAGE_REPLACED
   ADD_ON_SERVICE_IMAGE_DELETED
@@ -905,11 +914,13 @@ enum ActivityAction {
   VISA_TYPE_STATUS_CHANGED
   VISA_TYPE_ARCHIVED
   VISA_TYPE_RESTORED
+  VISA_TYPE_DELETED
   TESTIMONIAL_CREATED
   TESTIMONIAL_UPDATED
   TESTIMONIAL_STATUS_CHANGED
   TESTIMONIAL_ARCHIVED
   TESTIMONIAL_RESTORED
+  TESTIMONIAL_DELETED
   TESTIMONIAL_IMAGE_UPLOADED
   TESTIMONIAL_IMAGE_REPLACED
   TESTIMONIAL_IMAGE_DELETED
@@ -918,6 +929,7 @@ enum ActivityAction {
   FAQ_STATUS_CHANGED
   FAQ_ARCHIVED
   FAQ_RESTORED
+  FAQ_DELETED
   SYSTEM_COMPANY_BOOTSTRAPPED
   SYSTEM_ADMIN_CREATED
   MASTER_HIDDEN_FOR_TENANT
@@ -938,6 +950,10 @@ model Company {
   phone                 String?          @db.VarChar(32)
   website               String?          @db.VarChar(255)
   address               String?          @db.VarChar(1000)
+  /// Public Google Maps link for the agency (Settings → Company Profile).
+  /// Shown as "View on Google Maps" in the weblink Contact Us section.
+  /// Optional; legacy rows keep null (row hidden).
+  googleMapsUrl         String?          @db.VarChar(2000)
   primaryColor          String           @default("#2563eb") @db.VarChar(7)
   // Confirmed company logo (Phase 18). Metadata columns mirror the master-image
   // pattern; pendingLogoObjectKey holds an unconfirmed upload so replacing a
@@ -1057,6 +1073,7 @@ model Company {
   destinations                 Destination[]
   destinationCities            DestinationCity[]
   vehicleDestinations          VehicleDestination[]
+  addOnServiceDestinations     AddOnServiceDestination[]
   hotels                       Hotel[]
   hotelRoomTypes               HotelRoomType[]
   hotelMealPlans               HotelMealPlan[]
@@ -1523,7 +1540,6 @@ model City {
   createdById    String       @db.Uuid
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
-  deletedAt      DateTime?
 
   company          Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy        User              @relation("CityCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -1532,7 +1548,7 @@ model City {
   sightseeings     Sightseeing[]
 
   @@index([companyId, countryCode, normalizedName])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, airportCode])
   @@index([createdById])
   @@map("cities")
@@ -1572,18 +1588,18 @@ model Destination {
   createdById           String           @db.Uuid
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
-  deletedAt             DateTime?
 
-  company      Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdBy    User                 @relation("DestinationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  cities       DestinationCity[]
-  hotels       Hotel[]
-  sightseeings Sightseeing[]
-  visaTypes    VisaType[]
-  vehicleLinks VehicleDestination[]
+  company           Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy         User                      @relation("DestinationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cities            DestinationCity[]
+  hotels            Hotel[]
+  sightseeings      Sightseeing[]
+  visaTypes         VisaType[]
+  vehicleLinks      VehicleDestination[]
+  addOnServiceLinks AddOnServiceDestination[]
 
   @@index([companyId, countryCode, normalizedName])
-  @@index([companyId, destinationType, status, deletedAt])
+  @@index([companyId, destinationType, status])
   @@index([companyId, createdAt])
   @@index([createdById])
   @@map("destinations")
@@ -1657,7 +1673,6 @@ model Hotel {
   createdById           String                    @db.Uuid
   createdAt             DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
-  deletedAt             DateTime?
   company               Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   destination           Destination               @relation(fields: [destinationId], references: [id], onDelete: Restrict)
   city                  City                      @relation(fields: [cityId], references: [id], onDelete: Restrict)
@@ -1677,7 +1692,7 @@ model Hotel {
 
   @@index([companyId, cityId, normalizedName])
   @@index([companyId, destinationId])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, cityId, isDefaultForCity])
   @@index([createdById])
   @@map("hotels")
@@ -1930,7 +1945,6 @@ model Airline {
   createdById          String           @db.Uuid
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
-  deletedAt            DateTime?
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User    @relation("AirlineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -1940,7 +1954,7 @@ model Airline {
   bookingServices           BookingService[]
 
   @@index([companyId, normalizedName])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, countryCode])
   @@index([createdById])
   @@map("airlines")
@@ -1998,7 +2012,6 @@ model Sightseeing {
   updatedById String?      @db.Uuid
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
 
   company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   // Restrict: a destination or city still used by sightseeing content cannot
@@ -2013,7 +2026,7 @@ model Sightseeing {
   bookingServices           BookingService[]
 
   @@unique([companyId, cityId, normalizedTitle])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, destinationId, cityId, sequence])
   @@index([companyId, cityId, sequence])
   @@index([companyId, normalizedTitle])
@@ -2040,10 +2053,18 @@ model AddOnService {
   description    String? @db.Text
 
   /// Single public price. Optional — empty means no prefilled price.
-  price    Decimal? @db.Decimal(14, 2)
-  currency String   @default("INR") @db.VarChar(3)
+  /// Legacy single-price columns: kept for backward compatibility and kept
+  /// in sync with the first pricing entry. The repeatable `pricing` list
+  /// below is authoritative for new writes.
+  price        Decimal? @db.Decimal(14, 2)
+  currency     String   @default("INR") @db.VarChar(3)
   /// Free-text pricing basis shown with the price (e.g. "Per Person").
-  pricingBasis String? @db.VarChar(80)
+  pricingBasis String?  @db.VarChar(80)
+  /// Repeatable pricing options, e.g. Adult/Child/Per Group. Ordered JSON
+  /// array of { id, label, price, currency }; each entry carries a stable
+  /// UUID so rows stay independently editable. Mirrors the master-images
+  /// JSON pattern (structured data, never a formatted string).
+  pricing               Json?            @db.Json
 
   imageStorageProvider  StorageProvider?
   imageBucket           String?          @db.VarChar(255)
@@ -2064,7 +2085,6 @@ model AddOnService {
   updatedById String?      @db.Uuid
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User    @relation("AddOnServiceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -2073,13 +2093,35 @@ model AddOnService {
   quotationVersionServices  QuotationVersionService[]
   quotationTemplateServices QuotationTemplateService[]
   bookingServices           BookingService[]
+  destinations              AddOnServiceDestination[]
 
   @@unique([companyId, normalizedName])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, normalizedName])
   @@index([createdById])
   @@index([updatedById])
   @@map("add_on_services")
+}
+
+/// Destination assignments for an add-on service master. Each link records
+/// whether the service is a default for that destination (auto-added to new
+/// quotations for the destination). The 20-defaults-per-destination cap is
+/// enforced by the service layer.
+model AddOnServiceDestination {
+  id             String       @id @default(uuid()) @db.Uuid
+  companyId      String       @db.Uuid
+  addOnServiceId String       @db.Uuid
+  destinationId  String       @db.Uuid
+  /// Default for this destination: auto-added to new quotations using it.
+  isDefault      Boolean      @default(false)
+  sequence       Int
+  company        Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  addOnService   AddOnService @relation(fields: [addOnServiceId], references: [id], onDelete: Cascade)
+  destination    Destination  @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@unique([addOnServiceId, destinationId])
+  @@index([companyId, destinationId])
+  @@map("add_on_service_destinations")
 }
 
 /// A reusable visa type tied to one destination, with an arbitrary number of
@@ -2099,7 +2141,6 @@ model VisaType {
   updatedById String?      @db.Uuid
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
 
   company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
   // Restrict: a destination still used by a visa type cannot be removed.
@@ -2108,7 +2149,7 @@ model VisaType {
   updatedBy   User?             @relation("VisaTypeUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   sections    VisaTypeSection[]
 
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, destinationId])
   @@index([companyId, normalizedName])
   @@index([destinationId])
@@ -2170,13 +2211,12 @@ model Testimonial {
   updatedById String?      @db.Uuid
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User    @relation("TestimonialCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy User?   @relation("TestimonialUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, createdAt])
   @@index([createdById])
   @@index([updatedById])
@@ -2195,13 +2235,12 @@ model Faq {
   updatedById  String?      @db.Uuid
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
-  deletedAt    DateTime?
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User    @relation("FaqCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy User?   @relation("FaqUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, createdAt])
   @@index([createdById])
   @@index([updatedById])
@@ -2245,7 +2284,6 @@ model Cruise {
   updatedById String?      @db.Uuid
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
 
   company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User             @relation("CruiseCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -2257,7 +2295,7 @@ model Cruise {
   bookingServices           BookingService[]
 
   @@unique([companyId, normalizedName])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, normalizedName])
   @@index([createdById])
   @@index([updatedById])
@@ -2332,7 +2370,6 @@ model Vehicle {
   updatedById String?      @db.Uuid
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User    @relation("VehicleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -2345,7 +2382,7 @@ model Vehicle {
   bookingServices           BookingService[]
 
   @@unique([companyId, normalizedName])
-  @@index([companyId, status, deletedAt])
+  @@index([companyId, status])
   @@index([companyId, vehicleType])
   @@index([companyId, normalizedName])
   @@index([createdById])
@@ -2905,7 +2942,6 @@ model Query {
   internalRemarks          String?                  @db.VarChar(2000)
   createdAt                DateTime                 @default(now())
   updatedAt                DateTime                 @updatedAt
-  deletedAt                DateTime?
   company                  Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   customer                 Customer?                @relation(fields: [customerId], references: [id], onDelete: SetNull)
   assignedTo               User?                    @relation("QueryAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
@@ -2924,11 +2960,11 @@ model Query {
 
   @@unique([companyId, queryNumber])
   @@index([companyId, normalizedPhone])
-  @@index([companyId, customerId, deletedAt])
-  @@index([companyId, leadStage, deletedAt])
-  @@index([companyId, leadType, deletedAt])
-  @@index([companyId, priority, deletedAt])
-  @@index([companyId, assignedToId, deletedAt])
+  @@index([companyId, customerId])
+  @@index([companyId, leadStage])
+  @@index([companyId, leadType])
+  @@index([companyId, priority])
+  @@index([companyId, assignedToId])
   @@index([companyId, nextFollowUpAt])
   @@index([companyId, travelStartDate])
   @@index([companyId, createdAt])
@@ -3400,6 +3436,9 @@ model QuotationTemplateService {
   quantity         Decimal           @default(1) @db.Decimal(10, 2)
   internalCost     Decimal?          @db.Decimal(14, 2)
   sellingPrice     Decimal?          @db.Decimal(14, 2)
+  /// Template-owned snapshot of ALL master pricing options available when
+  /// the Add-On Service was selected (same shape as the quotation snapshot).
+  pricingSnapshot  Json?             @db.Json
   taxCategory      String?           @db.VarChar(80)
   notes            String?           @db.VarChar(2000)
   sequence         Int
@@ -3840,6 +3879,11 @@ model QuotationVersionService {
   /// Free-text master pricing basis snapshot (e.g. "Per Person") carried
   /// from the Add-On Service master. NULL for legacy rows and other types.
   pricingBasisLabel  String?          @db.VarChar(80)
+  /// Quotation-owned snapshot of ALL master pricing options available when
+  /// the Add-On Service was selected. Ordered JSON array of
+  /// { id, label, price, currency }; NULL for legacy rows and other types.
+  /// Quotation-owned: later master edits never rewrite it.
+  pricingSnapshot    Json?            @db.Json
   taxCategory        String?          @db.VarChar(80)
   notes              String?          @db.VarChar(2000)
   /// Ordered, quotation-owned image snapshot copied from a selected Master.

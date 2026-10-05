@@ -67,8 +67,27 @@ async function createSightseeing(
   return response.body.data as { id: string; title: string; sequence: number };
 }
 
-describe('Sightseeing master status and restore', () => {
-  it('list supports Current statuses (excludes archived), ACTIVE, INACTIVE and ARCHIVED', async () => {
+async function createSightseeingRaw(
+  client: Client,
+  geo: { destinationId: string; cityId: string },
+  overrides: Record<string, unknown> = {},
+) {
+  return client.post('/api/masters/sightseeing', {
+    destinationId: geo.destinationId,
+    cityId: geo.cityId,
+    title: 'Departure from Singapore',
+    sequence: 1,
+    estimatedHours: 2,
+    suggestedStartTime: '09:00',
+    description: '<p>Departure transfer.</p>',
+    remarks: '<p>Carry documents.</p>',
+    status: 'ACTIVE',
+    ...overrides,
+  });
+}
+
+describe('Sightseeing master status and hard delete', () => {
+  it('list supports Current statuses (ACTIVE + INACTIVE); ARCHIVED is rejected', async () => {
     const client = await owner();
     const geo = await createGeo(client);
     await createSightseeing(client, geo, { title: 'Active Tour' });
@@ -76,16 +95,19 @@ describe('Sightseeing master status and restore', () => {
       title: 'Inactive Tour',
       status: 'INACTIVE',
     });
-    await createSightseeing(client, geo, {
-      title: 'Archived Tour',
-      status: 'ARCHIVED',
-    });
+    expect(
+      (
+        await createSightseeingRaw(client, geo, {
+          title: 'Archived Tour',
+          status: 'ARCHIVED',
+        })
+      ).status,
+    ).toBe(400);
 
     const current = await client.get('/api/masters/sightseeing?pageSize=50');
     const currentTitles = current.body.data.data.map((row: { title: string }) => row.title);
     expect(currentTitles).toContain('Active Tour');
     expect(currentTitles).toContain('Inactive Tour');
-    expect(currentTitles).not.toContain('Archived Tour');
 
     const activeList = await client.get('/api/masters/sightseeing?pageSize=50&status=ACTIVE');
     expect(activeList.body.data.data.map((r: { title: string }) => r.title)).toEqual([
@@ -96,12 +118,6 @@ describe('Sightseeing master status and restore', () => {
     expect(inactiveList.body.data.data.map((r: { title: string }) => r.title)).toEqual([
       'Inactive Tour',
     ]);
-
-    const archivedList = await client.get('/api/masters/sightseeing?pageSize=50&status=ARCHIVED');
-    expect(archivedList.body.data.data.map((r: { title: string }) => r.title)).toEqual([
-      'Archived Tour',
-    ]);
-    expect(archivedList.body.data.data[0].status).toBe('ARCHIVED');
   });
 
   it('status filtering is tenant-scoped', async () => {
@@ -113,38 +129,23 @@ describe('Sightseeing master status and restore', () => {
     expect(betaList.body.data.data).toHaveLength(0);
   });
 
-  it('restore changes the original record to ACTIVE, preserves id and clears archival metadata', async () => {
+  it('delete permanently removes the record and writes SIGHTSEEING_DELETED', async () => {
     const client = await owner();
     const geo = await createGeo(client);
     const row = await createSightseeing(client, geo);
-    const archived = await client.delete(`/api/masters/sightseeing/${row.id}`);
-    expect(archived.status).toBe(200);
-    const storedAfterArchive = await db.sightseeing.findUniqueOrThrow({ where: { id: row.id } });
-    expect(storedAfterArchive.deletedAt).not.toBeNull();
-
-    const restored = await client.patch(`/api/masters/sightseeing/${row.id}/status`, {
-      status: 'ACTIVE',
-    });
-    expect(restored.status).toBe(200);
-    expect(restored.body.data.status).toBe('ACTIVE');
-    expect(restored.body.data.id).toBe(row.id);
-    const stored = await db.sightseeing.findUniqueOrThrow({ where: { id: row.id } });
-    expect(stored.status).toBe('ACTIVE');
-    expect(stored.deletedAt).toBeNull();
-    expect(stored.title).toBe('Departure from Singapore');
-    expect(stored.destinationId).toBe(geo.destinationId);
-    expect(stored.cityId).toBe(geo.cityId);
-    // Restored record is visible under ACTIVE again.
-    const activeList = await client.get('/api/masters/sightseeing?pageSize=50&status=ACTIVE');
-    expect(activeList.body.data.data.map((r: { id: string }) => r.id)).toContain(row.id);
-    // Restore activity log written.
+    const removed = await client.delete(`/api/masters/sightseeing/${row.id}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body.data).toMatchObject({ deleted: true, id: row.id });
+    expect(await db.sightseeing.findUnique({ where: { id: row.id } })).toBeNull();
+    // Delete activity log written and survives.
     const log = await db.activityLog.findFirst({
-      where: { entityId: row.id, action: 'SIGHTSEEING_RESTORED' },
+      where: { entityId: row.id, action: 'SIGHTSEEING_DELETED' },
     });
     expect(log).not.toBeNull();
+    expect((await client.delete(`/api/masters/sightseeing/${row.id}`)).status).toBe(404);
   });
 
-  it('quotation lookups exclude archived and inactive records', async () => {
+  it('quotation lookups exclude inactive records', async () => {
     const client = await owner();
     const geo = await createGeo(client);
     await createSightseeing(client, geo, { title: 'Active Dropdown' });
@@ -152,17 +153,11 @@ describe('Sightseeing master status and restore', () => {
       title: 'Inactive Dropdown',
       status: 'INACTIVE',
     });
-    const archived = await createSightseeing(client, geo, {
-      title: 'Archived Dropdown',
-      status: 'ARCHIVED',
-    });
     const lookups = await client.get('/api/masters/sightseeing/lookups');
     const titles = lookups.body.data.sightseeings.map((row: { title: string }) => row.title);
     expect(titles).toContain('Active Dropdown');
     expect(titles).not.toContain('Inactive Dropdown');
-    expect(titles).not.toContain('Archived Dropdown');
     void inactive;
-    void archived;
   });
 
   it('creating an active/inactive duplicate keeps normal duplicate validation', async () => {
@@ -179,12 +174,12 @@ describe('Sightseeing master status and restore', () => {
     expect(duplicate.body.error.code).toBe('CONFLICT');
   });
 
-  it('creating an archived duplicate returns the structured archived-duplicate error', async () => {
+  it('creating a duplicate returns the normal duplicate error', async () => {
     const client = await owner();
     const geo = await createGeo(client);
     await createSightseeing(client, geo, {
       title: 'Departure from Singapore',
-      status: 'ARCHIVED',
+      status: 'ACTIVE',
     });
     const response = await client.post('/api/masters/sightseeing', {
       destinationId: geo.destinationId,
@@ -193,12 +188,7 @@ describe('Sightseeing master status and restore', () => {
       status: 'ACTIVE',
     });
     expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe('SIGHTSEEING_ARCHIVED_DUPLICATE');
-    expect(response.body.error.details).toMatchObject({
-      title: 'Departure from Singapore',
-      cityName: 'Singapore',
-      canRestore: true,
-    });
+    expect(response.body.error.code).toBe('CONFLICT');
     // No new row created.
     const rows = await db.sightseeing.findMany({
       where: { cityId: geo.cityId, normalizedTitle: 'departure from singapore' },
@@ -206,12 +196,12 @@ describe('Sightseeing master status and restore', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('unauthorized restore returns 403', async () => {
+  it('unauthorized status change returns 403', async () => {
     const client = await owner();
     const geo = await createGeo(client);
-    const row = await createSightseeing(client, geo, { status: 'ARCHIVED' });
+    const row = await createSightseeing(client, geo, { status: 'INACTIVE' });
     // Downgrade the owner to a role without the sightseeing-update permission
-    // and confirm the same session can no longer restore.
+    // and confirm the same session can no longer change status.
     const user = await db.user.findUniqueOrThrow({
       where: { normalizedEmail: 'owner@ss.test' },
     });
@@ -224,23 +214,23 @@ describe('Sightseeing master status and restore', () => {
     });
     expect(response.status).toBe(403);
     const stored = await db.sightseeing.findUniqueOrThrow({ where: { id: row.id } });
-    expect(stored.status).toBe('ARCHIVED');
+    expect(stored.status).toBe('INACTIVE');
   });
 
-  it('cross-tenant restore does not work', async () => {
+  it('cross-tenant status change does not work', async () => {
     const alpha = await owner('owner@a-ss.test', 'Alpha Restore');
     const geo = await createGeo(alpha);
-    const row = await createSightseeing(alpha, geo, { status: 'ARCHIVED' });
+    const row = await createSightseeing(alpha, geo, { status: 'INACTIVE' });
     const beta = await owner('owner@b-ss.test', 'Beta Restore');
     const response = await beta.patch(`/api/masters/sightseeing/${row.id}/status`, {
       status: 'ACTIVE',
     });
     expect([403, 404]).toContain(response.status);
     const stored = await db.sightseeing.findUniqueOrThrow({ where: { id: row.id } });
-    expect(stored.status).toBe('ARCHIVED');
+    expect(stored.status).toBe('INACTIVE');
   });
 
-  it('restoring a non-archived record returns a suitable result', async () => {
+  it('setting ACTIVE on an active record returns a suitable result', async () => {
     const client = await owner();
     const geo = await createGeo(client);
     const row = await createSightseeing(client, geo, { title: 'Already Active' });

@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildAddonPrefillRows,
   hasPolicyHtml,
   leadRequestedTabs,
+  mapMasterToAddonRow,
   masterGallerySnapshot,
+  matchDefaultAddOnsForDestination,
   mergeMasterGalleryPreviews,
   policyValue,
   serviceTypeToTabKey,
+  shouldAutoPrefillAddons,
+  type PrefillAddOnMaster,
 } from '@/pages/quotations/QuotationBuilderPage';
 
 describe('QuotationBuilder — Master gallery snapshots', () => {
@@ -110,6 +115,105 @@ describe('QuotationBuilder — lead service → quotation tab mapping', () => {
   it('returns an empty set when the Lead has no services', () => {
     expect(leadRequestedTabs(undefined).size).toBe(0);
     expect(leadRequestedTabs({ services: [] }).size).toBe(0);
+  });
+});
+
+describe('QuotationBuilder — default add-on prefill helpers', () => {
+  const visa: PrefillAddOnMaster = {
+    id: 'addon-visa',
+    name: 'Visa Service',
+    status: 'ACTIVE',
+    description: '<p>Visa help</p>',
+    price: 3000,
+    pricingBasis: 'Per Person',
+    images: [{ id: 'img-1', fileName: 'v.png', mimeType: 'image/png', fileSize: 10, isPrimary: true }],
+    destinations: [
+      { id: 'dest-sg', name: 'Singapore', isDefault: true },
+      { id: 'dest-my', name: 'Malaysia', isDefault: false },
+    ],
+  };
+  const sim: PrefillAddOnMaster = {
+    id: 'addon-sim',
+    name: 'Airport SIM',
+    status: 'ACTIVE',
+    description: null,
+    price: null,
+    images: [],
+    destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+  };
+  const archived: PrefillAddOnMaster = {
+    id: 'addon-old',
+    name: 'Old Tour',
+    status: 'ARCHIVED',
+    description: null,
+    images: [],
+    destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+  };
+
+  it('matches only active defaults for the destination, sorted by name', () => {
+    expect(matchDefaultAddOnsForDestination('dest-sg', [sim, visa, archived]).map((m) => m.id)).toEqual([
+      'addon-sim',
+      'addon-visa',
+    ]);
+    // Same service non-default elsewhere is excluded there.
+    expect(matchDefaultAddOnsForDestination('dest-my', [visa])).toEqual([]);
+    expect(matchDefaultAddOnsForDestination('', [visa])).toEqual([]);
+  });
+
+  it('gates auto-populate on zero saved linked rows', () => {
+    expect(shouldAutoPrefillAddons(0)).toBe(true);
+    expect(shouldAutoPrefillAddons(2)).toBe(false);
+  });
+
+  it('maps a master to a full snapshot row (images, basis, PDF choice)', () => {
+    const row = mapMasterToAddonRow(visa, 3) as unknown as Record<string, unknown>;
+    expect(row).toMatchObject({
+      serviceType: 'OTHER_ADD_ON',
+      addOnServiceId: 'addon-visa',
+      name: 'Visa Service',
+      sellingPrice: 3000,
+      pricingBasisLabel: 'Per Person',
+      sequence: 3,
+      imageSnapshotPresent: true,
+      pdfImageUrl: 'img-1',
+    });
+    expect(row.images).toEqual([{ masterImageId: 'img-1', alt: 'Visa Service image 1' }]);
+  });
+
+
+  it('maps every pricing option into the snapshot, charging the first priced one', () => {
+    const multi: PrefillAddOnMaster = {
+      ...visa,
+      price: 3000,
+      pricingBasis: 'Per Person',
+      pricing: [
+        { id: 'o-1', label: 'Adult', price: 6000, currency: 'INR' },
+        { id: 'o-2', label: 'Child', price: 4000, currency: 'INR' },
+        { id: 'o-3', label: 'Per Group', price: 20000, currency: 'USD' },
+      ],
+    };
+    const row = mapMasterToAddonRow(multi, 1) as unknown as Record<string, unknown>;
+    // Nothing discarded: all three travel in the quotation-owned snapshot.
+    expect(row.pricingSnapshot).toEqual(multi.pricing);
+    expect(row).toMatchObject({ sellingPrice: 6000, pricingBasisLabel: 'Adult' });
+  });
+
+  it('keeps an unpriced first option and falls back to the legacy price', () => {
+    const custom: PrefillAddOnMaster = {
+      ...visa,
+      pricing: [{ id: 'o-9', label: 'Custom quote', price: null, currency: 'INR' }],
+    };
+    const row = mapMasterToAddonRow(custom, 1) as unknown as Record<string, unknown>;
+    expect(row.pricingSnapshot).toHaveLength(1);
+    expect(row).toMatchObject({ sellingPrice: 3000, pricingBasisLabel: 'Custom quote' });
+  });
+
+  it('builds rows per destination without duplicates and with running sequences', () => {
+    const rows = buildAddonPrefillRows(['dest-sg', 'dest-my'], [visa, sim], 5, new Set(['addon-sim']));
+    expect(rows.map((row) => (row as unknown as { addOnServiceId: string }).addOnServiceId)).toEqual([
+      'addon-visa',
+    ]);
+    expect((rows[0] as unknown as { sequence: number }).sequence).toBe(5);
   });
 });
 

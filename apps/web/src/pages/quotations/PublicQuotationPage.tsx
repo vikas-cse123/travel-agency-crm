@@ -64,6 +64,10 @@ import { QuotationLightbox } from './QuotationLightbox';
 import { scrollToSectionId } from './scroll';
 import { serviceCardIcon, type ServiceCard } from './serviceCards';
 import { formatPublicQuotationNumber } from './quotationContact';
+import {
+  formatAddonOptionPrice,
+  normalizeAddonPricingSnapshot,
+} from '@/features/quotations/addonPricing';
 
 interface PublicQuotation {
   company: {
@@ -72,6 +76,7 @@ interface PublicQuotation {
     phone: string | null;
     website: string | null;
     address: string | null;
+    googleMapsUrl?: string | null;
     primaryColor: string;
     operatingSince?: number | null;
     tripsSold?: number | null;
@@ -2759,17 +2764,24 @@ export function PublicQuotationPage() {
                       // Snapshot gallery only (same as every other service card);
                       // there is no live add-on presentation endpoint.
                       const displayImages = quotationGalleryImages(service.images);
-                      // "₹3000 Per Person": unit price plus the master pricing
-                      // basis snapshot. Shown only when a basis is saved, so
-                      // legacy rows render exactly as before.
-                      const basis = service.pricingBasisLabel?.trim() ?? '';
-                      const unitPrice =
+                      // Every saved pricing option as a compact tile (same style as
+                      // activity pricing): label on the first line, price
+                      // beneath it. Legacy single price/basis rows normalize
+                      // to one tile; rows with neither render no tiles.
+                      const rawUnitPrice =
                         service.unitSellingPrice != null && service.unitSellingPrice !== ''
                           ? Number(service.unitSellingPrice)
                           : null;
-                      const priceLine = basis
-                        ? `${unitPrice != null && Number.isFinite(unitPrice) ? `${fmt(unitPrice)} ` : ''}${basis}`
-                        : '';
+                      const pricingOptions = normalizeAddonPricingSnapshot({
+                        id: String(service.id),
+                        pricing: service.pricingSnapshot ?? null,
+                        price:
+                          rawUnitPrice != null && Number.isFinite(rawUnitPrice)
+                            ? rawUnitPrice
+                            : null,
+                        currency: v.currency,
+                        pricingBasis: service.pricingBasisLabel,
+                      });
                       return (
                         <article key={service.id} className="rounded-2xl bg-card p-6 shadow-sm">
                           {displayImages.length > 0 && (
@@ -2787,8 +2799,27 @@ export function PublicQuotationPage() {
                               <RichHtml html={service.description ?? ''} />
                             </div>
                           )}
-                          {priceLine && (
-                            <p className="mt-2 text-sm font-semibold text-[#000000]">{priceLine}</p>
+                          {pricingOptions.length > 0 && (
+                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              {pricingOptions.map((option) => {
+                                const amount = formatAddonOptionPrice(option, v.currency);
+                                return (
+                                  <div
+                                    key={option.id}
+                                    className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                                  >
+                                    <p className="break-words text-xs font-medium leading-4 text-[#000000]">
+                                      {(option.label ?? '').trim() || 'Standard'}
+                                    </p>
+                                    {amount != null && (
+                                      <p className="mt-0.5 break-words text-sm font-semibold leading-5 text-[#000000]">
+                                        {amount}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           )}
                         </article>
                       );
@@ -2911,6 +2942,7 @@ export function PublicQuotationPage() {
             gstin={company.taxRegistrationNumber}
             email={company.email}
             address={company.address}
+            googleMapsUrl={company.googleMapsUrl ?? null}
             logoUrl={company.logoUrl}
             quotationId={q.quotationNumber}
             quotationTitle={v.title}

@@ -1,4 +1,4 @@
-import { Archive, Eye, EyeOff, PackagePlus, Pencil, Plus, RotateCcw, Search, Upload } from 'lucide-react';
+import { Eye, EyeOff, PackagePlus, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
@@ -7,9 +7,8 @@ import { ExcelImportDialog } from '@/features/masters/excel-import/ExcelImportDi
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   useAddOnServices,
-  useArchiveAddOnService,
+  useDeleteAddOnService,
   useHideGlobalMaster,
-  useRestoreAddOnService,
 } from '@/features/masters/masters.api';
 import {
   GlobalBadge,
@@ -33,13 +32,12 @@ export function AddOnServicesPage() {
   const [params, setParams] = useSearchParams();
   const [importOpen, setImportOpen] = useState(false);
   const services = useAddOnServices(params);
-  const archive = useArchiveAddOnService();
-  const restore = useRestoreAddOnService();
+  const remove = useDeleteAddOnService();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_DELETE);
 
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -48,8 +46,11 @@ export function AddOnServicesPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this add-on service?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (
+      window.confirm(`Permanently delete add-on service ${name}? This action cannot be undone.`)
+    )
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -102,7 +103,6 @@ export function AddOnServicesPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -180,22 +180,14 @@ export function AddOnServicesPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive && service.status !== 'ARCHIVED' && !service.isGlobal && (
+                          {canDelete && !service.isGlobal && (
                             <button
-                              aria-label={`Archive ${service.name}`}
-                              onClick={() => archiveRow(service.id)}
+                              aria-label={`Delete ${service.name}`}
+                              title="Permanently delete"
+                              onClick={() => deleteRow(service.id, service.name)}
                               className="rounded bg-red-600 p-2 text-white"
                             >
-                              <Archive className="h-4 w-4" />
-                            </button>
-                          )}
-                          {canUpdate && service.status === 'ARCHIVED' && (
-                            <button
-                              aria-label={`Restore ${service.name}`}
-                              onClick={() => restore.mutate(service.id)}
-                              className="rounded bg-emerald-600 p-2 text-white"
-                            >
-                              <RotateCcw className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           )}
                         </div>

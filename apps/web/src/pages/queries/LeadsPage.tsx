@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowUpDown,
@@ -18,8 +18,6 @@ import {
   MapPin,
   Pencil,
   Phone,
-  Play,
-  Pause,
   Plus,
   Search,
   Trash2,
@@ -29,7 +27,7 @@ import {
 import { useAuth } from '@/features/auth/AuthProvider';
 import { InlineLeadField } from './InlineLeadField';
 import {
-  useArchiveLead,
+  useDeleteLead,
   useBulkAssign,
   useBulkStage,
   useLeadAnalytics,
@@ -39,7 +37,6 @@ import {
   type Lead,
 } from '@/features/queries/queries.api';
 import { useQuotationWeblinkAnalytics } from '@/features/quotations/quotations.api';
-import { useCallRecordings, fetchCallRecordingPlayUrl } from '@/features/call-recordings/call-recordings.api';
 import { Button } from '@/components/ui/Button';
 import { Pagination } from '@/components/ui/Pagination';
 import { labelForLookup } from '@interscale/shared';
@@ -201,55 +198,6 @@ function CallCell({ lead }: { lead: Lead }) {
   );
 }
 
-function CallRecordingCell({ lead, recMap }: { lead: Lead; recMap: Map<string, { id: string; durationSeconds: number | null }> }) {
-  const rec = recMap.get(lead.id);
-  if (!rec) return <span className="text-xs text-slate-400">No recording</span>;
-  const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const audioRef = React.useRef<HTMLAudioElement | null>(null) as React.MutableRefObject<HTMLAudioElement | null>;
-  const handlePlay = async () => {
-    if (playing && audioRef.current) {
-      audioRef.current.pause();
-      setPlaying(false);
-      return;
-    }
-    if (url && audioRef.current) {
-      audioRef.current.play();
-      setPlaying(true);
-      return;
-    }
-    setLoading(true);
-    try {
-      const { url: u } = await fetchCallRecordingPlayUrl(rec.id);
-      setUrl(u);
-      setTimeout(() => {
-        audioRef.current?.play();
-        setPlaying(true);
-      }, 100);
-    } catch {
-      setUrl(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-  const dur = rec.durationSeconds != null ? `${String(Math.floor(rec.durationSeconds / 60)).padStart(2, '0')}:${String(rec.durationSeconds % 60).padStart(2, '0')}` : '';
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={handlePlay}
-        disabled={loading}
-        className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2 py-1 text-xs text-white hover:bg-slate-800 disabled:opacity-50"
-        aria-label="Play recording"
-      >
-        {playing ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-        {loading ? '...' : dur || 'Play'}
-      </button>
-      {url && <audio ref={audioRef} src={url} onEnded={() => setPlaying(false)} className="hidden" />}
-    </div>
-  );
-}
-
 function DestinationCell({ lead }: { lead: Lead }) {
   const totalNights = lead.itinerary.reduce((sum, item) => sum + item.nights, 0);
   if (!lead.itinerary.length) return <span className="leads-cell-muted">—</span>;
@@ -380,7 +328,7 @@ function LeadActionsCell({
   canDelete: boolean;
 }) {
   const a = lead.actions;
-  const archive = useArchiveLead(lead.id);
+  const remove = useDeleteLead(lead.id);
   return (
     <div className="leads-actions">
       <Link
@@ -406,12 +354,16 @@ function LeadActionsCell({
           variant="danger"
           size="sm"
           aria-label="Delete lead"
-          title="Delete lead"
+          title="Permanently delete lead"
           className="leads-action-btn h-7 px-1 text-xs"
-          isLoading={archive.isPending}
+          isLoading={remove.isPending}
           onClick={() => {
-            if (window.confirm(`Delete ${lead.queryNumber}?`)) {
-              archive.mutate();
+            if (
+              window.confirm(
+                `Permanently delete lead ${lead.queryNumber}? This cannot be undone.`,
+              )
+            ) {
+              remove.mutate();
             }
           }}
         >
@@ -826,7 +778,7 @@ export function LeadsPage() {
   };
   const page = Number(params.get('page') ?? 1);
 
-  // When the requested page no longer exists (e.g. a row was archived on the
+  // When the requested page no longer exists (e.g. a row was deleted on the
   // final page), move the URL back to the last valid page so the footer never
   // shows an impossible range like "Showing 21 to 20 of 20 entries".
   useEffect(() => {
@@ -921,14 +873,6 @@ export function LeadsPage() {
   };
 
   const rows = useMemo(() => leads.data?.data ?? [], [leads.data]);
-  const { data: recList } = useCallRecordings({});
-  const recMap = useMemo(() => {
-    const m = new Map<string, { id: string; durationSeconds: number | null }>();
-    recList?.data.forEach((c) => {
-      if (c.query?.id) m.set(c.query.id, { id: c.id, durationSeconds: c.durationSeconds });
-    });
-    return m;
-  }, [recList]);
   const pageIds = useMemo(() => rows.map((lead) => lead.id), [rows]);
   const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const toggleRow = (id: string) =>
@@ -1005,7 +949,6 @@ export function LeadsPage() {
     ['Lead ID', 'queryNumber'],
     ['Lead Info', 'customerName'],
     ['Call'],
-    ['Call Recording'],
     ['Destination'],
     ['Travellers Info'],
     ['Services'],
@@ -1415,9 +1358,6 @@ export function LeadsPage() {
                       </td>
                       <td className="text-center">
                         <CallCell lead={lead} />
-                      </td>
-                      <td className="text-center">
-                        <CallRecordingCell lead={lead} recMap={recMap} />
                       </td>
                       <td>
                         <DestinationCell lead={lead} />

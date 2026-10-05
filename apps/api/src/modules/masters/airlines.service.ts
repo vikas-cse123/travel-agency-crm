@@ -13,6 +13,11 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { sniffImageMimeType } from './master-media.js';
+import {
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
+  partitionKeysBySnapshotReferences,
+} from './master-images.js';
 import { airlineLogoObjectKey, storageService } from '../../services/storage/storage.service.js';
 import { normalizeCustomerName } from '../../utils/normalize.js';
 import {
@@ -64,7 +69,6 @@ function presentAirline<T extends Record<string, unknown>>(row: T, scope: Master
   const {
     companyId,
     normalizedName,
-    deletedAt,
     logoBucket,
     logoObjectKey,
     logoStorageProvider,
@@ -77,7 +81,6 @@ function presentAirline<T extends Record<string, unknown>>(row: T, scope: Master
   } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   void logoBucket;
   void logoStorageProvider;
   void pendingLogoObjectKey;
@@ -131,7 +134,7 @@ async function getAirline(
     where: {
       id: airlineId,
       ...buildVisibleWhere(scope),
-      ...(canManageAirlines ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageAirlines ? {} : { status: 'ACTIVE' }),
     },
     include: airlineInclude,
   });
@@ -165,11 +168,7 @@ export const airlinesService = {
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const where: Prisma.AirlineWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageAirlines
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageAirlines ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.country ? { countryCode: String(query.country) } : {}),
       ...(search
         ? {
@@ -211,7 +210,6 @@ export const airlinesService = {
       where: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
         ...(search
           ? {
               OR: [
@@ -281,9 +279,7 @@ export const airlinesService = {
           where: { id: current.id },
           data: {
             ...writeData(input),
-            ...(input.status
-              ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-              : {}),
+            ...(input.status ? { status: input.status } : {}),
           },
           include: airlineInclude,
         });
@@ -313,7 +309,7 @@ export const airlinesService = {
       const airline = await prisma.$transaction(async (tx) => {
         const updated = await tx.airline.update({
           where: { id: current.id },
-          data: { status, deletedAt: status === 'ARCHIVED' ? new Date() : null },
+          data: { status },
           include: airlineInclude,
         });
         await tx.activityLog.create({
@@ -330,20 +326,43 @@ export const airlinesService = {
     }
   },
 
-  async archive(auth: AuthContext, airlineId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, airlineId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.AIRLINE);
     const current = await getAirline(auth, airlineId, scope, true);
     assertCanModifyMaster(current, scope);
-    const airline = await prisma.$transaction(async (tx) => {
-      const updated = await tx.airline.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date() },
-        include: airlineInclude,
-      });
-      await tx.activityLog.create({ data: audit(auth, 'AIRLINE_ARCHIVED', current.id, context) });
-      return updated;
+    // Airline-owned logo storage only (confirmed + pending). Quotation and
+    // booking snapshot objects are never touched; keys still referenced by
+    // quotation snapshots are retained.
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId, [
+      current.logoObjectKey,
+      current.pendingLogoObjectKey,
+    ]);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'AIRLINE',
+      masterId: current.id,
     });
-    return presentAirline(airline as unknown as Record<string, unknown>, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Airline not deleted. Please retry.`,
+      );
+    const metadata = { name: current.name, retainedStorageFiles: retained.length };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Quotation/booking links are SetNull and survive.
+        await tx.airline.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'AIRLINE_DELETED', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this airline because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 
   async createLogoUpload(auth: AuthContext, airlineId: string, input: AirlineLogoUploadInput) {

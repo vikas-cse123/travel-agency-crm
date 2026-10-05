@@ -202,6 +202,23 @@ describe('Phase 18 company settings', () => {
     ).toBe(400);
   });
 
+  it('saves and clears the Google Maps link on the company profile', async () => {
+    const client = await owner();
+    const base = { name: 'Interscale Demo', email: 'contact@interscale.test' };
+    const url = 'https://maps.google.com/?q=Alambagh,Lucknow';
+    const ok = await client.patch('/api/settings/profile', { ...base, googleMapsUrl: url });
+    expect(ok.status).toBe(200);
+    expect(ok.body.data.profile.googleMapsUrl).toBe(url);
+    expect((await client.get('/api/settings')).body.data.profile.googleMapsUrl).toBe(url);
+    expect(
+      (await client.patch('/api/settings/profile', { ...base, googleMapsUrl: 'not-a-url' }))
+        .status,
+    ).toBe(400);
+    const cleared = await client.patch('/api/settings/profile', { ...base, googleMapsUrl: '' });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.data.profile.googleMapsUrl).toBeNull();
+  });
+
   it('updates branding colour and rejects an invalid colour', async () => {
     const client = await owner();
     expect((await client.patch('/api/settings/branding', { primaryColor: '#ff8800' })).status).toBe(

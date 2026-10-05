@@ -124,7 +124,6 @@ async function run() {
     where: {
       OR: [{ companyId: company.id }, ...(systemCompany ? [{ companyId: systemCompany.id }] : [])],
       status: 'ACTIVE',
-      deletedAt: null,
       ...(hiddenIds.length && systemCompany
         ? { NOT: { companyId: systemCompany.id, id: { in: hiddenIds } } }
         : {}),

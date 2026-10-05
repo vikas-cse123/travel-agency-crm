@@ -18,6 +18,7 @@ import {
   normalizeStylishPdfPage1,
   type StylishPdfPage1,
   SERVICE_PRICING_BASES,
+  normalizePricingSnapshotEntries,
   type QuotationSnapshotImage,
   type DestinationExpertConfig,
   type QuotationInput,
@@ -232,6 +233,7 @@ const publicQuotationInclude = {
       phone: true,
       website: true,
       address: true,
+      googleMapsUrl: true,
       primaryColor: true,
       operatingSinceYear: true,
       tripsSold: true,
@@ -511,7 +513,7 @@ async function visibleWhere(auth: AuthContext, extra: Prisma.QuotationWhereInput
   return {
     companyId: auth.companyId,
     deletedAt: null,
-    query: { is: { companyId: auth.companyId, deletedAt: null, ...(await leadVisibility(auth)) } },
+    query: { is: { companyId: auth.companyId, ...(await leadVisibility(auth)) } },
     ...extra,
   } satisfies Prisma.QuotationWhereInput;
 }
@@ -1172,6 +1174,12 @@ function versionCreateData(
       totalSellingPrice: serviceLines[index]?.totalSellingPrice ?? 0,
       pricingBasis: row.pricingBasis ?? null,
       pricingBasisLabel: row.pricingBasisLabel ?? null,
+      // Quotation-owned snapshot of every master pricing option available at
+      // selection time. Empty/absent stays JsonNull (legacy single-price rows).
+      pricingSnapshot:
+        row.pricingSnapshot?.length
+          ? (row.pricingSnapshot as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       taxCategory: row.taxCategory,
       notes: row.notes,
       images: row.imageSnapshotPresent
@@ -1316,6 +1324,7 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
         totalSellingPrice: _totalSellingPrice,
         pricingBasis: rawPricingBasis,
         images: rawImages,
+        pricingSnapshot: rawPricingSnapshot,
         ...row
       }) => ({
         ...row,
@@ -1327,6 +1336,8 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
         pricingBasis: (SERVICE_PRICING_BASES as readonly string[]).includes(rawPricingBasis ?? '')
           ? (rawPricingBasis as (typeof SERVICE_PRICING_BASES)[number])
           : null,
+        // Stored snapshot JSON normalizes to validated entries (legacy NULL).
+        pricingSnapshot: normalizePricingSnapshotEntries(rawPricingSnapshot),
         images: (Array.isArray(rawImages) ? rawImages : []) as Array<{
           url: string;
           thumbnailUrl?: string | null;
@@ -1462,7 +1473,6 @@ async function findDestinationImageRecord(
   const destinations = await prisma.destination.findMany({
     where: {
       companyId,
-      deletedAt: null,
       imageObjectKey: { not: null },
       imageConfirmedAt: { not: null },
     },
@@ -1643,7 +1653,7 @@ async function resolveHotelPresentations(
   const hotelIds = [...new Set(options.map((row) => row.hotelId).filter(Boolean))] as string[];
   if (!hotelIds.length) return {};
   const hotels = await prisma.hotel.findMany({
-    where: { id: { in: hotelIds }, companyId: { in: ownerCompanyIds }, deletedAt: null },
+    where: { id: { in: hotelIds }, companyId: { in: ownerCompanyIds } },
     select: {
       id: true,
       starCategory: true,
@@ -1705,7 +1715,7 @@ async function resolveVehiclePresentations(
   const vehicleIds = [...new Set(services.map((row) => row.vehicleId).filter(Boolean))] as string[];
   if (!vehicleIds.length) return {};
   const vehicles = await prisma.vehicle.findMany({
-    where: { id: { in: vehicleIds }, companyId: { in: ownerCompanyIds }, deletedAt: null },
+    where: { id: { in: vehicleIds }, companyId: { in: ownerCompanyIds } },
     select: {
       id: true,
       name: true,
@@ -1758,7 +1768,7 @@ async function resolveCruisePresentations(
   const cruiseIds = [...new Set(services.map((row) => row.cruiseId).filter(Boolean))] as string[];
   if (!cruiseIds.length) return {};
   const cruises = await prisma.cruise.findMany({
-    where: { id: { in: cruiseIds }, companyId: { in: ownerCompanyIds }, deletedAt: null },
+    where: { id: { in: cruiseIds }, companyId: { in: ownerCompanyIds } },
     select: {
       id: true,
       name: true,
@@ -1823,7 +1833,7 @@ async function resolveAirlinePresentations(ownerCompanyIds: string[], flightDeta
   ] as string[];
   if (!airlineIds.length) return {};
   const airlines = await prisma.airline.findMany({
-    where: { id: { in: airlineIds }, companyId: { in: ownerCompanyIds }, deletedAt: null },
+    where: { id: { in: airlineIds }, companyId: { in: ownerCompanyIds } },
     select: {
       id: true,
       name: true,
@@ -2033,7 +2043,7 @@ async function resolveSightseeingPresentations(
   ] as string[];
   if (!ids.length) return {};
   const rows = await prisma.sightseeing.findMany({
-    where: { id: { in: ids }, companyId: { in: ownerCompanyIds }, deletedAt: null },
+    where: { id: { in: ids }, companyId: { in: ownerCompanyIds } },
     select: { id: true, imageObjectKey: true, imageFileName: true, imageConfirmedAt: true },
   });
   return Object.fromEntries(
@@ -2343,12 +2353,15 @@ export const quotationsService = {
             quantity,
             internalCost,
             sellingPrice,
+            pricingSnapshot: rawPricingSnapshot,
             ...row
           }) => ({
             ...row,
             quantity: quantity.toNumber(),
             internalCost: internalCost?.toNumber(),
             sellingPrice: sellingPrice?.toNumber(),
+            // Template-owned snapshot normalizes like the quotation one.
+            pricingSnapshot: normalizePricingSnapshotEntries(rawPricingSnapshot),
             images: [],
             pdfImageUrl: null,
           }),
@@ -4494,6 +4507,7 @@ export const quotationsService = {
         phone: quotation.company.phone,
         website: quotation.company.website,
         address: quotation.company.address,
+        googleMapsUrl: quotation.company.googleMapsUrl ?? null,
         primaryColor: quotation.company.primaryColor,
         operatingSince: quotation.company.operatingSinceYear,
         tripsSold: quotation.company.tripsSold,

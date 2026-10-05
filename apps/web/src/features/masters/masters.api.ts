@@ -217,7 +217,7 @@ export function useUpdateCity(id: string) {
     onSuccess: () => invalidate(client, 'cities', id),
   });
 }
-export function useArchiveCity() {
+export function useDeleteCity() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<City>(`/masters/cities/${id}`),
@@ -256,7 +256,7 @@ export function useUpdateDestination(id: string) {
     onSuccess: () => invalidate(client, 'destinations', id),
   });
 }
-export function useArchiveDestination() {
+export function useDeleteDestination() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Destination>(`/masters/destinations/${id}`),
@@ -498,7 +498,7 @@ export function useUpdateHotel(id: string) {
     onSuccess: () => invalidateHotel(client, id),
   });
 }
-export function useArchiveHotel() {
+export function useDeleteHotel() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Hotel>(`/masters/hotels/${id}`),
@@ -903,7 +903,7 @@ export function useUpdateAirline(id: string) {
     onSuccess: () => invalidateAirline(client, id),
   });
 }
-export function useArchiveAirline() {
+export function useDeleteAirline() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Airline>(`/masters/airlines/${id}`),
@@ -1009,18 +1009,10 @@ export function useUpdateCruise(id: string) {
     onSuccess: () => invalidateCruise(client, id),
   });
 }
-export function useArchiveCruise() {
+export function useDeleteCruise() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Cruise>(`/masters/cruises/${id}`),
-    onSuccess: (_, id) => invalidateCruise(client, id),
-  });
-}
-export function useRestoreCruise() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.patch<Cruise>(`/masters/cruises/${id}/status`, { status: 'ACTIVE' }),
     onSuccess: (_, id) => invalidateCruise(client, id),
   });
 }
@@ -1120,18 +1112,10 @@ export function useUpdateVehicle(id: string) {
     onSuccess: () => invalidateVehicle(client, id),
   });
 }
-export function useArchiveVehicle() {
+export function useDeleteVehicle() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Vehicle>(`/masters/vehicles/${id}`),
-    onSuccess: (_, id) => invalidateVehicle(client, id),
-  });
-}
-export function useRestoreVehicle() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.patch<Vehicle>(`/masters/vehicles/${id}/status`, { status: 'ACTIVE' }),
     onSuccess: (_, id) => invalidateVehicle(client, id),
   });
 }
@@ -1316,18 +1300,10 @@ export function useUpdateSightseeing(id: string) {
     onSuccess: () => invalidateSightseeing(client, id),
   });
 }
-export function useArchiveSightseeing() {
+export function useDeleteSightseeing() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Sightseeing>(`/masters/sightseeing/${id}`),
-    onSuccess: (_, id) => invalidateSightseeing(client, id),
-  });
-}
-export function useRestoreSightseeing() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.patch<Sightseeing>(`/masters/sightseeing/${id}/status`, { status: 'ACTIVE' }),
     onSuccess: (_, id) => invalidateSightseeing(client, id),
   });
 }
@@ -1366,6 +1342,19 @@ export const reorderSightseeingImages = (id: string, imageIds: string[]) =>
 // Add-On Services
 // ---------------------------------------------------------------------------
 
+export interface AddOnServiceDestinationLink {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
+export interface AddOnServicePricingEntry {
+  id: string;
+  label: string;
+  price: number | null;
+  currency: string;
+}
+
 export interface AddOnService extends MasterVisibilityMeta {
   id: string;
   name: string;
@@ -1373,6 +1362,9 @@ export interface AddOnService extends MasterVisibilityMeta {
   price: number | null;
   currency: string;
   pricingBasis: string | null;
+  /** Repeatable pricing options (legacy single price arrives as one entry). */
+  pricing: AddOnServicePricingEntry[];
+  destinations: AddOnServiceDestinationLink[];
   status: string;
   hasImage: boolean;
   images: MasterImageMeta[];
@@ -1447,22 +1439,13 @@ export function useUpdateAddOnService(id: string) {
     onSuccess: () => invalidateAddOnService(client, id),
   });
 }
-export function useArchiveAddOnService() {
+export function useDeleteAddOnService() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<AddOnService>(`/masters/add-on-services/${id}`),
     onSuccess: (_, id) => invalidateAddOnService(client, id),
   });
 }
-export function useRestoreAddOnService() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.patch<AddOnService>(`/masters/add-on-services/${id}/status`, { status: 'ACTIVE' }),
-    onSuccess: (_, id) => invalidateAddOnService(client, id),
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Visa Types
 // ---------------------------------------------------------------------------
@@ -1526,7 +1509,7 @@ export function useUpdateVisaType(id: string) {
     onSuccess: () => invalidateVisaType(client, id),
   });
 }
-export function useArchiveVisaType() {
+export function useDeleteVisaType() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<VisaType>(`/masters/visa-types/${id}`),
@@ -1595,7 +1578,7 @@ export function useUpdateTestimonial(id: string) {
     onSuccess: () => invalidateTestimonial(client, id),
   });
 }
-export function useArchiveTestimonial() {
+export function useDeleteTestimonial() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Testimonial>(`/masters/testimonials/${id}`),
@@ -1677,7 +1660,7 @@ export function useUpdateFaq(id: string) {
     onSuccess: () => invalidateFaq(client, id),
   });
 }
-export function useArchiveFaq() {
+export function useDeleteFaq() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<Faq>(`/masters/faqs/${id}`),

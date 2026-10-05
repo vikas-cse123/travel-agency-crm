@@ -252,11 +252,11 @@ export const queriesImportService = {
         select: { id: true, fullName: true, username: true, normalizedEmail: true },
       }),
       prisma.destination.findMany({
-        where: { companyId, status: 'ACTIVE', deletedAt: null },
+        where: { companyId, status: 'ACTIVE' },
         select: { id: true, name: true, normalizedName: true, countryName: true },
       }),
       prisma.query.findMany({
-        where: { companyId, deletedAt: null },
+        where: { companyId },
         select: { normalizedPhone: true, email: true },
       }),
     ]);

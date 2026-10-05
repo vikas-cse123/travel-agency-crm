@@ -146,6 +146,15 @@ function ProfileTab({ data, canUpdate }: { data: CompanySettings; canUpdate: boo
           onChange={(e) => set('address', e.target.value)}
         />
       </Field>
+      <Field label="Google Maps Link">
+        <input
+          aria-label="Company Google Maps link"
+          className={input}
+          placeholder="https://maps.google.com/..."
+          value={form.googleMapsUrl ?? ''}
+          onChange={(e) => set('googleMapsUrl', e.target.value)}
+        />
+      </Field>
       <Field label="Operating Since">
         <input
           aria-label="Operating Since"
@@ -188,6 +197,7 @@ function ProfileTab({ data, canUpdate }: { data: CompanySettings; canUpdate: boo
               phone: form.phone || null,
               website: form.website || null,
               address: form.address || null,
+              googleMapsUrl: form.googleMapsUrl || null,
               operatingSince: intOrNull(operatingSince),
               totalReviews: intOrNull(totalReviews),
               tripsSold: intOrNull(tripsSold),

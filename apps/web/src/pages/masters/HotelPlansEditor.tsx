@@ -257,10 +257,10 @@ export function HotelPlansEditor({ kind, hotel, mealTypes = [], headerClass }: P
     }
   };
 
-  const archive = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this item?')) return;
-    if (kind === 'room') await updateRoom.mutateAsync({ id, input: { status: 'ARCHIVED' } });
-    else await updateMeal.mutateAsync({ id, input: { status: 'ARCHIVED' } });
+  const deactivate = async (id: string) => {
+    if (!window.confirm('Deactivate this item? It will no longer be selectable.')) return;
+    if (kind === 'room') await updateRoom.mutateAsync({ id, input: { status: 'INACTIVE' } });
+    else await updateMeal.mutateAsync({ id, input: { status: 'INACTIVE' } });
   };
 
   return (
@@ -327,7 +327,7 @@ export function HotelPlansEditor({ kind, hotel, mealTypes = [], headerClass }: P
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusBadge value={item.status} />
-                  {canUpdate && item.status !== 'ARCHIVED' && (
+                  {canUpdate && item.status !== 'INACTIVE' && (
                     <button
                       type="button"
                       aria-label={`Toggle pricing for ${item.name}`}
@@ -342,18 +342,18 @@ export function HotelPlansEditor({ kind, hotel, mealTypes = [], headerClass }: P
                       Pricing
                     </button>
                   )}
-                  {canUpdate && item.status !== 'ARCHIVED' && (
+                  {canUpdate && item.status !== 'INACTIVE' && (
                     <button
                       type="button"
                       className="text-xs font-medium text-red-600 hover:underline"
-                      onClick={() => archive(item.id)}
+                      onClick={() => deactivate(item.id)}
                     >
-                      Archive
+                      Deactivate
                     </button>
                   )}
                 </div>
               </div>
-              {item.status !== 'ARCHIVED' && pricingId === item.id && (
+              {item.status !== 'INACTIVE' && pricingId === item.id && (
                 <PricingPanel kind={kind} hotelId={hotel.id} item={item} />
               )}
             </div>

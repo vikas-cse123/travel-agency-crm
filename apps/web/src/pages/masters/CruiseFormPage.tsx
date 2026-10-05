@@ -27,7 +27,7 @@ interface RoomTypeValue {
   price: string;
   /** Carried through so editing a cruise never silently resets these. */
   currency: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  status: 'ACTIVE' | 'INACTIVE';
 }
 
 interface FormValues {
@@ -35,7 +35,7 @@ interface FormValues {
   description: string;
   price: string;
   currency: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  status: 'ACTIVE' | 'INACTIVE';
   roomTypes: RoomTypeValue[];
 }
 
@@ -215,7 +215,6 @@ export function CruiseFormPage() {
                 <select className={fieldClass} {...form.register('status')}>
                   <option value="ACTIVE">ACTIVE</option>
                   <option value="INACTIVE">INACTIVE</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
                 </select>
               </label>
             </div>

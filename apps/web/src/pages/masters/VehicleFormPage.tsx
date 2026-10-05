@@ -30,7 +30,7 @@ interface FormValues {
   description: string;
   price: string;
   currency: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  status: 'ACTIVE' | 'INACTIVE';
   destinationIds: string[];
 }
 
@@ -270,7 +270,6 @@ export function VehicleFormPage() {
                 <select className={fieldClass} {...form.register('status')}>
                   <option value="ACTIVE">ACTIVE</option>
                   <option value="INACTIVE">INACTIVE</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
                 </select>
               </label>
 

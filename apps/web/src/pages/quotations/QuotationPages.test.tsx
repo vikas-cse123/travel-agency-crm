@@ -6255,6 +6255,118 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.queryByText(/<p>/)).not.toBeInTheDocument();
   });
 
+  it('renders add-on pricing options as compact tiles in saved order', async () => {
+    const addonService = (overrides: Record<string, unknown> = {}) => ({
+      id: 's-addon',
+      serviceType: 'TRAVEL_INSURANCE',
+      addOnServiceId: 'addon-master-1',
+      name: 'Travel Insurance',
+      description: null,
+      dayNumber: null,
+      city: null,
+      quantity: '1',
+      unitSellingPrice: '3000',
+      totalSellingPrice: '3000',
+      sellingPrice: '3000',
+      pricingBasisLabel: 'Per Group',
+      taxCategory: null,
+      notes: null,
+      sequence: 1,
+      ...overrides,
+    });
+    const publicData = (services: unknown[]) => ({
+      company: {
+        name: 'Alpha Travel',
+        email: 'a@b.test',
+        phone: null,
+        website: null,
+        address: null,
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000002',
+        customerName: 'Mira Shah',
+        destinationSummary: 'Kerala',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Kerala Escape',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services,
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+      },
+      downloadUrl: null,
+    });
+    const renderPublic = (services: unknown[]) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => response(publicData(services))),
+      );
+      renderWithProviders(
+        <Routes>
+          <Route path="/q/:token" element={<PublicQuotationPage />} />
+        </Routes>,
+        { route: '/q/public-token-value-with-at-least-32-characters' },
+      );
+    };
+    // Multiple saved options render as one compact tile each, in saved order,
+    // with per-entry currencies and long labels intact.
+    renderPublic([
+      addonService({
+        pricingSnapshot: [
+          { id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' },
+          { id: 'opt-child', label: 'Child', price: 4000, currency: 'INR' },
+          {
+            id: 'opt-group',
+            label: 'Per Group Family And Friends Special Rate',
+            price: 20000,
+            currency: 'USD',
+          },
+        ],
+      }),
+    ]);
+    await screen.findByText('Custom Package for Mira Shah');
+    const tiles = ['Adult', 'Child', 'Per Group Family And Friends Special Rate'].map(
+      (label) => screen.getByText(label).closest('div'),
+    );
+    for (const tile of tiles) expect(tile?.className).toContain('rounded-md');
+    expect(tiles[0]).toHaveTextContent('₹6,000');
+    expect(tiles[1]).toHaveTextContent('₹4,000');
+    expect(tiles[2]).toHaveTextContent('$20,000');
+    const card = screen.getByRole('heading', { name: 'Travel Insurance' }).closest('article');
+    expect(
+      within(card as HTMLElement)
+        .getAllByText(/Adult|Child|Per Group Family/)
+        .map((el) => el.textContent),
+    ).toEqual(['Adult', 'Child', 'Per Group Family And Friends Special Rate']);
+    cleanup();
+    // Legacy single price/basis (no snapshot) still renders exactly one tile.
+    renderPublic([addonService({})]);
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(screen.getByText('Per Group').closest('div')?.className).toContain('rounded-md');
+    expect(screen.getByText('₹3,000')).toBeInTheDocument();
+    cleanup();
+    // Neither basis nor price: no pricing tiles at all (legacy behavior).
+    renderPublic([addonService({ pricingBasisLabel: null, unitSellingPrice: null })]);
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(screen.queryByText('₹3,000')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Travel Insurance' })).toBeInTheDocument();
+  });
+
   it('renders add-on snapshot images in the Additional Services cards', async () => {
     const publicData = {
       company: {
@@ -7346,6 +7458,92 @@ describe('Phase 8 quotation pages', () => {
     );
   });
 
+  it('shows a View on Google Maps row below the address when the agency sets a link', async () => {
+    const mapsUrl = 'https://maps.google.com/?q=Alambagh,Lucknow';
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'hello@alpha.test',
+        phone: '+91 98765 43210',
+        website: null,
+        address: '1 MG Road, Bengaluru, Karnataka 560001',
+        googleMapsUrl: mapsUrl,
+        primaryColor: '#2563eb',
+        logoUrl: null,
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000009',
+        customerName: 'Aarav Mehta',
+        destinationSummary: 'Goa',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Goa proposal',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+      },
+      downloadUrl: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<(input: RequestInfo | URL, options?: RequestInit) => Promise<Response>>(
+        async () => response(publicData),
+      ),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    const link = screen.getByRole('link', { name: /View on Google Maps/ });
+    // Directly below the address row, styled like the other contact rows.
+    const rows = Array.from(
+      link.closest('section')!.querySelectorAll(':scope p'),
+    ).map((el) => el.textContent ?? '');
+    const addressIndex = rows.findIndex((text) => text.includes('1 MG Road'));
+    const mapsIndex = rows.findIndex((text) => text.includes('View on Google Maps'));
+    expect(addressIndex).toBeGreaterThanOrEqual(0);
+    expect(mapsIndex).toBe(addressIndex + 1);
+    expect(link).toHaveAttribute('href', mapsUrl);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noreferrer');
+    // The raw URL is never displayed.
+    expect(screen.queryByText(mapsUrl)).not.toBeInTheDocument();
+    cleanup();
+    // Without a saved link the row disappears completely.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<(input: RequestInfo | URL, options?: RequestInit) => Promise<Response>>(async () =>
+        response({ ...publicData, company: { ...publicData.company, googleMapsUrl: null } }),
+      ),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    expect(screen.queryByRole('link', { name: /View on Google Maps/ })).not.toBeInTheDocument();
+  });
+
   it('prefills WhatsApp and Email without duplicating a lead name already in the title', async () => {
     const publicData = {
       company: {
@@ -8134,7 +8332,7 @@ describe('Phase 8 quotation pages', () => {
   });
 
   it('sets the browser tab title from the quotation title and restores it on leave', async () => {
-    document.title = 'Travel CRM';
+    document.title = 'Travel Agency CRM';
     const publicData = {
       company: {
         name: 'Alpha Travel',
@@ -8185,7 +8383,7 @@ describe('Phase 8 quotation pages', () => {
     await screen.findByText('Custom Package for Aarav Mehta');
     expect(document.title).toBe('Dubai Honeymoon Package');
     view.unmount();
-    expect(document.title).toBe('Travel CRM');
+    expect(document.title).toBe('Travel Agency CRM');
   });
 
   it('falls back to the Quotation title when the quotation has no title', async () => {
@@ -9657,6 +9855,228 @@ describe('Quotation Builder — defensive legacy normalization', () => {
     expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(false);
   });
 });
+
+describe('Quotation Builder - destination default add-ons', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+
+  it('auto-adds destination defaults to a new quotation without duplicates', async () => {
+    const addonWithLinks = {
+      ...addOn,
+      hasImage: true,
+      images: [
+        { id: 'm-img-1', fileName: 'visa.png', mimeType: 'image/png', fileSize: 10, isPrimary: true },
+      ],
+      destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+    };
+    const quotation = {
+      ...builderQuotation(),
+      query: {
+        id: 'lead-1',
+        queryNumber: 'QRY-1',
+        itinerary: [{ country: 'Singapore', destination: 'Singapore', nights: 3, sequence: 1 }],
+      },
+    };
+    const fetchMock = masterFetch(quotation, {
+      '/masters/destinations': page([{ id: 'dest-sg', name: 'Singapore' }]),
+      '/masters/add-on-services': page([addonWithLinks]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    // K: default populated without manual toggle.
+    await waitFor(() =>
+      expect(screen.getByLabelText('Include Visa Assistance')).toBeChecked(),
+    );
+    // P: master gallery image tile renders for the auto-added row.
+    expect(await screen.findByLabelText('Remove addon-0 image 1')).toBeInTheDocument();
+    // L: exactly one row, then save carries the full snapshot.
+    expect(screen.getAllByLabelText('Visa Assistance description')).toHaveLength(1);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const rows = (body.services as Array<Record<string, unknown>>).filter(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      addOnServiceId: 'aaaaaaa9-1111-4111-8111-111111111111',
+      name: 'Visa Assistance',
+      sellingPrice: 3800,
+    });
+    expect(rows[0]!.images).toEqual([{ masterImageId: 'm-img-1', alt: 'Visa Assistance image 1' }]);
+  });
+
+  it('preserves every pricing option in the quotation snapshot', async () => {
+    const addonWithPricing = {
+      ...addOn,
+      price: 3000,
+      pricingBasis: 'Per Person',
+      pricing: [
+        { id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' },
+        { id: 'opt-child', label: 'Child', price: 4000, currency: 'INR' },
+        { id: 'opt-group', label: 'Per Group', price: 20000, currency: 'USD' },
+      ],
+      destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+    };
+    const quotation = {
+      ...builderQuotation(),
+      query: {
+        id: 'lead-1',
+        queryNumber: 'QRY-1',
+        itinerary: [{ country: 'Singapore', destination: 'Singapore', nights: 3, sequence: 1 }],
+      },
+    };
+    const fetchMock = masterFetch(quotation, {
+      '/masters/destinations': page([{ id: 'dest-sg', name: 'Singapore' }]),
+      '/masters/add-on-services': page([addonWithPricing]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Include Visa Assistance')).toBeChecked(),
+    );
+    // The builder surfaces every option read-only; nothing is discarded.
+    expect(await screen.findByText(/Pricing options:/)).toHaveTextContent('Adult ₹6,000');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const rows = (body.services as Array<Record<string, unknown>>).filter(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      addOnServiceId: 'aaaaaaa9-1111-4111-8111-111111111111',
+      name: 'Visa Assistance',
+      sellingPrice: 6000,
+      pricingBasisLabel: 'Adult',
+    });
+    expect(rows[0]!.pricingSnapshot).toEqual([
+      { id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' },
+      { id: 'opt-child', label: 'Child', price: 4000, currency: 'INR' },
+      { id: 'opt-group', label: 'Per Group', price: 20000, currency: 'USD' },
+    ]);
+  });
+
+  it('does not resurrect a manually removed default on save', async () => {
+    const addonWithLinks = {
+      ...addOn,
+      destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+    };
+    const quotation = {
+      ...builderQuotation(),
+      query: {
+        id: 'lead-1',
+        queryNumber: 'QRY-1',
+        itinerary: [{ country: 'Singapore', destination: 'Singapore', nights: 3, sequence: 1 }],
+      },
+    };
+    const fetchMock = masterFetch(quotation, {
+      '/masters/destinations': page([{ id: 'dest-sg', name: 'Singapore' }]),
+      '/masters/add-on-services': page([addonWithLinks]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Include Visa Assistance')).toBeChecked(),
+    );
+    // M: user removes it; saving must not bring it back.
+    await userEvent.click(screen.getByLabelText('Include Visa Assistance'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Include Visa Assistance')).not.toBeChecked(),
+    );
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    expect(
+      (body.services as Array<Record<string, unknown>>).filter(
+        (service) => service.serviceType === 'OTHER_ADD_ON',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('keeps an existing saved add-on selection authoritative', async () => {
+    const addonWithLinks = {
+      ...addOn,
+      destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+    };
+    const quotation = {
+      ...builderQuotation({
+        services: [
+          {
+            serviceType: 'OTHER_ADD_ON',
+            addOnServiceId: 'aaaaaaa9-1111-4111-8111-111111111111',
+            name: 'Visa Assistance',
+            description: null,
+            dayNumber: null,
+            city: null,
+            quantity: '1',
+            unitSellingPrice: '3800',
+            totalSellingPrice: '3800',
+            sellingPrice: '3800',
+            taxCategory: null,
+            notes: null,
+            sequence: 1,
+            images: [],
+            imageSnapshotPresent: false,
+            pdfImageUrl: null,
+          },
+        ],
+      }),
+      query: {
+        id: 'lead-1',
+        queryNumber: 'QRY-1',
+        itinerary: [{ country: 'Singapore', destination: 'Singapore', nights: 3, sequence: 1 }],
+      },
+    };
+    const fetchMock = masterFetch(quotation, {
+      '/masters/destinations': page([{ id: 'dest-sg', name: 'Singapore' }]),
+      '/masters/add-on-services': page([addonWithLinks]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    // N: single saved row, no duplicate auto-added.
+    await waitFor(() =>
+      expect(screen.getAllByLabelText('Visa Assistance description')).toHaveLength(1),
+    );
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    expect(
+      (body.services as Array<Record<string, unknown>>).filter(
+        (service) => service.serviceType === 'OTHER_ADD_ON',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('works normally when a destination has zero defaults', async () => {
+    const quotation = {
+      ...builderQuotation(),
+      query: {
+        id: 'lead-1',
+        queryNumber: 'QRY-1',
+        itinerary: [{ country: 'Singapore', destination: 'Singapore', nights: 3, sequence: 1 }],
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(quotation, {
+        '/masters/destinations': page([{ id: 'dest-sg', name: 'Singapore' }]),
+        '/masters/add-on-services': page([{ ...addOn, destinations: [] }]),
+      }),
+    );
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    // O: nothing auto-added; manual toggle still works.
+    expect(screen.queryByLabelText('Visa Assistance description')).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByLabelText('Include Visa Assistance'));
+    expect(await screen.findByLabelText('Visa Assistance description')).toBeInTheDocument();
+  });
+});
+
 
 // TODO: update stale selectors/expectations in this block to match the current
 // UI (hotel stays and sightseeing days are collapsed by default). Quarantined temporarily.

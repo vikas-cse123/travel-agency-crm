@@ -881,7 +881,7 @@ export const bookingsService = {
         companyId: auth.companyId,
         deletedAt: null,
         query: {
-          is: { companyId: auth.companyId, deletedAt: null, ...(await leadVisibility(auth)) },
+          is: { companyId: auth.companyId, ...(await leadVisibility(auth)) },
         },
       },
       include: { query: true, versions: { include: versionInclude } },

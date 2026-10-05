@@ -65,7 +65,7 @@ export const airlineAdapter = {
   },
   existingKeys: async (companyId: string) => {
     const rows = await prisma.airline.findMany({
-      where: { companyId, deletedAt: null },
+      where: { companyId },
       select: { normalizedName: true, iataCode: true, icaoCode: true },
     });
     const keys = new Set<string>();

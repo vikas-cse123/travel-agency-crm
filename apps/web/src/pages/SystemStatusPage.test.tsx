@@ -131,6 +131,6 @@ describe('SystemStatusPage', () => {
 
     renderPage();
 
-    expect(screen.getByRole('heading', { name: 'Travel CRM', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Travel Agency CRM', level: 1 })).toBeInTheDocument();
   });
 });

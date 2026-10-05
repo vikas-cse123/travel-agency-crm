@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import type { QuotationVersionInput } from '@interscale/shared';
+import { normalizeAddonPricingSnapshot } from './addonPricing';
 import { MasterSelect, type MasterOption } from '@/components/ui/MasterSelect';
 import {
   useAddOnServices,
@@ -263,6 +264,8 @@ export interface ServiceRowPatch {
   city?: string | null;
   quantity?: number;
   pricingBasis?: QuotationVersionInput['services'][number]['pricingBasis'];
+  pricingBasisLabel?: string | null;
+  pricingSnapshot?: QuotationVersionInput['services'][number]['pricingSnapshot'];
   internalCost?: number;
   images?: QuotationVersionInput['services'][number]['images'];
   imageSnapshotPresent?: boolean | undefined;
@@ -471,10 +474,29 @@ function AddOnField({
       loading={services.isPending}
       onSelect={(option) => {
         const row = rows.find((entry) => entry.id === option?.id);
+        // Every pricing option travels in the quotation-owned snapshot; the
+        // chargeable price defaults to the first priced option.
+        const snapshot = row
+          ? normalizeAddonPricingSnapshot({
+              id: row.id,
+              pricing: row.pricing,
+              price: row.price,
+              currency: row.currency,
+              pricingBasis: row.pricingBasis,
+            })
+          : [];
+        const firstPriced = snapshot.find((entry) => entry.price != null);
+        const firstLabel = (snapshot[0]?.label ?? '').trim();
         onChange({
           addOnServiceId: option?.id ?? null,
           ...(option ? { name: option.label } : {}),
-          ...(row?.price != null ? { sellingPrice: Number(row.price) } : {}),
+          ...(firstPriced != null
+            ? { sellingPrice: Number(firstPriced.price) }
+            : row?.price != null
+              ? { sellingPrice: Number(row.price) }
+              : {}),
+          ...(firstLabel !== '' ? { pricingBasisLabel: firstLabel } : {}),
+          ...(snapshot.length > 0 ? { pricingSnapshot: snapshot } : {}),
         });
       }}
     />

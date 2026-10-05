@@ -7,6 +7,7 @@ import {
   quotationTemplateInputSchema,
   SERVICE_TYPES,
   labelForLookup,
+  normalizePricingSnapshotEntries,
   type QuotationTemplateInput,
 } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
@@ -160,6 +161,8 @@ export function QuotationTemplateFormPage() {
         quantity: Number(row.quantity),
         internalCost: row.internalCost ? Number(row.internalCost) : null,
         sellingPrice: row.sellingPrice ? Number(row.sellingPrice) : null,
+        // Quotation-owned pricing snapshot survives template edits untouched.
+        pricingSnapshot: normalizePricingSnapshotEntries(row.pricingSnapshot),
         taxCategory: row.taxCategory,
         notes: row.notes,
         sequence: row.sequence,

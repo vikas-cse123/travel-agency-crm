@@ -85,7 +85,6 @@ async function customerVisibility(auth: AuthContext): Promise<Prisma.CustomerWhe
         queries: {
           some: {
             companyId: auth.companyId,
-            deletedAt: null,
             OR: [{ createdById: auth.userId }, { assignedToId: auth.userId }],
           },
         },
@@ -494,7 +493,7 @@ export async function recalculateCustomerMetrics(
   const [queries, quotationCount, bookings, lastCommunication, nextCommunication] =
     await Promise.all([
       tx.query.findMany({
-        where: { companyId, customerId, deletedAt: null },
+        where: { companyId, customerId },
         select: { createdAt: true, nextFollowUpAt: true, leadStage: true },
         orderBy: { createdAt: 'desc' },
       }),
@@ -749,7 +748,7 @@ export const customersService = {
         where: {
           ...where,
           queries: {
-            some: { deletedAt: null, leadStage: { notIn: ['LOST', 'CANCELLED', 'INVALID'] } },
+            some: { leadStage: { notIn: ['LOST', 'CANCELLED', 'INVALID'] } },
           },
         },
       }),
@@ -975,7 +974,7 @@ export const customersService = {
       duplicateWarnings,
     ] = await Promise.all([
       prisma.query.findFirst({
-        where: { companyId: auth.companyId, customerId, deletedAt: null },
+        where: { companyId: auth.companyId, customerId },
         select: { id: true, queryNumber: true, leadStage: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
       }),
@@ -1376,7 +1375,7 @@ export const customersService = {
     await getVisibleCustomer(auth, customerId);
     if (input.leadId) {
       const lead = await prisma.query.findFirst({
-        where: { id: input.leadId, companyId: auth.companyId, customerId, deletedAt: null },
+        where: { id: input.leadId, companyId: auth.companyId, customerId },
         select: { id: true },
       });
       if (!lead) throw new ValidationError('The linked lead must belong to this customer.');
@@ -1429,7 +1428,7 @@ export const customersService = {
       throw new ForbiddenError('You can edit only communications you recorded.');
     if (input.leadId) {
       const lead = await prisma.query.findFirst({
-        where: { id: input.leadId, companyId: auth.companyId, customerId, deletedAt: null },
+        where: { id: input.leadId, companyId: auth.companyId, customerId },
         select: { id: true },
       });
       if (!lead) throw new ValidationError('The linked lead must belong to this customer.');
@@ -1502,7 +1501,6 @@ export const customersService = {
         where: {
           companyId: auth.companyId,
           customerId,
-          deletedAt: null,
           ...(viewAll ? {} : ownLead),
         },
         select: {
@@ -1525,7 +1523,7 @@ export const customersService = {
           deletedAt: null,
           ...(viewAll
             ? {}
-            : { query: { is: { companyId: auth.companyId, deletedAt: null, ...ownLead } } }),
+            : { query: { is: { companyId: auth.companyId, ...ownLead } } }),
         },
         select: {
           id: true,
@@ -1873,7 +1871,6 @@ export const customersService = {
           where: {
             companyId: auth.companyId,
             customerId,
-            deletedAt: null,
             ...(viewAll ? {} : ownLead),
           },
           select: { id: true, queryNumber: true, leadStage: true, createdAt: true },
@@ -1885,7 +1882,7 @@ export const customersService = {
             deletedAt: null,
             ...(viewAll
               ? {}
-              : { query: { is: { companyId: auth.companyId, deletedAt: null, ...ownLead } } }),
+              : { query: { is: { companyId: auth.companyId, ...ownLead } } }),
           },
           select: { id: true, quotationNumber: true, status: true, createdAt: true },
         }),
@@ -1961,7 +1958,7 @@ export const customersService = {
     ]);
     const counts = await prisma.$transaction(async (tx) => ({
       leads: await tx.query.count({
-        where: { companyId: auth.companyId, customerId: source.id, deletedAt: null },
+        where: { companyId: auth.companyId, customerId: source.id },
       }),
       quotations: await tx.quotation.count({
         where: { companyId: auth.companyId, customerId: source.id, deletedAt: null },

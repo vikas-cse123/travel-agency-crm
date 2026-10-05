@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { type Prisma, type MasterStatus } from '@prisma/client';
+import { Prisma, type MasterStatus } from '@prisma/client';
 import {
   MASTER_TYPE,
   PERMISSIONS,
@@ -19,7 +19,7 @@ import {
   resolvePagination,
   toPrismaPagination,
 } from '../../utils/pagination.js';
-import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../utils/errors.js';
 import { permissionsService } from '../auth/permissions.service.js';
 import {
   assertCanModifyMaster,
@@ -31,8 +31,11 @@ import {
 import type { MastersRequestContext } from './airlines.service.js';
 import {
   appendMasterImage,
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
   findMasterImage,
   masterImageWriteData,
+  partitionKeysBySnapshotReferences,
   presentMasterImages,
   removeMasterImage,
   reorderMasterImages,
@@ -80,7 +83,6 @@ function audit(
 function present<T extends Record<string, unknown>>(row: T, scope: MasterScope) {
   const {
     companyId,
-    deletedAt,
     imageBucket,
     imageObjectKey,
     imageStorageProvider,
@@ -91,7 +93,6 @@ function present<T extends Record<string, unknown>>(row: T, scope: MasterScope) 
     ...safe
   } = row;
   void companyId;
-  void deletedAt;
   void imageBucket;
   void imageStorageProvider;
   void pendingImageObjectKey;
@@ -121,7 +122,7 @@ async function getTestimonial(
     where: {
       id: testimonialId,
       ...buildVisibleWhere(scope),
-      ...(canManageRows ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? {} : { status: 'ACTIVE' }),
     },
     include: testimonialInclude,
   });
@@ -152,11 +153,7 @@ export const testimonialsService = {
 
     const where: Prisma.TestimonialWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageRows
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(search
         ? {
             OR: [
@@ -241,9 +238,7 @@ export const testimonialsService = {
         data: {
           ...writeData(input),
           updatedById: auth.userId,
-          ...(input.status
-            ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-            : {}),
+          ...(input.status ? { status: input.status } : {}),
         },
         include: testimonialInclude,
       });
@@ -272,38 +267,48 @@ export const testimonialsService = {
         data: {
           status,
           updatedById: auth.userId,
-          deletedAt: status === 'ARCHIVED' ? new Date() : null,
         },
         include: testimonialInclude,
       });
-      const action =
-        current.status === 'ARCHIVED' && status !== 'ARCHIVED'
-          ? 'TESTIMONIAL_RESTORED'
-          : 'TESTIMONIAL_STATUS_CHANGED';
       await tx.activityLog.create({
-        data: audit(auth, action, current.id, context, { previousStatus: current.status, status }),
+        data: audit(auth, 'TESTIMONIAL_STATUS_CHANGED', current.id, context, { previousStatus: current.status, status }),
       });
       return updated;
     });
     return present(row as unknown as Record<string, unknown>, scope);
   },
 
-  async archive(auth: AuthContext, testimonialId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, testimonialId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.TESTIMONIAL);
     const current = await getTestimonial(auth, testimonialId, scope, true);
     assertCanModifyMaster(current, scope);
-    const row = await prisma.$transaction(async (tx) => {
-      const updated = await tx.testimonial.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date(), updatedById: auth.userId },
-        include: testimonialInclude,
-      });
-      await tx.activityLog.create({
-        data: audit(auth, 'TESTIMONIAL_ARCHIVED', current.id, context),
-      });
-      return updated;
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'TESTIMONIAL',
+      masterId: current.id,
     });
-    return present(row as unknown as Record<string, unknown>, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Testimonial not deleted. Please retry.`,
+      );
+    const metadata = { clientName: current.clientName, retainedStorageFiles: retained.length };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // No inbound business FKs exist; the row stands alone.
+        await tx.testimonial.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'TESTIMONIAL_DELETED', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this testimonial because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 
   // --- Image (private, tenant-scoped) --------------------------------------

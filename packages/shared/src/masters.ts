@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { isKnownCountryCode } from './countries.js';
 
-export const MASTER_STATUSES = ['ACTIVE', 'INACTIVE', 'ARCHIVED'] as const;
+export const MASTER_STATUSES = ['ACTIVE', 'INACTIVE'] as const;
 export const DESTINATION_TYPES = ['DOMESTIC', 'INTERNATIONAL'] as const;
 export const DESTINATION_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
@@ -476,14 +476,80 @@ export const sightseeingReorderSchema = z.object({
 // Add-On Services
 // ---------------------------------------------------------------------------
 
+/**
+ * One destination association for an add-on service. `isDefault` marks the
+ * service as automatically added to new quotations for that destination.
+ * IDs stay authoritative; names are always resolved through the link.
+ */
+export const addOnServiceDestinationLinkSchema = z.object({
+  destinationId: z.string().uuid(),
+  isDefault: z.boolean().default(false),
+});
+
+/**
+ * One repeatable pricing option for an add-on service: free-text label,
+ * price and per-row currency. Stored as structured JSON with a stable UUID
+ * per entry (server fills missing ids) so rows stay independently editable;
+ * order is the array order. Never a formatted string.
+ */
+export const addOnServicePricingEntrySchema = z.object({
+  id: z.string().uuid().optional(),
+  label: optionalText(80),
+  price: optionalMoney,
+  currency: currency.default('INR'),
+});
+export type AddOnServicePricingEntry = z.infer<typeof addOnServicePricingEntrySchema>;
+
+/** Maximum pricing entries per add-on service (10 required; more allowed). */
+export const MAX_ADD_ON_PRICING_ENTRIES = 50;
+/** Maximum characters per pricing label (mirrors the legacy basis column). */
+export const PRICING_LABEL_MAX = 80;
+
+/**
+ * Normalize stored pricing-snapshot JSON into validated entries (or null when
+ * empty). Used when database JSON flows back into typed quotation inputs:
+ * malformed rows are repaired (bad ids dropped so the server reassigns them,
+ * invalid prices nulled, currencies defaulted) instead of failing validation.
+ */
+const PRICING_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function normalizePricingSnapshotEntries(value: unknown): AddOnServicePricingEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries = value.flatMap((item): AddOnServicePricingEntry[] => {
+    if (item == null || typeof item !== 'object') return [];
+    const raw = item as Record<string, unknown>;
+    const priceRaw = raw.price as unknown;
+    const price = priceRaw == null || priceRaw === '' ? null : Number(priceRaw);
+    const currencyRaw = typeof raw.currency === 'string' ? raw.currency.trim().toUpperCase() : '';
+    const entry: AddOnServicePricingEntry = {
+      label:
+        typeof raw.label === 'string' ? raw.label.slice(0, PRICING_LABEL_MAX) : '',
+      price: price != null && Number.isFinite(price) ? price : null,
+      currency: /^[A-Z]{3}$/.test(currencyRaw) ? currencyRaw : 'INR',
+    };
+    if (typeof raw.id === 'string' && PRICING_UUID_RE.test(raw.id)) entry.id = raw.id;
+    return [entry];
+  });
+  return entries.length > 0 ? entries : null;
+}
+
 const addOnServiceBaseSchema = z.object({
   name: z.string().trim().min(2, 'Service name is required.').max(200),
   description: optionalRichText,
-  // Single optional price — empty is valid. Stored as null when not provided.
+  // Repeatable pricing options (at least 10 supported). Omitted means "leave
+  // pricing untouched" on update. Legacy single price/currency/pricingBasis
+  // below are still accepted and kept in sync with the first entry.
+  pricing: z.array(addOnServicePricingEntrySchema).max(MAX_ADD_ON_PRICING_ENTRIES).optional(),
+  // Legacy single price — empty is valid. Stored as null when not provided.
+  // Deprecated in favour of `pricing`; kept for backward compatibility.
   price: optionalMoney,
   currency: currency.default('INR'),
   // Free-text pricing basis (e.g. "Per Person"). Optional, never restricted.
+  // Deprecated in favour of per-entry labels; kept for backward compatibility.
   pricingBasis: optionalText(80),
+  // Assigned destinations with per-destination default flags. Omitted means
+  // "leave links untouched" on update. The 20-defaults-per-destination cap is
+  // enforced server-side.
+  destinations: z.array(addOnServiceDestinationLinkSchema).optional(),
   status: z.enum(MASTER_STATUSES).default('ACTIVE'),
 });
 

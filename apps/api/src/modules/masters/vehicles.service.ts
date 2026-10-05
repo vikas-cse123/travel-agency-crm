@@ -29,8 +29,11 @@ import {
 import type { MastersRequestContext } from './airlines.service.js';
 import {
   appendMasterImage,
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
   findMasterImage,
   masterImageWriteData,
+  partitionKeysBySnapshotReferences,
   presentMasterImages,
   removeMasterImage,
   reorderMasterImages,
@@ -107,7 +110,7 @@ async function resolveVehicleDestinationIds(
   if (!ids.length) return [];
   const scope = await resolveMasterScope(auth, MASTER_TYPE.DESTINATION);
   const rows = await prisma.destination.findMany({
-    where: { id: { in: ids }, deletedAt: null, ...buildVisibleWhere(scope) },
+    where: { id: { in: ids }, ...buildVisibleWhere(scope) },
     select: { id: true },
   });
   if (rows.length !== ids.length) {
@@ -135,7 +138,6 @@ function presentVehicle<T extends Record<string, unknown>>(row: T, scope: Master
   const {
     companyId,
     normalizedName,
-    deletedAt,
     imageBucket,
     imageObjectKey,
     imageStorageProvider,
@@ -147,7 +149,6 @@ function presentVehicle<T extends Record<string, unknown>>(row: T, scope: Master
   } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   void imageBucket;
   void imageStorageProvider;
   void pendingImageObjectKey;
@@ -194,7 +195,7 @@ async function getVehicle(
     where: {
       id: vehicleId,
       ...buildVisibleWhere(scope),
-      ...(canManageVehicles ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageVehicles ? {} : { status: 'ACTIVE' }),
     },
     include: vehicleInclude,
   });
@@ -231,11 +232,7 @@ export const vehiclesService = {
       typeof query.destinationId === 'string' && query.destinationId ? query.destinationId : undefined;
     const where: Prisma.VehicleWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageVehicles
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageVehicles ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(vehicleType ? { vehicleType: { equals: vehicleType, mode: 'insensitive' } } : {}),
       ...(destinationId ? { destinations: { some: { destinationId } } } : {}),
       ...(search
@@ -282,7 +279,7 @@ export const vehiclesService = {
   async types(auth: AuthContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.VEHICLE);
     const rows = await prisma.vehicle.findMany({
-      where: { ...buildVisibleWhere(scope), deletedAt: null },
+      where: { ...buildVisibleWhere(scope) },
       distinct: ['vehicleType'],
       orderBy: { vehicleType: 'asc' },
       select: { vehicleType: true },
@@ -298,7 +295,6 @@ export const vehiclesService = {
       where: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
         ...(search
           ? {
               OR: [
@@ -403,9 +399,7 @@ export const vehiclesService = {
           data: {
             ...writeData(input),
             updatedById: auth.userId,
-            ...(input.status
-              ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-              : {}),
+            ...(input.status ? { status: input.status } : {}),
           },
         });
         if (destinationIds !== undefined) {
@@ -452,16 +446,11 @@ export const vehiclesService = {
         data: {
           status,
           updatedById: auth.userId,
-          deletedAt: status === 'ARCHIVED' ? new Date() : null,
         },
         include: vehicleInclude,
       });
-      const action =
-        current.status === 'ARCHIVED' && status !== 'ARCHIVED'
-          ? 'VEHICLE_RESTORED'
-          : 'VEHICLE_STATUS_CHANGED';
       await tx.activityLog.create({
-        data: audit(auth, action, current.id, context, {
+        data: audit(auth, 'VEHICLE_STATUS_CHANGED', current.id, context, {
           previousStatus: current.status,
           status,
         }),
@@ -471,20 +460,42 @@ export const vehiclesService = {
     return presentVehicle(vehicle as unknown as Record<string, unknown>, scope);
   },
 
-  async archive(auth: AuthContext, vehicleId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, vehicleId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.VEHICLE);
     const current = await getVehicle(auth, vehicleId, scope, true);
     assertCanModifyMaster(current, scope);
-    const vehicle = await prisma.$transaction(async (tx) => {
-      const updated = await tx.vehicle.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date(), updatedById: auth.userId },
-        include: vehicleInclude,
-      });
-      await tx.activityLog.create({ data: audit(auth, 'VEHICLE_ARCHIVED', current.id, context) });
-      return updated;
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'VEHICLE',
+      masterId: current.id,
     });
-    return presentVehicle(vehicle as unknown as Record<string, unknown>, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Vehicle not deleted. Please retry.`,
+      );
+    const metadata = {
+      name: current.name,
+      vehicleType: current.vehicleType,
+      retainedStorageFiles: retained.length,
+    };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Destination links cascade automatically; quotation/booking links
+        // are SetNull.
+        await tx.vehicle.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'VEHICLE_DELETED', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this vehicle because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 
   async createImageUpload(auth: AuthContext, vehicleId: string, input: VehicleImageUploadInput) {

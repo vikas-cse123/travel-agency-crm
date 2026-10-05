@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Archive,
   ArrowLeft,
   CalendarClock,
   CalendarPlus,
@@ -13,6 +12,7 @@ import {
   MessageSquarePlus,
   Phone,
   StickyNote,
+  Trash2,
   UserRound,
   UserRoundCog,
 } from 'lucide-react';
@@ -27,7 +27,7 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import {
   useFollowUpAction,
   useFollowUps,
-  useArchiveLead,
+  useDeleteLead,
   useLeadWorkspace,
   useLeadAction,
   useLeadLookups,
@@ -99,7 +99,7 @@ export function LeadDetailsPage() {
   const timeline = useTimeline(queryId);
   const lookups = useLeadLookups();
   const action = useLeadAction(queryId);
-  const archive = useArchiveLead(queryId);
+  const remove = useDeleteLead(queryId);
   const noteAction = useNoteAction(queryId);
   const followUpAction = useFollowUpAction(queryId);
   const [note, setNote] = useState('');
@@ -206,18 +206,22 @@ export function LeadDetailsPage() {
               </Button>
             </Link>
           )}
-          {allowed.canArchive && (
+          {allowed.canDelete && (
             <Button
               variant="danger"
-              isLoading={archive.isPending}
+              isLoading={remove.isPending}
               onClick={() => {
-                if (window.confirm(`Archive ${q.queryNumber}?`)) {
-                  archive.mutate(undefined, { onSuccess: () => navigate('/queries') });
+                if (
+                  window.confirm(
+                    `Permanently delete lead ${q.queryNumber}? This cannot be undone.`,
+                  )
+                ) {
+                  remove.mutate(undefined, { onSuccess: () => navigate('/queries') });
                 }
               }}
             >
-              <Archive className="h-4 w-4" />
-              Archive
+              <Trash2 className="h-4 w-4" />
+              Delete Lead
             </Button>
           )}
         </div>

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
-import { ERROR_CODES, PERMISSIONS, SIGHTSEEING_IMAGE_MIME_TYPES } from '@interscale/shared';
-import { ApiError } from '@/api/client';
+import { Plus, Save, Trash2, X } from 'lucide-react';
+import { PERMISSIONS, SIGHTSEEING_IMAGE_MIME_TYPES } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
@@ -16,7 +15,6 @@ import {
   useCreateSightseeing,
   useDestination,
   useDestinations,
-  useRestoreSightseeing,
   useSightseeing,
   useUpdateSightseeing,
 } from '@/features/masters/masters.api';
@@ -25,15 +23,6 @@ import { MasterImageGalleryField, useMasterImageGallery } from './MasterImageGal
 
 const LARGE = new URLSearchParams('pageSize=100&status=ACTIVE');
 const MAX_IMAGE_MB = 5;
-
-interface ArchivedDuplicateInfo {
-  sightseeingId: string;
-  title: string;
-  cityId: string;
-  destinationId: string;
-  cityName?: string | null;
-  destinationName?: string | null;
-}
 
 interface FormValues {
   destinationId: string;
@@ -45,7 +34,7 @@ interface FormValues {
   description: string;
   remarks: string;
   pricing: Array<{ label: string; price: string; currency: string }>;
-  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  status: 'ACTIVE' | 'INACTIVE';
 }
 
 /**
@@ -66,9 +55,6 @@ export function SightseeingFormPage() {
   const canManageMedia = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_MANAGE_MEDIA);
 
   const [formError, setFormError] = useState('');
-  const [archivedDuplicate, setArchivedDuplicate] = useState<ArchivedDuplicateInfo | null>(null);
-  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
-  const restore = useRestoreSightseeing();
 
   const form = useForm<FormValues>({
     defaultValues: {
@@ -165,7 +151,6 @@ export function SightseeingFormPage() {
 
   const submit = form.handleSubmit(async (values) => {
     setFormError('');
-    setArchivedDuplicate(null);
     // RULE: a saved destination/city must never be replaced with null/"".
     // If the selects momentarily hold "" (e.g. options still loading), fall
     // back to the loaded record in edit mode so the update preserves them.
@@ -207,37 +192,9 @@ export function SightseeingFormPage() {
       if (canManageMedia) await imageGallery.persist(saved.id);
       navigate(`/masters/sightseeing/${saved.id}`);
     } catch (error) {
-      if (
-        !sightseeingId &&
-        error instanceof ApiError &&
-        error.code === ERROR_CODES.SIGHTSEEING_ARCHIVED_DUPLICATE
-      ) {
-        const details = (error.details ?? {}) as Partial<ArchivedDuplicateInfo>;
-        setArchivedDuplicate({
-          sightseeingId: String(details.sightseeingId ?? ''),
-          title: String(details.title ?? values.title),
-          cityId: String(details.cityId ?? ''),
-          destinationId: String(details.destinationId ?? ''),
-          cityName: details.cityName ?? null,
-          destinationName: details.destinationName ?? null,
-        });
-        return;
-      }
       setFormError(error instanceof Error ? error.message : 'The sightseeing could not be saved.');
     }
   });
-
-  const performRestore = () => {
-    if (!archivedDuplicate) return;
-    restore.mutate(archivedDuplicate.sightseeingId, {
-      onSuccess: () => {
-        setShowRestoreConfirm(false);
-        setArchivedDuplicate(null);
-        window.alert('Sightseeing restored successfully.');
-        navigate(`/masters/sightseeing/${archivedDuplicate.sightseeingId}`, { replace: true });
-      },
-    });
-  };
 
   return (
     <div className="space-y-5">
@@ -254,25 +211,6 @@ export function SightseeingFormPage() {
             className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
           >
             {formError}
-          </div>
-        )}
-
-        {archivedDuplicate && !sightseeingId && (
-          <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4">
-            <h3 className="font-semibold text-amber-900">An archived sightseeing already exists</h3>
-            <p className="mt-1 text-sm text-amber-800">
-              A sightseeing named &ldquo;{archivedDuplicate.title}&rdquo; already exists in{' '}
-              {archivedDuplicate.cityName ?? 'this city'} but is archived. Restore the existing
-              sightseeing instead of creating a duplicate.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => setShowRestoreConfirm(true)}>
-                <RotateCcw className="h-4 w-4" /> Restore Sightseeing
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setArchivedDuplicate(null)}>
-                <X className="h-4 w-4" /> Dismiss
-              </Button>
-            </div>
           </div>
         )}
 
@@ -448,7 +386,6 @@ export function SightseeingFormPage() {
                 <select className={fieldClass} {...form.register('status')}>
                   <option value="ACTIVE">ACTIVE</option>
                   <option value="INACTIVE">INACTIVE</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
                 </select>
               </label>
             </div>
@@ -544,31 +481,6 @@ export function SightseeingFormPage() {
           </Button>
         </div>
       </form>
-      {showRestoreConfirm && archivedDuplicate && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="restore-sightseeing-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-        >
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <h2 id="restore-sightseeing-title" className="text-lg font-semibold text-slate-900">
-              Restore this sightseeing?
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              This will make the sightseeing active and available for use in quotations again.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setShowRestoreConfirm(false)}>
-                Cancel
-              </Button>
-              <Button isLoading={restore.isPending} onClick={performRestore}>
-                Restore Sightseeing
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

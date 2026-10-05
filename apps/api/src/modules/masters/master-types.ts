@@ -150,7 +150,6 @@ export interface MasterRegistryRow {
   id: string;
   companyId: string;
   status: string;
-  deletedAt: Date | null;
   name: string | null;
   title: string | null;
   clientName: string | null;

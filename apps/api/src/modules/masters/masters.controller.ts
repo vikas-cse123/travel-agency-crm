@@ -47,11 +47,11 @@ export const citiesController = {
       await citiesService.status(auth(req), req.params.cityId!, req.body.status, context(req)),
       'City status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await citiesService.archive(auth(req), req.params.cityId!, context(req)),
-      'City archived.',
+      await citiesService.remove(auth(req), req.params.cityId!, context(req)),
+      'City permanently deleted.',
     ),
 };
 
@@ -91,11 +91,11 @@ export const destinationsController = {
       ),
       'Destination status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await destinationsService.archive(auth(req), req.params.destinationId!, context(req)),
-      'Destination archived.',
+      await destinationsService.remove(auth(req), req.params.destinationId!, context(req)),
+      'Destination permanently deleted.',
     ),
   cities: async (req: Request, res: Response) =>
     sendSuccess(res, await destinationsService.cities(auth(req), req.params.destinationId!)),
@@ -204,11 +204,11 @@ export const hotelsController = {
       await hotelsService.status(auth(req), req.params.hotelId!, req.body.status, context(req)),
       'Hotel status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await hotelsService.archive(auth(req), req.params.hotelId!, context(req)),
-      'Hotel archived.',
+      await hotelsService.remove(auth(req), req.params.hotelId!, context(req)),
+      'Hotel permanently deleted.',
     ),
   createRoomType: async (req: Request, res: Response) =>
     sendSuccess(
@@ -526,11 +526,11 @@ export const airlinesController = {
       await airlinesService.status(auth(req), req.params.airlineId!, req.body.status, context(req)),
       'Airline status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await airlinesService.archive(auth(req), req.params.airlineId!, context(req)),
-      'Airline archived.',
+      await airlinesService.remove(auth(req), req.params.airlineId!, context(req)),
+      'Airline permanently deleted.',
     ),
   logoUpload: async (req: Request, res: Response) =>
     sendSuccess(
@@ -592,11 +592,11 @@ export const cruisesController = {
       await cruisesService.status(auth(req), req.params.cruiseId!, req.body.status, context(req)),
       'Cruise status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await cruisesService.archive(auth(req), req.params.cruiseId!, context(req)),
-      'Cruise archived.',
+      await cruisesService.remove(auth(req), req.params.cruiseId!, context(req)),
+      'Cruise permanently deleted.',
     ),
   imageUpload: async (req: Request, res: Response) =>
     sendSuccess(
@@ -671,11 +671,11 @@ export const vehiclesController = {
       await vehiclesService.status(auth(req), req.params.vehicleId!, req.body.status, context(req)),
       'Vehicle status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await vehiclesService.archive(auth(req), req.params.vehicleId!, context(req)),
-      'Vehicle archived.',
+      await vehiclesService.remove(auth(req), req.params.vehicleId!, context(req)),
+      'Vehicle permanently deleted.',
     ),
   imageUpload: async (req: Request, res: Response) =>
     sendSuccess(
@@ -766,11 +766,11 @@ export const sightseeingController = {
       ),
       'Sightseeing status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await sightseeingService.archive(auth(req), req.params.sightseeingId!, context(req)),
-      'Sightseeing archived.',
+      await sightseeingService.remove(auth(req), req.params.sightseeingId!, context(req)),
+      'Sightseeing permanently deleted.',
     ),
   imageUpload: async (req: Request, res: Response) =>
     sendSuccess(
@@ -867,11 +867,11 @@ export const addOnServicesController = {
       ),
       'Add-on service status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await addOnServicesService.archive(auth(req), req.params.addOnServiceId!, context(req)),
-      'Add-on service archived.',
+      await addOnServicesService.remove(auth(req), req.params.addOnServiceId!, context(req)),
+      'Add-on service permanently deleted.',
     ),
   imageUpload: async (req: Request, res: Response) =>
     sendSuccess(
@@ -947,11 +947,11 @@ export const visaTypesController = {
       ),
       'Visa type status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await visaTypesService.archive(auth(req), req.params.visaTypeId!, context(req)),
-      'Visa type archived.',
+      await visaTypesService.remove(auth(req), req.params.visaTypeId!, context(req)),
+      'Visa type permanently deleted.',
     ),
 };
 
@@ -989,11 +989,11 @@ export const testimonialsController = {
       ),
       'Testimonial status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
+  remove: async (req: Request, res: Response) =>
     sendSuccess(
       res,
-      await testimonialsService.archive(auth(req), req.params.testimonialId!, context(req)),
-      'Testimonial archived.',
+      await testimonialsService.remove(auth(req), req.params.testimonialId!, context(req)),
+      'Testimonial permanently deleted.',
     ),
   imageUpload: async (req: Request, res: Response) =>
     sendSuccess(
@@ -1059,6 +1059,6 @@ export const faqsController = {
       await faqsService.status(auth(req), req.params.faqId!, req.body.status, context(req)),
       'FAQ status updated.',
     ),
-  archive: async (req: Request, res: Response) =>
-    sendSuccess(res, await faqsService.archive(auth(req), req.params.faqId!, context(req)), 'FAQ archived.'),
+  remove: async (req: Request, res: Response) =>
+    sendSuccess(res, await faqsService.remove(auth(req), req.params.faqId!, context(req)), 'FAQ permanently deleted.'),
 };

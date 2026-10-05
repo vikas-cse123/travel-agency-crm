@@ -21,7 +21,7 @@ const schema = z.object({
     .trim()
     .toUpperCase()
     .refine((value) => !value || /^[A-Z]{3}$/.test(value), 'Use a three-letter airport code.'),
-  status: z.enum(['ACTIVE', 'INACTIVE', 'ARCHIVED']).default('ACTIVE'),
+  status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
 });
 type Values = z.infer<typeof schema>;
 const initial: Values = { countryCode: 'IN', name: '', airportCode: '', status: 'ACTIVE' };
@@ -167,7 +167,6 @@ export function CityFormPage() {
               <select className={fieldClass} {...form.register('status')}>
                 <option>ACTIVE</option>
                 <option>INACTIVE</option>
-                <option>ARCHIVED</option>
               </select>
             </label>
           )}

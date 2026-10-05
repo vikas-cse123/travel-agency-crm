@@ -260,6 +260,13 @@ export const settingsProfileSchema = z.object({
     .nullable()
     .optional(),
   address: optionalTrimmed(1000),
+  // Public Google Maps link (Settings → Company Profile → weblink Contact
+  // Us). Same URL-or-empty pattern as `website`.
+  googleMapsUrl: z
+    .union([z.string().trim().url().max(2000), z.literal('')])
+    .transform((value) => (value ? value : null))
+    .nullable()
+    .optional(),
   operatingSince: optionalOperatingSince,
   totalReviews: optionalCount(100_000_000),
   tripsSold: optionalCount(100_000_000),

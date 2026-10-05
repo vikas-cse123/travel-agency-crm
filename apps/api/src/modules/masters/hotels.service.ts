@@ -45,8 +45,11 @@ import {
 } from './master-visibility.js';
 import {
   appendMasterImage,
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
   findMasterImage,
   masterImageWriteData,
+  partitionKeysBySnapshotReferences,
   presentMasterImages,
   removeMasterImage,
   reorderMasterImages,
@@ -229,7 +232,6 @@ function presentHotel(row: Record<string, unknown>, canViewCosting: boolean, sco
   const {
     companyId,
     normalizedName,
-    deletedAt,
     imageBucket,
     imageObjectKey,
     imageStorageProvider,
@@ -246,7 +248,6 @@ function presentHotel(row: Record<string, unknown>, canViewCosting: boolean, sco
   } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   void imageBucket;
   void imageStorageProvider;
   void pendingImageObjectKey;
@@ -325,7 +326,7 @@ async function getHotel(auth: AuthContext, hotelId: string, scope: MasterScope, 
     where: {
       id: hotelId,
       ...buildVisibleWhere(scope),
-      ...(canManageHotels ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageHotels ? {} : { status: 'ACTIVE' }),
     },
     include: hotelDetailInclude,
   });
@@ -342,12 +343,10 @@ async function validateDestinationCity(scope: MasterScope, destinationId: string
       destination: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
       },
       city: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
       },
     },
     select: { id: true },
@@ -413,7 +412,6 @@ async function assertDefaultHotelLimit(
       destinationId,
       isDefaultForCity: true,
       status: 'ACTIVE',
-      deletedAt: null,
       ...(excludeHotelId ? { id: { not: excludeHotelId } } : {}),
     },
   });
@@ -436,11 +434,7 @@ export const hotelsService = {
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const where: Prisma.HotelWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageHotels
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageHotels ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.destinationId ? { destinationId: String(query.destinationId) } : {}),
       ...(query.cityId ? { cityId: String(query.cityId) } : {}),
       ...(query.starCategory ? { starCategory: Number(query.starCategory) } : {}),
@@ -511,7 +505,6 @@ export const hotelsService = {
       where: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
         ...(cityId ? { cityId } : {}),
         ...(destinationId ? { destinationId } : {}),
         ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
@@ -548,7 +541,7 @@ export const hotelsService = {
     await validateDestinationCity(scope, input.destinationId, input.cityId);
     const canManageCosting = await has(auth, PERMISSIONS.MASTER_HOTELS_MANAGE_COSTING);
     const canViewCosting = await has(auth, PERMISSIONS.MASTER_HOTELS_VIEW_COSTING);
-    const makeDefault = Boolean(input.isDefaultForCity) && input.status !== 'ARCHIVED';
+    const makeDefault = Boolean(input.isDefaultForCity);
     try {
       const hotel = await prisma.$transaction(async (tx) => {
         if (makeDefault)
@@ -600,11 +593,9 @@ export const hotelsService = {
       await validateDestinationCity(scope, destinationId, cityId);
     const canManageCosting = await has(auth, PERMISSIONS.MASTER_HOTELS_MANAGE_COSTING);
     const canViewCosting = await has(auth, PERMISSIONS.MASTER_HOTELS_VIEW_COSTING);
-    const nextStatus = input.status ?? current.status;
-    const archived = nextStatus === 'ARCHIVED';
     const wantsDefault =
       input.isDefaultForCity ?? (cityId === current.cityId ? current.isDefaultForCity : false);
-    const defaultActive = wantsDefault && !archived;
+    const defaultActive = wantsDefault;
     try {
       const hotel = await prisma.$transaction(async (tx) => {
         if (defaultActive)
@@ -616,7 +607,7 @@ export const hotelsService = {
             ...(input.cityId ? { cityId } : {}),
             ...hotelWriteData(input, canManageCosting),
             ...(input.status
-              ? { status: input.status, deletedAt: archived ? new Date() : null }
+              ? { status: input.status }
               : {}),
             isDefaultForCity: defaultActive,
           },
@@ -658,14 +649,12 @@ export const hotelsService = {
     const current = await getHotel(auth, hotelId, scope, true);
     assertCanModifyMaster(current, scope);
     const canViewCosting = await has(auth, PERMISSIONS.MASTER_HOTELS_VIEW_COSTING);
-    const archived = status === 'ARCHIVED';
     const hotel = await prisma.$transaction(async (tx) => {
       await tx.hotel.update({
         where: { id: current.id },
         data: {
           status,
-          deletedAt: archived ? new Date() : null,
-          // An archived or inactive hotel can never remain the active default.
+          // An inactive hotel can never remain the active default.
           ...(status === 'ACTIVE' ? {} : { isDefaultForCity: false }),
         },
       });
@@ -680,25 +669,47 @@ export const hotelsService = {
     return presentHotel(hotel as unknown as Record<string, unknown>, canViewCosting, scope);
   },
 
-  async archive(auth: AuthContext, hotelId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, hotelId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.HOTEL);
     const current = await getHotel(auth, hotelId, scope, true);
     assertCanModifyMaster(current, scope);
     const canViewCosting = await has(auth, PERMISSIONS.MASTER_HOTELS_VIEW_COSTING);
-    const hotel = await prisma.$transaction(async (tx) => {
-      await tx.hotel.update({
-        where: { id: current.id },
-        // Archiving transactionally strips default status for the city.
-        data: { status: 'ARCHIVED', deletedAt: new Date(), isDefaultForCity: false },
-      });
-      await tx.activityLog.create({
-        data: audit(auth, 'HOTEL_ARCHIVED', 'Hotel', current.id, context, {
-          wasDefault: current.isDefaultForCity,
-        }),
-      });
-      return tx.hotel.findUniqueOrThrow({ where: { id: current.id }, include: hotelDetailInclude });
+    // Master-owned storage only (gallery + legacy + pending). Quotation and
+    // booking snapshot objects are never touched; keys still referenced by
+    // quotation snapshots are retained so saved quotations keep rendering.
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'HOTEL',
+      masterId: current.id,
     });
-    return presentHotel(hotel as unknown as Record<string, unknown>, canViewCosting, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Hotel not deleted. Please retry.`,
+      );
+    const metadata = {
+      name: current.name,
+      wasDefault: current.isDefaultForCity,
+      retainedStorageFiles: retained.length,
+    };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Room types, meal plans, seasons and month prices cascade
+        // automatically; quotation/booking links are SetNull.
+        await tx.hotel.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'HOTEL_DELETED', 'Hotel', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this hotel because it is being used by existing records.',
+        );
+      throw error;
+    }
+    void canViewCosting;
+    return { deleted: true, id: current.id };
   },
 
   // --- Room types ----------------------------------------------------------
@@ -752,10 +763,8 @@ export const hotelsService = {
         where: { id: existing.id },
         data: roomTypeWriteData(input, canManageCosting),
       });
-      const action =
-        input.status === 'ARCHIVED' ? 'HOTEL_ROOM_TYPE_ARCHIVED' : 'HOTEL_ROOM_TYPE_UPDATED';
       await tx.activityLog.create({
-        data: audit(auth, action, 'HotelRoomType', existing.id, context, {
+        data: audit(auth, 'HOTEL_ROOM_TYPE_UPDATED', 'HotelRoomType', existing.id, context, {
           changedFields: Object.keys(input),
         }),
       });
@@ -814,10 +823,8 @@ export const hotelsService = {
         where: { id: existing.id },
         data: mealPlanWriteData(input, canManageCosting),
       });
-      const action =
-        input.status === 'ARCHIVED' ? 'HOTEL_MEAL_PLAN_ARCHIVED' : 'HOTEL_MEAL_PLAN_UPDATED';
       await tx.activityLog.create({
-        data: audit(auth, action, 'HotelMealPlan', existing.id, context, {
+        data: audit(auth, 'HOTEL_MEAL_PLAN_UPDATED', 'HotelMealPlan', existing.id, context, {
           changedFields: Object.keys(input),
         }),
       });

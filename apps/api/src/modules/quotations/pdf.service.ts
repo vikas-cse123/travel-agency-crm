@@ -172,6 +172,89 @@ const validPaymentUrl = (value: string | null | undefined): string | null => {
   }
 };
 
+export interface AddonPricingBox {
+  label: string;
+  amount: string | null;
+}
+
+/**
+ * Compact add-on pricing boxes from the quotation-owned pricing snapshot.
+ * Legacy rows (no snapshot) yield none, so their Classic PDF output is
+ * byte-identical to before. Basis-only entries keep a label-only tile.
+ */
+export function addonPricingBoxes(
+  service: {
+    pricingSnapshot?: Array<{
+      id?: string;
+      label?: string | null;
+      price?: number | null;
+      currency?: string | null;
+    }> | null;
+  },
+  fallbackCurrency: string,
+): AddonPricingBox[] {
+  const raw = Array.isArray(service.pricingSnapshot) ? service.pricingSnapshot : [];
+  return raw.flatMap((entry): AddonPricingBox[] => {
+    if (entry == null || typeof entry !== 'object') return [];
+    const label = String(entry.label ?? '').trim() || 'Standard';
+    const rawPrice = entry.price as unknown;
+    const price = rawPrice == null || rawPrice === '' ? null : Number(rawPrice);
+    if (price == null || !Number.isFinite(price)) return [{ label, amount: null }];
+    const code = String(entry.currency ?? fallbackCurrency).trim().toUpperCase() || 'INR';
+    return [{ label, amount: moneyFmt(code, price) }];
+  });
+}
+
+/** Compact pricing-box grid: 3 small bordered tiles per row (label over price). */
+export const ADDON_BOXES_PER_ROW = 3;
+export const ADDON_BOX_GAP = 8;
+export const ADDON_BOX_H = 38;
+export function addonPricingGridHeight(count: number): number {
+  if (!count) return 0;
+  const rows = Math.ceil(count / ADDON_BOXES_PER_ROW);
+  return 8 + rows * ADDON_BOX_H + (rows - 1) * ADDON_BOX_GAP;
+}
+
+/**
+ * Draw the compact pricing-box grid (label over bold price, 3 tiles per row).
+ * Returns the y cursor just below the grid. Amount-only tiles keep the same
+ * geometry with a single line.
+ */
+export function drawAddonPricingGrid(
+  doc: PDFKit.PDFDocument,
+  boxes: AddonPricingBox[],
+  x: number,
+  y: number,
+  width: number,
+): number {
+  if (!boxes.length) return y;
+  const rows = Math.ceil(boxes.length / ADDON_BOXES_PER_ROW);
+  const boxW = (width - ADDON_BOX_GAP * (ADDON_BOXES_PER_ROW - 1)) / ADDON_BOXES_PER_ROW;
+  boxes.forEach((box, i) => {
+    const col = i % ADDON_BOXES_PER_ROW;
+    const gridRow = Math.floor(i / ADDON_BOXES_PER_ROW);
+    const bx = x + col * (boxW + ADDON_BOX_GAP);
+    const by = y + gridRow * (ADDON_BOX_H + ADDON_BOX_GAP);
+    doc.save().roundedRect(bx, by, boxW, ADDON_BOX_H, 4).stroke(BORDER).restore();
+    doc
+      .font('Body')
+      .fontSize(7.5)
+      .fillColor(DARK)
+      .text(box.label, bx + 6, by + 5, { width: boxW - 12, ellipsis: true, lineBreak: false });
+    if (box.amount != null)
+      doc
+        .font('Bold')
+        .fontSize(9.5)
+        .fillColor(DARK)
+        .text(box.amount, bx + 6, by + 19, {
+          width: boxW - 12,
+          ellipsis: true,
+          lineBreak: false,
+        });
+  });
+  return y + rows * ADDON_BOX_H + (rows - 1) * ADDON_BOX_GAP;
+}
+
 export type PdfRichTextRun = { text: string; bold: boolean };
 export type PdfRichTextLine = PdfRichTextRun[];
 
@@ -482,6 +565,17 @@ export interface QuotationPdfInput {
       unitSellingPrice: unknown;
       /** Add-on master link; only present on actually-selected Add-on rows. */
       addOnServiceId?: string | null;
+      /**
+       * Quotation-owned snapshot of every master pricing option available
+       * when the add-on was selected. Nullish for legacy rows (which render
+       * exactly as before — Classic PDF never showed a single price).
+       */
+      pricingSnapshot?: Array<{
+        id?: string;
+        label?: string | null;
+        price?: number | null;
+        currency?: string | null;
+      }> | null;
     }>;
     inclusions: Array<{ content: string }>;
     exclusions: Array<{ content: string }>;
@@ -2703,7 +2797,12 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
             : [];
         const firstDesc = inCardDesc[0] ?? null;
         const restDesc = inCardDesc.slice(1);
-        const textH = nameH + (firstDesc ? 4 + firstDesc.height : 0);
+        // Quotation-owned pricing snapshot as compact bordered tiles under the
+        // description. Legacy rows (no snapshot) reserve nothing, so their
+        // output is unchanged.
+        const priceBoxes = addonPricingBoxes(row, v.currency);
+        const priceH = addonPricingGridHeight(priceBoxes.length);
+        const textH = nameH + (firstDesc ? 4 + firstDesc.height : 0) + priceH;
         const cardH = CARD_PAD + Math.max(imgH, textH) + CARD_PAD;
         if (!restDesc.length) {
           planner.add({
@@ -2721,6 +2820,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
                 .text(row.name, tx, yy, { width: tw });
               yy += nameH;
               if (firstDesc) yy = firstDesc.render(yy + 4);
+              if (priceBoxes.length) drawAddonPricingGrid(doc, priceBoxes, tx, yy + 8, tw);
               return top + cardH;
             },
           });
@@ -2730,7 +2830,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
         // Oversized description: bordered header card (image + name) keeps the
         // row identity together, the remainder flows as regular full-width
         // description blocks so nothing is clipped or pushed into the footer.
-        const headerH = CARD_PAD + Math.max(imgH, nameH) + CARD_PAD;
+        const headerH = CARD_PAD + Math.max(imgH, nameH + priceH) + CARD_PAD;
         planner.add({
           height: headerH + 8,
           keepWithNext: true,
@@ -2744,6 +2844,8 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
               .fontSize(12)
               .fillColor(DARK)
               .text(row.name, tx, top + CARD_PAD, { width: tw });
+            if (priceBoxes.length)
+              drawAddonPricingGrid(doc, priceBoxes, tx, top + CARD_PAD + nameH + 8, tw);
             return top + headerH;
           },
         });

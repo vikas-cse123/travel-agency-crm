@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import {
   PERMISSIONS,
+  normalizePricingSnapshotEntries,
   type QuotationTemplateInput,
   type QuotationTemplateUpdate,
 } from '@interscale/shared';
@@ -566,12 +567,15 @@ export const quotationTemplatesService = {
           quantity,
           internalCost,
           sellingPrice,
+          pricingSnapshot: rawPricingSnapshot,
           ...row
         }) => ({
           ...row,
           quantity: quantity.toNumber(),
           internalCost: internalCost?.toNumber(),
           sellingPrice: sellingPrice?.toNumber(),
+          // Stored snapshot JSON normalizes to validated entries (or null).
+          pricingSnapshot: normalizePricingSnapshotEntries(rawPricingSnapshot),
           images: [],
           pdfImageUrl: null,
         }),

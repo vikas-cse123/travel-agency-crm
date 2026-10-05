@@ -198,17 +198,14 @@ describe('Multi-default hotels per destination', () => {
     expect((await defaultCount(client, ids.destinationId)).total).toBe(10);
   });
 
-  it('archiving a default hotel frees its slot', async () => {
+  it('deleting a default hotel frees its slot', async () => {
     const client = await owner();
     const ids = await setupDestination(client, 'Singapore City', 'Singapore');
     const first = await createHotel(client, ids, 'Hotel 1', true);
     for (let i = 2; i <= 10; i++) {
       expect((await createHotel(client, ids, `Hotel ${i}`, true)).status).toBe(201);
     }
-    const archived = await client.patch(`/api/masters/hotels/${first.body.data.id}/status`, {
-      status: 'ARCHIVED',
-    });
-    expect(archived.status).toBe(200);
+    expect((await client.delete(`/api/masters/hotels/${first.body.data.id}`)).status).toBe(200);
     expect((await createHotel(client, ids, 'Hotel 11', true)).status).toBe(201);
   });
 });

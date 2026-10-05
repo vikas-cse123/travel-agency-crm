@@ -91,6 +91,16 @@ export interface TemplateService extends MasterServiceRefs {
   sellingPrice: string | null;
   pricingBasis?: string | null;
   pricingBasisLabel?: string | null;
+  /**
+   * Quotation-owned snapshot of every master pricing option available when an
+   * add-on was selected. Nullish for legacy rows and other service types.
+   */
+  pricingSnapshot?: Array<{
+    id?: string;
+    label?: string | null;
+    price?: number | null;
+    currency?: string | null;
+  }> | null;
   taxCategory: string | null;
   notes: string | null;
   images?: QuotationSnapshotImage[];

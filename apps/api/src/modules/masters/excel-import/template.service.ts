@@ -4,8 +4,8 @@ import { getAdapter } from './adapters/index.js';
 
 const ENUM_DROPDOWNS: Record<string, { values: string[]; error: string }> = {
   status: {
-    values: ['ACTIVE', 'INACTIVE', 'ARCHIVED'],
-    error: 'Please select ACTIVE, INACTIVE or ARCHIVED',
+    values: ['ACTIVE', 'INACTIVE'],
+    error: 'Please select ACTIVE or INACTIVE',
   },
   destinationType: {
     values: ['DOMESTIC', 'INTERNATIONAL'],

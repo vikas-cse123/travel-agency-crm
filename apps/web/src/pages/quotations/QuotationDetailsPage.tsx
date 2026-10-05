@@ -199,7 +199,7 @@ export function QuotationDetailsPage() {
       quotation: data as unknown as Parameters<typeof buildWhatsAppSummary>[0]['quotation'],
       version: currentV as unknown as Parameters<typeof buildWhatsAppSummary>[0]['version'],
       weblinkUrl: publicLinkUrl,
-      companyName: user?.company.name ?? 'Travel CRM',
+      companyName: user?.company.name ?? 'Travel Agency CRM',
       preparedByName:
         (data as unknown as { createdBy?: { fullName?: string | null } }).createdBy?.fullName ??
         (currentV as unknown as { createdBy?: { fullName?: string | null } }).createdBy?.fullName ??
@@ -345,7 +345,7 @@ export function QuotationDetailsPage() {
           quotation: q,
           version: current,
           weblinkUrl: overrides?.weblinkUrl !== undefined ? overrides.weblinkUrl : publicLinkUrl,
-          companyName: user?.company.name ?? 'Travel CRM',
+          companyName: user?.company.name ?? 'Travel Agency CRM',
           preparedByName: q.createdBy?.fullName ?? current.createdBy?.fullName ?? user?.fullName ?? null,
           options: {
             includeFlights: overrides?.includeFlights ?? includeFlights,

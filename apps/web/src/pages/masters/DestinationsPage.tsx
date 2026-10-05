@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Archive, Eye, EyeOff, Globe2, Pencil, Plus, Search, Upload } from 'lucide-react';
+import { Eye, EyeOff, Globe2, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
@@ -8,7 +8,7 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import {
   destinationImageUrl,
   masterImageFingerprint,
-  useArchiveDestination,
+  useDeleteDestination,
   useDestinations,
   useHideGlobalMaster,
   useMasterLookups,
@@ -29,13 +29,13 @@ export function DestinationsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const destinations = useDestinations(params);
   const lookups = useMasterLookups();
-  const archive = useArchiveDestination();
+  const remove = useDeleteDestination();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const canCreate = hasPermission(PERMISSIONS.MASTER_DESTINATIONS_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_DESTINATIONS_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_DESTINATIONS_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_DESTINATIONS_DELETE);
   const imageIdsKey =
     destinations.data?.data
       .filter((destination) => destination.hasImage)
@@ -108,8 +108,9 @@ export function DestinationsPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this destination?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete destination ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -189,7 +190,6 @@ export function DestinationsPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -299,15 +299,14 @@ export function DestinationsPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive &&
-                            destination.status !== 'ARCHIVED' &&
-                            !destination.isGlobal && (
+                          {canDelete && !destination.isGlobal && (
                               <button
-                                aria-label={`Archive ${destination.name}`}
-                                onClick={() => archiveRow(destination.id)}
+                                aria-label={`Delete ${destination.name}`}
+                                title="Permanently delete"
+                                onClick={() => deleteRow(destination.id, destination.name)}
                                 className="rounded bg-red-600 p-2 text-white"
                               >
-                                <Archive className="h-4 w-4" />
+                                <Trash2 className="h-4 w-4" />
                               </button>
                             )}
                         </div>

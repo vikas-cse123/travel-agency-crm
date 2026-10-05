@@ -268,7 +268,7 @@ async function seedMasters(companyId: string, ownerId: string): Promise<void> {
     const city = existing
       ? await prisma.city.update({
           where: { id: existing.id },
-          data: { ...definition, status: 'ACTIVE', deletedAt: null },
+          data: { ...definition, status: 'ACTIVE' },
         })
       : await prisma.city.create({
           data: { ...definition, companyId, createdById: ownerId, status: 'ACTIVE' },
@@ -279,19 +279,18 @@ async function seedMasters(companyId: string, ownerId: string): Promise<void> {
   const existing = await prisma.destination.findFirst({
     where: { companyId, countryCode: 'IN', normalizedName: 'rajasthan highlights' },
   });
-  const destination = existing
-    ? await prisma.destination.update({
-        where: { id: existing.id },
-        data: {
-          name: 'Rajasthan Highlights',
-          countryName: 'India',
-          destinationType: 'DOMESTIC',
-          status: 'ACTIVE',
-          deletedAt: null,
-          inclusions: '<p>Curated stays and private ground transfers.</p>',
-          exclusions: '<p>Flights and personal expenses.</p>',
-        },
-      })
+    const destination = existing
+      ? await prisma.destination.update({
+          where: { id: existing.id },
+          data: {
+            name: 'Rajasthan Highlights',
+            countryName: 'India',
+            destinationType: 'DOMESTIC',
+            status: 'ACTIVE',
+            inclusions: '<p>Curated stays and private ground transfers.</p>',
+            exclusions: '<p>Flights and personal expenses.</p>',
+          },
+        })
     : await prisma.destination.create({
         data: {
           companyId,

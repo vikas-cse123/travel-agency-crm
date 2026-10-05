@@ -1137,27 +1137,25 @@ async function resolveDestinationCity(
   cityName: string,
 ): Promise<{ destinationId: string | null; cityId: string | null; destinationName: string }> {
   const scope = await resolveMasterScope(auth, MASTER_TYPE.HOTEL);
-  const destination = destinationName
-    ? await prisma.destination.findFirst({
-        where: {
-          ...buildVisibleWhere(scope),
-          normalizedName: normalizeCustomerName(destinationName),
-          status: 'ACTIVE',
-          deletedAt: null,
-        },
+    const destination = destinationName
+      ? await prisma.destination.findFirst({
+          where: {
+            ...buildVisibleWhere(scope),
+            normalizedName: normalizeCustomerName(destinationName),
+            status: 'ACTIVE',
+          },
         select: { id: true, name: true },
       })
     : null;
   if (!destination) return { destinationId: null, cityId: null, destinationName: destinationName.trim() };
-  const city = cityName
-    ? await prisma.city.findFirst({
-        where: {
-          ...buildVisibleWhere(scope),
-          normalizedName: normalizeCustomerName(cityName),
-          status: 'ACTIVE',
-          deletedAt: null,
-          destinationLinks: { some: { destinationId: destination.id } },
-        },
+    const city = cityName
+      ? await prisma.city.findFirst({
+          where: {
+            ...buildVisibleWhere(scope),
+            normalizedName: normalizeCustomerName(cityName),
+            status: 'ACTIVE',
+            destinationLinks: { some: { destinationId: destination.id } },
+          },
         select: { id: true, name: true },
       })
     : null;

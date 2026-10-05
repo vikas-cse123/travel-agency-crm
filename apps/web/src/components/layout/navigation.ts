@@ -20,7 +20,6 @@ import {
   MessageSquare,
   NotebookText,
   PackagePlus,
-  Phone,
   Plane,
   Search,
   Settings,
@@ -53,7 +52,7 @@ export const SHOW_ACTIVITY_LOGS_NAVIGATION = false;
 export const SHOW_REPORTS_NAVIGATION = false;
 
 /**
- * Sister product: the Interscale WhatsApp CRM. Surfaced as a cross-app launcher
+ * Sister product: WhatsApp Max. Surfaced as a cross-app launcher
  * pinned to the bottom of the sidebar (the Zomato → Blinkit pattern) and opened
  * in a new tab, since it is a separate application on its own domain.
  */
@@ -139,14 +138,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Notes',
     to: '/notes',
     icon: NotebookText,
-    available: true,
-    permission: PERMISSIONS.QUERIES_VIEW,
-    section: NAV_SECTION.GENERAL,
-  },
-  {
-    label: 'Call Recordings',
-    to: '/call-recordings',
-    icon: Phone,
     available: true,
     permission: PERMISSIONS.QUERIES_VIEW,
     section: NAV_SECTION.GENERAL,

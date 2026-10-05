@@ -20,7 +20,7 @@ interface FormValues {
   name: string;
 }
 
-type AirlineStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+type AirlineStatus = 'ACTIVE' | 'INACTIVE';
 
 const empty: FormValues = {
   name: '',

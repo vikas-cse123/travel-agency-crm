@@ -1,8 +1,8 @@
-import { type Prisma, type MasterStatus } from '@prisma/client';
+import { Prisma, type MasterStatus } from '@prisma/client';
 import { MASTER_TYPE, PERMISSIONS, type FaqInput, type FaqUpdateInput } from '@interscale/shared';
 import { prisma } from '../../config/prisma.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
-import { NotFoundError } from '../../utils/errors.js';
+import { ConflictError, NotFoundError } from '../../utils/errors.js';
 import { buildPaginationMeta, resolvePagination, toPrismaPagination } from '../../utils/pagination.js';
 import { permissionsService } from '../auth/permissions.service.js';
 import {
@@ -48,9 +48,8 @@ function audit(
 }
 
 function present<T extends Record<string, unknown>>(row: T, scope: MasterScope) {
-  const { companyId, deletedAt, ...safe } = row;
+  const { companyId, ...safe } = row;
   void companyId;
-  void deletedAt;
   return { ...safe, canManage: scope.isSystemAdmin };
 }
 
@@ -64,7 +63,6 @@ async function getFaq(auth: AuthContext, faqId: string, forManage = false) {
     where: {
       id: faqId,
       companyId: auth.companyId,
-      deletedAt: null,
       ...(canManageRows ? {} : { status: 'ACTIVE' }),
     },
     include: faqInclude,
@@ -110,11 +108,7 @@ export const faqsService = {
 
     const where: Prisma.FaqWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageRows
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(search
         ? {
             OR: [
@@ -194,9 +188,7 @@ export const faqsService = {
         data: {
           ...writeData(input),
           updatedById: auth.userId,
-          ...(input.status
-            ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-            : {}),
+          ...(input.status ? { status: input.status } : {}),
         },
         include: faqInclude,
       });
@@ -225,37 +217,37 @@ export const faqsService = {
         data: {
           status,
           updatedById: auth.userId,
-          deletedAt: status === 'ARCHIVED' ? new Date() : null,
         },
         include: faqInclude,
       });
-      const action =
-        current.status === 'ARCHIVED' && status !== 'ARCHIVED'
-          ? 'FAQ_RESTORED'
-          : 'FAQ_STATUS_CHANGED';
       await tx.activityLog.create({
-        data: audit(auth, action, current.id, context, { previousStatus: current.status, status }),
+        data: audit(auth, 'FAQ_STATUS_CHANGED', current.id, context, { previousStatus: current.status, status }),
       });
       return updated;
     });
     return present(row as unknown as Record<string, unknown>, scope);
   },
 
-  async archive(auth: AuthContext, faqId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, faqId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.FAQ);
     const current = await getFaq(auth, faqId, true);
     assertCanModifyMaster(current, scope);
-    const row = await prisma.$transaction(async (tx) => {
-      const updated = await tx.faq.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date(), updatedById: auth.userId },
-        include: faqInclude,
+    const metadata = { question: current.question.slice(0, 120) };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // No inbound business FKs and no storage; the row stands alone.
+        await tx.faq.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'FAQ_DELETED', current.id, context, metadata),
+        });
       });
-      await tx.activityLog.create({
-        data: audit(auth, 'FAQ_ARCHIVED', current.id, context),
-      });
-      return updated;
-    });
-    return present(row as unknown as Record<string, unknown>, scope);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this FAQ because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 };

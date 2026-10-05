@@ -1,5 +1,5 @@
 /** Product identity. */
-export const APP_NAME = 'Travel CRM';
+export const APP_NAME = 'Travel Agency CRM';
 
 /** Default local development ports. */
 export const DEFAULT_API_PORT = 4000;

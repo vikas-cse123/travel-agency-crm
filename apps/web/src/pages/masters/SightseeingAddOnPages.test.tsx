@@ -235,7 +235,7 @@ describe('Phase 13D master pages', () => {
     );
   });
 
-  it('hides sightseeing create, edit, reorder and archive actions without permission', async () => {
+  it('hides sightseeing create, edit, reorder and delete actions without permission', async () => {
     auth.permissions = new Set(['masters.sightseeing.view']);
     stubApi();
     renderWithProviders(<SightseeingPage />, { route: '/masters/sightseeing' });
@@ -249,7 +249,7 @@ describe('Phase 13D master pages', () => {
       screen.queryByRole('button', { name: /move gobustan rock art tour up/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /archive gobustan rock art tour/i }),
+      screen.queryByRole('button', { name: /delete gobustan rock art tour/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -366,7 +366,7 @@ describe('Phase 13D master pages', () => {
     );
   });
 
-  it('hides add-on service create, edit and archive actions without permission', async () => {
+  it('hides add-on service create, edit and delete actions without permission', async () => {
     auth.permissions = new Set(['masters.add_on_services.view']);
     stubApi();
     renderWithProviders(<AddOnServicesPage />, { route: '/masters/add-on-services' });
@@ -375,7 +375,7 @@ describe('Phase 13D master pages', () => {
     expect(screen.queryByRole('link', { name: /add new service/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /edit singapore visa/i })).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /archive singapore visa/i }),
+      screen.queryByRole('button', { name: /delete singapore visa/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -384,7 +384,7 @@ describe('Phase 13D master pages', () => {
     stubApi();
     renderWithProviders(<AddOnServiceFormPage />, { route: '/masters/add-on-services/new' });
 
-    const price = screen.getByLabelText('Add-on service price');
+    const price = screen.getByLabelText('Pricing option 1 price');
     await user.clear(price);
     await user.click(screen.getByRole('button', { name: /^create$/i }));
     // Price is optional, so only the required name is validated.
@@ -428,7 +428,7 @@ describe('Phase 13D master pages', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Singapore Visa' })).toBeInTheDocument();
-    expect(screen.getByText('Price')).toBeInTheDocument();
+    expect(screen.getByText('Pricing')).toBeInTheDocument();
     expect(screen.getAllByText(/3,800/).length).toBeGreaterThan(0);
     expect(screen.getByText('Created By')).toBeInTheDocument();
     expect(screen.getByText('Aditi Rao')).toBeInTheDocument();
@@ -534,13 +534,326 @@ describe('Phase 13D master pages', () => {
   });
 });
 
-describe('Sightseeing master status filter and restore', () => {
+describe('Add-on service destination associations', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     auth.permissions = new Set(ALL);
   });
 
-  it('renders the status dropdown with exactly Current statuses, ACTIVE, INACTIVE and ARCHIVED', async () => {
+  const sg = { id: 'dest-sg-0000-4000-8000-000000000001', name: 'Singapore' };
+  const my = { id: 'dest-my-0000-4000-8000-000000000002', name: 'Malaysia' };
+  const pagination = (total: number) => ({ page: 1, pageSize: 20, total, totalPages: 1 });
+
+  function stubForm(record: unknown, counts: Record<string, number> = {}) {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes('/masters/destinations')) return response({ data: [sg, my], pagination: pagination(2) });
+      if (url.includes('isDefault=true')) {
+        const destinationId = new URL(url, 'http://localhost').searchParams.get('destinationId') ?? '';
+        return response({ data: [], pagination: pagination(counts[destinationId] ?? 0) });
+      }
+      if (init?.method === 'POST' && url.endsWith('/masters/add-on-services'))
+        return response({ ...(record as object), id: 'new-service-id' });
+      if (init?.method === 'PATCH' && url.includes('/masters/add-on-services/'))
+        return response({ ...(record as object), ...JSON.parse(String(init?.body)) });
+      if (url.includes(`/masters/add-on-services/${serviceId}`)) return response(record);
+      if (url.includes('/masters/add-on-services')) return response(page([service]));
+      return response(page([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const renderNewForm = () =>
+    renderWithProviders(<AddOnServiceFormPage />, { route: '/masters/add-on-services/new' });
+
+  const renderEditForm = () =>
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/masters/add-on-services/:addOnServiceId/edit"
+          element={<AddOnServiceFormPage />}
+        />
+        <Route path="/masters/add-on-services/:addOnServiceId" element={<div>Saved</div>} />
+      </Routes>,
+      { route: `/masters/add-on-services/${serviceId}/edit` },
+    );
+
+  it('A/B/C: creates with two destinations and an independent default flag', async () => {
+    const fetchMock = stubForm(service);
+    renderNewForm();
+    await userEvent.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    await userEvent.selectOptions(screen.getByLabelText('Select destination'), 'dest-sg-0000-4000-8000-000000000001');
+    await userEvent.selectOptions(screen.getByLabelText('Select destination'), 'dest-my-0000-4000-8000-000000000002');
+    await userEvent.click(screen.getByLabelText('Default add-on for Singapore'));
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith('/masters/add-on-services') && init?.method === 'POST',
+      );
+      expect(post).toBeDefined();
+      expect(JSON.parse(String(post![1]!.body)).destinations).toEqual([
+        { destinationId: 'dest-sg-0000-4000-8000-000000000001', isDefault: true },
+        { destinationId: 'dest-my-0000-4000-8000-000000000002', isDefault: false },
+      ]);
+    });
+  });
+
+  it('D/E/F: edit loads mappings with per-destination flags', async () => {
+    const stored = {
+      ...service,
+      destinations: [
+        { id: sg.id, name: 'Singapore', isDefault: true },
+        { id: my.id, name: 'Malaysia', isDefault: false },
+      ],
+    };
+    stubForm(stored);
+    renderEditForm();
+    await waitFor(() => expect(screen.getByLabelText('Default add-on for Singapore')).toBeChecked());
+    expect(screen.getByLabelText('Default add-on for Malaysia')).not.toBeChecked();
+  });
+
+  it('G/H: blocks the 21st default with a clear message and keeps it unchecked', async () => {
+    stubForm(service, { [sg.id]: 20 });
+    renderNewForm();
+    await userEvent.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    await userEvent.selectOptions(screen.getByLabelText('Select destination'), sg.id);
+    await userEvent.click(screen.getByLabelText('Default add-on for Singapore'));
+    await screen.findByText(/maximum of 20 default add-on services/);
+    expect(screen.getByLabelText('Default add-on for Singapore')).not.toBeChecked();
+  });
+
+  it('allows the 20th default when one slot remains', async () => {
+    const fetchMock = stubForm(service, { [sg.id]: 19 });
+    renderNewForm();
+    await userEvent.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    await userEvent.selectOptions(screen.getByLabelText('Select destination'), sg.id);
+    await userEvent.click(screen.getByLabelText('Default add-on for Singapore'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Default add-on for Singapore')).toBeChecked(),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith('/masters/add-on-services') && init?.method === 'POST',
+      );
+      expect(JSON.parse(String(post![1]!.body)).destinations).toEqual([
+        { destinationId: sg.id, isDefault: true },
+      ]);
+    });
+  });
+
+  it('J: services without destinations stay valid and save an empty list', async () => {
+    const fetchMock = stubForm(service);
+    renderNewForm();
+    await userEvent.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith('/masters/add-on-services') && init?.method === 'POST',
+      );
+      expect(JSON.parse(String(post![1]!.body)).destinations).toEqual([]);
+    });
+  });
+
+  it('T: the form uses the full content width like the other master forms', async () => {
+    stubForm(service);
+    renderNewForm();
+    await screen.findByRole('heading', { name: 'Create Add-On Service' });
+    expect(document.querySelector('form.max-w-3xl')).toBeNull();
+    expect(screen.getByText('Service Information')).toBeInTheDocument();
+    expect(screen.getByText('Destinations')).toBeInTheDocument();
+  });
+});
+
+describe('Add-on service repeatable pricing', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set(ALL);
+  });
+
+  const sg = { id: 'dest-sg-0000-4000-8000-000000000001', name: 'Singapore' };
+  const pagination = (total: number) => ({ page: 1, pageSize: 20, total, totalPages: 1 });
+
+  function stubPricing(record: unknown) {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes('/masters/destinations')) return response({ data: [sg], pagination: pagination(1) });
+      if (url.includes('isDefault=true')) return response({ data: [], pagination: pagination(0) });
+      if (init?.method === 'POST' && url.endsWith('/masters/add-on-services'))
+        return response({ ...(record as object), id: 'new-service-id' });
+      if (init?.method === 'PATCH' && url.includes('/masters/add-on-services/'))
+        return response({ ...(record as object), ...JSON.parse(String(init?.body)) });
+      if (url.includes(`/masters/add-on-services/${serviceId}`)) return response(record);
+      if (url.includes('/masters/add-on-services')) return response(page([service]));
+      return response(page([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const priced = {
+    ...service,
+    pricing: [
+      { id: 'opt-adult-1', label: 'Adult', price: 6000, currency: 'INR' },
+      { id: 'opt-child-2', label: 'Child', price: 4000, currency: 'INR' },
+      { id: 'opt-senior-3', label: 'Senior', price: 5000, currency: 'USD' },
+    ],
+    destinations: [],
+  };
+
+  const renderNewForm = () =>
+    renderWithProviders(<AddOnServiceFormPage />, { route: '/masters/add-on-services/new' });
+
+  const renderEditForm = () =>
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/masters/add-on-services/:addOnServiceId/edit"
+          element={<AddOnServiceFormPage />}
+        />
+        <Route path="/masters/add-on-services/:addOnServiceId" element={<div>Saved</div>} />
+      </Routes>,
+      { route: `/masters/add-on-services/${serviceId}/edit` },
+    );
+
+  const savedBody = async (fetchMock: ReturnType<typeof stubPricing>, method: 'POST' | 'PATCH') => {
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).includes('/masters/add-on-services') && init?.method === method,
+        ),
+      ).toBe(true);
+    });
+    const call = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes('/masters/add-on-services') && init?.method === method,
+    )!;
+    return JSON.parse(String(call[1]!.body)) as {
+      pricing: Array<{ id: string; label: string; price: number | null; currency: string }>;
+      price: number | null;
+      currency: string;
+      pricingBasis: string | null;
+    };
+  };
+
+  it('creates with a single pricing entry and mirrors the legacy fields', async () => {
+    const fetchMock = stubPricing(service);
+    renderNewForm();
+    await userEvent.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    await userEvent.type(screen.getByLabelText('Pricing option 1 label'), 'Adult');
+    await userEvent.type(screen.getByLabelText('Pricing option 1 price'), '6000');
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    const body = await savedBody(fetchMock, 'POST');
+    expect(body.pricing).toHaveLength(1);
+    expect(body.pricing[0]).toMatchObject({ label: 'Adult', price: 6000, currency: 'INR' });
+    expect(typeof body.pricing[0]!.id).toBe('string');
+    expect(body.price).toBe(6000);
+    expect(body.currency).toBe('INR');
+    expect(body.pricingBasis).toBe('Adult');
+  });
+
+  it('creates with 10 entries and allows an 11th', async () => {
+    const fetchMock = stubPricing(service);
+    renderNewForm();
+    await userEvent.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    for (let n = 2; n <= 11; n += 1) {
+      await userEvent.click(screen.getByRole('button', { name: 'Add Pricing' }));
+    }
+    for (let n = 1; n <= 11; n += 1) {
+      await userEvent.type(screen.getByLabelText(`Pricing option ${n} label`), `P${n}`);
+      await userEvent.type(screen.getByLabelText(`Pricing option ${n} price`), `${n}000`);
+    }
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    const body = await savedBody(fetchMock, 'POST');
+    expect(body.pricing).toHaveLength(11);
+    expect(body.pricing.map((entry) => entry.label)).toEqual(
+      Array.from({ length: 11 }, (_, i) => `P${i + 1}`),
+    );
+    expect(body.pricing.map((entry) => entry.price)).toEqual(
+      Array.from({ length: 11 }, (_, i) => (i + 1) * 1000),
+    );
+  });
+
+  it('loads saved entries in order and edits one without disturbing the rest', async () => {
+    const fetchMock = stubPricing(priced);
+    renderEditForm();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Pricing option 1 label')).toHaveValue('Adult'),
+    );
+    expect(screen.getByLabelText('Pricing option 2 label')).toHaveValue('Child');
+    expect(screen.getByLabelText('Pricing option 3 price')).toHaveValue(5000);
+    await userEvent.clear(screen.getByLabelText('Pricing option 2 label'));
+    await userEvent.type(screen.getByLabelText('Pricing option 2 label'), 'Kid');
+    await userEvent.clear(screen.getByLabelText('Pricing option 2 price'));
+    await userEvent.type(screen.getByLabelText('Pricing option 2 price'), '4500');
+    await userEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    const body = await savedBody(fetchMock, 'PATCH');
+    expect(body.pricing).toEqual([
+      { id: 'opt-adult-1', label: 'Adult', price: 6000, currency: 'INR' },
+      { id: 'opt-child-2', label: 'Kid', price: 4500, currency: 'INR' },
+      { id: 'opt-senior-3', label: 'Senior', price: 5000, currency: 'USD' },
+    ]);
+  });
+
+  it('removes a single row and keeps the remaining order', async () => {
+    const fetchMock = stubPricing(priced);
+    renderEditForm();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Pricing option 3 label')).toHaveValue('Senior'),
+    );
+    await userEvent.click(screen.getByLabelText('Remove pricing option 1'));
+    await userEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    const body = await savedBody(fetchMock, 'PATCH');
+    expect(body.pricing.map((entry) => entry.id)).toEqual(['opt-child-2', 'opt-senior-3']);
+  });
+
+  it('reorders rows with the move buttons', async () => {
+    const fetchMock = stubPricing(priced);
+    renderEditForm();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Pricing option 1 label')).toHaveValue('Adult'),
+    );
+    await userEvent.click(screen.getByLabelText('Move pricing option 1 down'));
+    // The moved row is now second; its stable id travels with it.
+    expect(screen.getByLabelText('Pricing option 2 label')).toHaveValue('Adult');
+    await userEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    const body = await savedBody(fetchMock, 'PATCH');
+    expect(body.pricing.map((entry) => entry.id)).toEqual([
+      'opt-child-2',
+      'opt-adult-1',
+      'opt-senior-3',
+    ]);
+  });
+
+  it('loads a legacy single price as exactly one row', async () => {
+    stubPricing(service);
+    renderEditForm();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Pricing option 1 price')).toHaveValue(3800),
+    );
+    expect(screen.getByLabelText('Pricing option 1 label')).toHaveValue('');
+    expect(screen.queryByLabelText('Pricing option 2 label')).not.toBeInTheDocument();
+  });
+
+  it('rejects a negative price inside a pricing row', async () => {
+    const user = userEvent.setup();
+    stubPricing(service);
+    renderNewForm();
+    await user.type(screen.getByPlaceholderText('Enter service name'), 'Visa Service');
+    await user.type(screen.getByLabelText('Pricing option 1 price'), '-5');
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+    expect(await screen.findByText('Price cannot be negative.')).toBeInTheDocument();
+  });
+});
+
+describe('Sightseeing master status filter and delete', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set(ALL);
+  });
+
+  it('renders the status dropdown with exactly Current statuses, ACTIVE and INACTIVE', async () => {
     stubApi();
     renderWithProviders(<SightseeingPage />, { route: '/masters/sightseeing' });
     const select = screen.getByLabelText('Sightseeing status');
@@ -548,7 +861,7 @@ describe('Sightseeing master status filter and restore', () => {
       within(select)
         .getAllByRole('option')
         .map((o) => o.textContent),
-    ).toEqual(['Current statuses', 'ACTIVE', 'INACTIVE', 'ARCHIVED']);
+    ).toEqual(['Current statuses', 'ACTIVE', 'INACTIVE']);
   });
 
   it('changing status sends the status query parameter', async () => {
@@ -562,57 +875,55 @@ describe('Sightseeing master status filter and restore', () => {
     });
     vi.stubGlobal('fetch', mock);
     renderWithProviders(<SightseeingPage />, { route: '/masters/sightseeing' });
-    await userEvent.selectOptions(screen.getByLabelText('Sightseeing status'), 'ARCHIVED');
+    await userEvent.selectOptions(screen.getByLabelText('Sightseeing status'), 'INACTIVE');
     await waitFor(() =>
-      expect(mock.mock.calls.some(([url]) => String(url).includes('status=ARCHIVED'))).toBe(true),
+      expect(mock.mock.calls.some(([url]) => String(url).includes('status=INACTIVE'))).toBe(true),
     );
   });
 
-  it('shows an ARCHIVED badge and Restore action for archived rows', async () => {
-    stubApi({
-      sightseeing: page([{ ...sightseeing, status: 'ARCHIVED' }]),
+  it('shows a Delete action with a permanent-delete confirmation for rows', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes('/masters/sightseeing/summary')) return response(summary);
+      if (url.includes('/masters/destinations')) return response(page([destination]));
+      if (url.includes('/masters/cities'))
+        return response(page([{ id: cityId, name: 'Baku', status: 'ACTIVE' }]));
+      if (init?.method === 'DELETE') return response({ deleted: true });
+      return response(page([sightseeing]));
     });
+    vi.stubGlobal('fetch', fetchMock);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderWithProviders(<SightseeingPage />, { route: '/masters/sightseeing' });
     await userEvent.click(await screen.findByRole('button', { name: /Azerbaijan/ }));
     const table = document.querySelector('table') as HTMLTableElement;
-    expect(within(table).getByText('ARCHIVED')).toBeInTheDocument();
-    expect(
-      within(table).getByRole('button', { name: `Restore ${sightseeing.title}` }),
-    ).toBeInTheDocument();
-    // No archive button for an already-archived row.
-    expect(
-      within(table).queryByRole('button', { name: `Archive ${sightseeing.title}` }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('opens a restore confirmation modal with the correct text', async () => {
-    stubApi({
-      sightseeing: page([{ ...sightseeing, status: 'ARCHIVED' }]),
+    const deleteButton = within(table).getByRole('button', {
+      name: `Delete ${sightseeing.title}`,
     });
-    renderWithProviders(<SightseeingPage />, { route: '/masters/sightseeing' });
-    await userEvent.click(await screen.findByRole('button', { name: /Azerbaijan/ }));
-    await userEvent.click(screen.getByRole('button', { name: `Restore ${sightseeing.title}` }));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('Restore this sightseeing?')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /This will make the sightseeing active and available for use in quotations again/,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Restore Sightseeing' })).toBeInTheDocument();
+    expect(deleteButton).toHaveAttribute('title', 'Permanently delete');
+    await userEvent.click(deleteButton);
+    expect(confirmSpy).toHaveBeenCalledWith(
+      `Permanently delete sightseeing ${sightseeing.title}? This action cannot be undone.`,
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).includes(`/masters/sightseeing/${sightseeingId}`) &&
+            init?.method === 'DELETE',
+        ),
+      ).toBe(true),
+    );
+    confirmSpy.mockRestore();
   });
 
-  it('does not render the status filter or Restore for an unauthorized user', async () => {
+  it('does not render the status filter or Delete for an unauthorized user', async () => {
     auth.permissions = new Set(['masters.sightseeing.view']);
-    stubApi({
-      sightseeing: page([{ ...sightseeing, status: 'ARCHIVED' }]),
-    });
+    stubApi();
     renderWithProviders(<SightseeingPage />, { route: '/masters/sightseeing' });
     await userEvent.click(await screen.findByRole('button', { name: /Azerbaijan/ }));
     expect(screen.queryByLabelText('Sightseeing status')).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: `Restore ${sightseeing.title}` }),
+      screen.queryByRole('button', { name: `Delete ${sightseeing.title}` }),
     ).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { Mail, MapPin, MessageCircle, Phone, User } from 'lucide-react';
+import { ExternalLink, Mail, MapPin, MessageCircle, Phone, User } from 'lucide-react';
 import { buildQuotationDescription, normalizeWhatsAppPhone } from './quotationContact';
 
 export interface PublicQuotationContactProps {
@@ -8,6 +8,7 @@ export interface PublicQuotationContactProps {
   gstin: string | null | undefined;
   email: string | null | undefined;
   address: string | null | undefined;
+  googleMapsUrl?: string | null | undefined;
   logoUrl: string | null | undefined;
   quotationId: string | null | undefined;
   quotationTitle: string | null | undefined;
@@ -16,6 +17,32 @@ export interface PublicQuotationContactProps {
 
 const infoRow = 'flex items-start gap-2 text-sm text-[#000000]';
 const icon = 'mt-0.5 h-4 w-4 shrink-0 text-emerald-600';
+
+/** Multicolour Google Maps pin (brand colours) matching the row icon size. */
+function GoogleMapsPin({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" focusable="false">
+      <defs>
+        <clipPath id="gmaps-pin-clip">
+          <path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z" />
+        </clipPath>
+      </defs>
+      <g clipPath="url(#gmaps-pin-clip)">
+        <rect x="5" y="2" width="14" height="6.5" fill="#EA4335" />
+        <rect x="5" y="8.5" width="7" height="13.5" fill="#FBBC04" />
+        <rect x="12" y="8.5" width="7" height="13.5" fill="#34A853" />
+      </g>
+      <circle cx="12" cy="9" r="2.7" fill="#ffffff" />
+      <circle cx="12" cy="9" r="1.7" fill="#1A73E8" />
+    </svg>
+  );
+}
+
+/** Only http(s) links are rendered; anything else hides the row entirely. */
+function safeExternalUrl(value: string | null | undefined): string | null {
+  const url = (value ?? '').trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
 
 /**
  * Left-aligned contact card for the public quotation web link. All values come
@@ -30,6 +57,7 @@ export function PublicQuotationContact({
   gstin,
   email,
   address,
+  googleMapsUrl = null,
   logoUrl,
   quotationId,
   quotationTitle,
@@ -37,6 +65,7 @@ export function PublicQuotationContact({
 }: PublicQuotationContactProps) {
   const description = buildQuotationDescription(quotationId, quotationTitle, leadName);
   const whatsappPhone = normalizeWhatsAppPhone(phone);
+  const mapsUrl = safeExternalUrl(googleMapsUrl);
   const message = `Hello, I'm interested in the travel quotation (ID: ${description})`;
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -103,6 +132,20 @@ export function PublicQuotationContact({
               <p className={infoRow}>
                 <MapPin className={icon} aria-hidden="true" />
                 <span>{address}</span>
+              </p>
+            )}
+            {mapsUrl && (
+              <p className={infoRow}>
+                <GoogleMapsPin className="mt-0.5 h-4 w-4 shrink-0" />
+                <a
+                  href={mapsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                >
+                  View on Google Maps
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
               </p>
             )}
           </div>

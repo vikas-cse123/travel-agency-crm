@@ -1,4 +1,5 @@
-import type { ContactMethod, LeadStage, Prisma } from '@prisma/client';
+import type { ContactMethod, LeadStage } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
   LEAD_SOURCES,
   LEAD_STAGES,
@@ -17,7 +18,7 @@ import type { AuthContext } from '../../middleware/authenticate.js';
 import { prisma } from '../../config/prisma.js';
 import { env } from '../../config/env.js';
 import { normalizeEmail, normalizePhone } from '../../utils/normalize.js';
-import { ForbiddenError, NotFoundError, ValidationError } from '../../utils/errors.js';
+import { ForbiddenError, NotFoundError, ValidationError, ConflictError } from '../../utils/errors.js';
 import { resolvePagination } from '../../utils/pagination.js';
 import { localDayBounds, zonedTimeToUtc } from '../../utils/timezone.js';
 import { permissionsService } from '../auth/permissions.service.js';
@@ -41,10 +42,9 @@ const include = {
 } as const;
 type IncludedQuery = Prisma.QueryGetPayload<{ include: typeof include }>;
 export function presentQuery(value: IncludedQuery) {
-  const { companyId, normalizedPhone, deletedAt, itinerary, ...query } = value;
+  const { companyId, normalizedPhone, itinerary, ...query } = value;
   void companyId;
   void normalizedPhone;
-  void deletedAt;
   return {
     ...query,
     itinerary: itinerary.map((value) => {
@@ -314,7 +314,6 @@ export async function visibility(auth: AuthContext): Promise<Prisma.QueryWhereIn
 export async function visibleWhere(auth: AuthContext, extra: Prisma.QueryWhereInput = {}) {
   return {
     companyId: auth.companyId,
-    deletedAt: null,
     ...(await visibility(auth)),
     ...extra,
   } satisfies Prisma.QueryWhereInput;
@@ -819,7 +818,7 @@ export const queriesService = {
         canAddNote: permissions.includes(PERMISSIONS.QUERIES_UPDATE),
         canScheduleFollowUp: permissions.includes(PERMISSIONS.FOLLOWUPS_CREATE),
         canCompleteFollowUp: permissions.includes(PERMISSIONS.FOLLOWUPS_UPDATE),
-        canArchive: permissions.includes(PERMISSIONS.QUERIES_DELETE),
+        canDelete: permissions.includes(PERMISSIONS.QUERIES_DELETE),
         canViewQuotations: permissions.includes(PERMISSIONS.QUOTATIONS_VIEW),
         canCreateQuotation: permissions.includes(PERMISSIONS.QUOTATIONS_CREATE),
         canSendQuotation: permissions.includes(PERMISSIONS.QUOTATIONS_SEND),
@@ -1040,14 +1039,53 @@ export const queriesService = {
     });
     return presentQuery(await getVisible(auth, id));
   },
-  async archive(auth: AuthContext, id: string, context: RequestContext) {
+  async remove(auth: AuthContext, id: string, context: RequestContext) {
     const query = await getVisible(auth, id);
-    await prisma.$transaction(async (tx) => {
-      await tx.query.update({ where: { id }, data: { deletedAt: new Date() } });
-      if (query.customerId) await recalculateCustomerMetrics(tx, auth.companyId, query.customerId);
-      await tx.activityLog.create({ data: audit(auth, 'QUERY_ARCHIVED', id, context) });
-    });
-    return { archived: true, id };
+    // Safety: quotations are dependent records with their own lifecycle
+    // (versions, weblinks, documents, email logs). Never cascade-delete them.
+    const [quotationCount, bookingCount] = await Promise.all([
+      prisma.quotation.count({ where: { companyId: auth.companyId, queryId: id } }),
+      prisma.booking.count({ where: { companyId: auth.companyId, queryId: id } }),
+    ]);
+    if (quotationCount > 0)
+      throw new ConflictError(
+        'Cannot delete this lead because quotations are linked to it. Delete the quotations first.',
+        { quotationCount },
+      );
+    if (bookingCount > 0)
+      throw new ConflictError(
+        'Cannot delete this lead because bookings are linked to it. The booking history must be preserved.',
+        { bookingCount },
+      );
+    // Capture identifying metadata before the row disappears; the audit log
+    // survives deletion (ActivityLog.entityId has no FK to Query).
+    const metadata = { queryNumber: query.queryNumber, customerName: query.customerName };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // DB cascades remove notes/stage/assignment history/services/itinerary;
+        // follow-ups, calls, communications and WACRM links are SetNull.
+        // The shared Customer row is never touched (SetNull from Query side).
+        await tx.query.delete({ where: { id } });
+        if (query.customerId)
+          await recalculateCustomerMetrics(tx, auth.companyId, query.customerId);
+        await tx.activityLog.create({
+          data: audit(auth, 'QUERY_DELETED', id, context, metadata),
+        });
+      });
+    } catch (error) {
+      // A quotation/booking linked between the pre-check and the delete trips
+      // the Restrict FK (P2003). Report it as a 409, never a 500, with no
+      // partial changes (the transaction rolls back).
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      )
+        throw new ConflictError(
+          'Cannot delete this lead because linked quotations or bookings exist.',
+        );
+      throw error;
+    }
+    return { deleted: true, id };
   },
   async changeStage(
     auth: AuthContext,
@@ -1918,7 +1956,7 @@ export const queriesService = {
           action: {
             in: [
               'QUERY_UPDATED',
-              'QUERY_ARCHIVED',
+              'QUERY_DELETED',
               'QUERY_NOTE_UPDATED',
               'QUERY_NOTE_DELETED',
               'QUERY_FOLLOW_UP_CREATED',

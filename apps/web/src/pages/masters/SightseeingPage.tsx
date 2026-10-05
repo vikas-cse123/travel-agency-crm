@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Archive,
   ArrowDown,
   ArrowUp,
   Building2,
@@ -14,8 +13,8 @@ import {
   MapPinned,
   Pencil,
   Plus,
-  RotateCcw,
   Search,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -25,13 +24,12 @@ import { ExcelImportDialog } from '@/features/masters/excel-import/ExcelImportDi
 import { formatTime12Hour } from '@/utils/dateTime';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useArchiveSightseeing,
+  useDeleteSightseeing,
   masterImageFingerprint,
   useCities,
   useDestinations,
   useHideGlobalMaster,
   useReorderSightseeing,
-  useRestoreSightseeing,
   useSightseeingList,
   useSightseeingSummary,
   sightseeingImageUrl,
@@ -82,16 +80,14 @@ export function SightseeingPage() {
   const summary = useSightseeingSummary(params);
   const destinations = useDestinations(LARGE);
   const cities = useCities(LARGE);
-  const archive = useArchiveSightseeing();
-  const restore = useRestoreSightseeing();
+  const remove = useDeleteSightseeing();
   const reorder = useReorderSightseeing();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_DELETE);
   const [openDestinations, setOpenDestinations] = useState<Set<string>>(new Set());
-  const [restoreTarget, setRestoreTarget] = useState<Sightseeing | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
   const update = (key: string, value: string) => {
@@ -104,28 +100,18 @@ export function SightseeingPage() {
     setParams(next);
   };
 
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this sightseeing?')) archive.mutate(id);
+  const deleteRow = (id: string, title: string) => {
+    if (window.confirm(`Permanently delete sightseeing ${title}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
       hideMaster.mutate({ masterType: 'SIGHTSEEING', masterId: id });
   };
 
-  const confirmRestore = (row: Sightseeing) => {
-    restore.mutate(row.id, {
-      onSuccess: () => {
-        setRestoreTarget(null);
-        window.alert('Sightseeing restored successfully.');
-      },
-    });
-  };
-
   const activeStatus = params.get('status') ?? '';
   const emptyMessage =
-    activeStatus === 'ARCHIVED'
-      ? 'No archived sightseeing records found.'
-      : activeStatus === 'INACTIVE'
+    activeStatus === 'INACTIVE'
         ? 'No inactive sightseeing records found.'
         : activeStatus === 'ACTIVE'
           ? 'No active sightseeing records found.'
@@ -225,7 +211,6 @@ export function SightseeingPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -386,9 +371,7 @@ export function SightseeingPage() {
                                     </td>
                                     <td className="px-4 py-2.5">
                                       <div className="flex gap-1">
-                                        {canUpdate &&
-                                          row.status !== 'ARCHIVED' &&
-                                          !row.isGlobal && (
+                                        {canUpdate && !row.isGlobal && (
                                             <>
                                               <button
                                                 aria-label={`Move ${row.title} up`}
@@ -436,26 +419,14 @@ export function SightseeingPage() {
                                             <EyeOff className="h-3.5 w-3.5" />
                                           </button>
                                         )}
-                                        {canArchive &&
-                                          row.status !== 'ARCHIVED' &&
-                                          !row.isGlobal && (
+                                        {canDelete && !row.isGlobal && (
                                             <button
-                                              aria-label={`Archive ${row.title}`}
-                                              onClick={() => archiveRow(row.id)}
+                                              aria-label={`Delete ${row.title}`}
+                                              title="Permanently delete"
+                                              onClick={() => deleteRow(row.id, row.title)}
                                               className="rounded bg-red-600 p-1.5 text-white"
                                             >
-                                              <Archive className="h-3.5 w-3.5" />
-                                            </button>
-                                          )}
-                                        {canUpdate &&
-                                          row.status === 'ARCHIVED' &&
-                                          !row.isGlobal && (
-                                            <button
-                                              aria-label={`Restore ${row.title}`}
-                                              onClick={() => setRestoreTarget(row)}
-                                              className="rounded bg-emerald-600 p-1.5 text-white"
-                                            >
-                                              <RotateCcw className="h-3.5 w-3.5" />
+                                              <Trash2 className="h-3.5 w-3.5" />
                                             </button>
                                           )}
                                       </div>
@@ -531,32 +502,6 @@ export function SightseeingPage() {
             ))}
           </dl>
         </section>
-      )}
-
-      {restoreTarget && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="restore-sightseeing-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-        >
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <h2 id="restore-sightseeing-title" className="text-lg font-semibold text-slate-900">
-              Restore this sightseeing?
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              This will make the sightseeing active and available for use in quotations again.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setRestoreTarget(null)}>
-                Cancel
-              </Button>
-              <Button isLoading={restore.isPending} onClick={() => confirmRestore(restoreTarget)}>
-                Restore Sightseeing
-              </Button>
-            </div>
-          </div>
-        </div>
       )}
 
       <ExcelImportDialog

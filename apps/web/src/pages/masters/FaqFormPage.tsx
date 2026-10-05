@@ -13,7 +13,7 @@ const schema = z.object({
   question: z.string().trim().min(1, 'Enter a question.').max(500),
   answer: z.string().trim().min(1, 'Enter an answer.').max(5000),
   destinations: z.array(z.string().trim().min(1).max(200)).max(50).nullable().optional(),
-  status: z.enum(['ACTIVE', 'INACTIVE', 'ARCHIVED']).default('ACTIVE'),
+  status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
 });
 type Values = z.infer<typeof schema>;
 const initial: Values = { question: '', answer: '', destinations: null, status: 'ACTIVE' };
@@ -227,7 +227,6 @@ export function FaqFormPage() {
               <select className={fieldClass} {...form.register('status')}>
                 <option>ACTIVE</option>
                 <option>INACTIVE</option>
-                <option>ARCHIVED</option>
               </select>
             </label>
           )}

@@ -90,7 +90,6 @@ type ScopedMaster = {
   id: string;
   companyId: string;
   status: string;
-  deletedAt?: Date | null;
 };
 
 type ScopedChildMaster = {
@@ -120,9 +119,7 @@ function masterAvailable(
   if (row.companyId === scope.tenantCompanyId) return true;
   if (!scope.systemCompanyId || row.companyId !== scope.systemCompanyId) return false;
   if (retainedIds.has(row.id)) return true;
-  return (
-    row.status === 'ACTIVE' && row.deletedAt == null && !scope.hiddenMasterIds.includes(row.id)
-  );
+  return row.status === 'ACTIVE' && !scope.hiddenMasterIds.includes(row.id);
 }
 
 /** Child rows must share the allowed parent's owner as well as its id. */
@@ -208,7 +205,7 @@ export async function validateMasterRefs(
     hotelIds.length
       ? prisma.hotel.findMany({
           where: { id: { in: hotelIds }, companyId: { in: hotelOwnerIds } },
-          select: { id: true, companyId: true, status: true, deletedAt: true },
+          select: { id: true, companyId: true, status: true },
         })
       : [],
     roomTypeIds.length
@@ -291,13 +288,13 @@ export async function validateMasterRefs(
       airlineIds.length
         ? prisma.airline.findMany({
             where: { id: { in: airlineIds }, companyId: { in: ownerCompanyIds(airlineScope) } },
-            select: { id: true, companyId: true, status: true, deletedAt: true },
+            select: { id: true, companyId: true, status: true },
           })
         : [],
       cruiseIds.length
         ? prisma.cruise.findMany({
             where: { id: { in: cruiseIds }, companyId: { in: ownerCompanyIds(cruiseScope) } },
-            select: { id: true, companyId: true, status: true, deletedAt: true },
+            select: { id: true, companyId: true, status: true },
           })
         : [],
       cruiseRoomTypeIds.length
@@ -312,7 +309,7 @@ export async function validateMasterRefs(
       vehicleIds.length
         ? prisma.vehicle.findMany({
             where: { id: { in: vehicleIds }, companyId: { in: ownerCompanyIds(vehicleScope) } },
-            select: { id: true, companyId: true, status: true, deletedAt: true },
+            select: { id: true, companyId: true, status: true },
           })
         : [],
       sightseeingIds.length
@@ -321,7 +318,7 @@ export async function validateMasterRefs(
               id: { in: sightseeingIds },
               companyId: { in: ownerCompanyIds(sightseeingScope) },
             },
-            select: { id: true, companyId: true, status: true, deletedAt: true },
+            select: { id: true, companyId: true, status: true },
           })
         : [],
       addOnServiceIds.length
@@ -330,7 +327,7 @@ export async function validateMasterRefs(
               id: { in: addOnServiceIds },
               companyId: { in: ownerCompanyIds(addOnScope) },
             },
-            select: { id: true, companyId: true, status: true, deletedAt: true },
+            select: { id: true, companyId: true, status: true },
           })
         : [],
     ]);

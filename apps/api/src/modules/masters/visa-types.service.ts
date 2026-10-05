@@ -65,10 +65,9 @@ function audit(
 }
 
 function present<T extends Record<string, unknown>>(row: T, scope: MasterScope) {
-  const { companyId, normalizedName, deletedAt, ...safe } = row;
+  const { companyId, normalizedName, ...safe } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   const sections = Array.isArray(safe.sections)
     ? safe.sections.map((section) => {
         const value = section as Record<string, unknown>;
@@ -105,7 +104,7 @@ async function getVisaType(
     where: {
       id: visaTypeId,
       ...buildVisibleWhere(scope),
-      ...(canManageRows ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? {} : { status: 'ACTIVE' }),
     },
     include: visaTypeInclude,
   });
@@ -116,7 +115,7 @@ async function getVisaType(
 /** The destination must be visible to this company and active. */
 async function validateDestination(scope: MasterScope, destinationId: string) {
   const destination = await prisma.destination.findFirst({
-    where: { id: destinationId, ...buildVisibleWhere(scope), status: 'ACTIVE', deletedAt: null },
+    where: { id: destinationId, ...buildVisibleWhere(scope), status: 'ACTIVE' },
     select: { id: true },
   });
   if (!destination) throw new ValidationError('Select an active destination.');
@@ -144,11 +143,7 @@ export const visaTypesService = {
 
     const where: Prisma.VisaTypeWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageRows
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.destinationId ? { destinationId: String(query.destinationId) } : {}),
       ...(search
         ? {
@@ -253,9 +248,7 @@ export const visaTypesService = {
             ...(input.name
               ? { name: input.name.trim(), normalizedName: normalizeCustomerName(input.name) }
               : {}),
-            ...(input.status
-              ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-              : {}),
+            ...(input.status ? { status: input.status } : {}),
             updatedById: auth.userId,
           },
         });
@@ -290,35 +283,37 @@ export const visaTypesService = {
         data: {
           status,
           updatedById: auth.userId,
-          deletedAt: status === 'ARCHIVED' ? new Date() : null,
         },
         include: visaTypeInclude,
       });
-      const action =
-        current.status === 'ARCHIVED' && status !== 'ARCHIVED'
-          ? 'VISA_TYPE_RESTORED'
-          : 'VISA_TYPE_STATUS_CHANGED';
       await tx.activityLog.create({
-        data: audit(auth, action, current.id, context, { previousStatus: current.status, status }),
+        data: audit(auth, 'VISA_TYPE_STATUS_CHANGED', current.id, context, { previousStatus: current.status, status }),
       });
       return updated;
     });
     return present(row as unknown as Record<string, unknown>, scope);
   },
 
-  async archive(auth: AuthContext, visaTypeId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, visaTypeId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.VISA_TYPE);
     const current = await getVisaType(auth, visaTypeId, scope, true);
     assertCanModifyMaster(current, scope);
-    const row = await prisma.$transaction(async (tx) => {
-      const updated = await tx.visaType.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date(), updatedById: auth.userId },
-        include: visaTypeInclude,
+    const metadata = { name: current.name };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Sections cascade automatically. No quotation/booking FK exists.
+        await tx.visaType.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'VISA_TYPE_DELETED', current.id, context, metadata),
+        });
       });
-      await tx.activityLog.create({ data: audit(auth, 'VISA_TYPE_ARCHIVED', current.id, context) });
-      return updated;
-    });
-    return present(row as unknown as Record<string, unknown>, scope);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this visa type because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 };

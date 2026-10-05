@@ -708,12 +708,11 @@ describe('Phase 8 customer quotations', () => {
     expect(JSON.stringify(publicView.body)).not.toMatch(/departure sightseeing activity/i);
   });
 
-  it('reproduces the production 404: archiving the linked lead makes the quotation invisible', async () => {
-    // Production case: Owner + quotation creator + lead creator/assignee, yet
-    // POST /versions returns 404 "Quotation not found." getQuotation joins the
-    // linked lead with deletedAt: null, so a soft-deleted (archived) lead makes
-    // the quotation unreachable — even for its Owner/creator. Lead archive has
-    // no guard against open quotations.
+  it('blocks lead deletion while a quotation is linked: 409 and the quotation stays visible', async () => {
+    // Hard-delete safety: a lead with quotations cannot be deleted. The
+    // quotation (with versions, weblinks, documents, email logs) is a
+    // dependent record with its own lifecycle and must never disappear
+    // silently with the lead.
     const { client, lead, template } = await setup();
     const quotation = (
       await client.post('/api/quotations', { queryId: lead.id, templateId: template.id })
@@ -721,17 +720,17 @@ describe('Phase 8 customer quotations', () => {
     const first = quotation.versions[0];
 
     expect((await client.get(`/api/quotations/${quotation.id}`)).status).toBe(200);
-    expect((await client.delete(`/api/queries/${lead.id}`)).status).toBe(200);
+    const blocked = await client.delete(`/api/queries/${lead.id}`);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error.message).toMatch(/quotation/i);
 
-    const get404 = await client.get(`/api/quotations/${quotation.id}`);
-    expect(get404.status).toBe(404);
-    expect(get404.body.error.message).toBe('Quotation not found.');
-
-    const post404 = await client.post(`/api/quotations/${quotation.id}/versions`, {
+    // Neither the lead nor the quotation was touched.
+    expect((await client.get(`/api/queries/${lead.id}`)).status).toBe(200);
+    expect((await client.get(`/api/quotations/${quotation.id}`)).status).toBe(200);
+    const post200 = await client.post(`/api/quotations/${quotation.id}/versions`, {
       sourceVersionId: first.id,
     });
-    expect(post404.status).toBe(404);
-    expect(post404.body.error.message).toBe('Quotation not found.');
+    expect(post200.status).toBe(201);
   });
 
   it('accepts hotels: [] and rejects empty hotel rows when hotels are supplied', async () => {
@@ -1789,7 +1788,7 @@ describe('Phase 14 quotation master references', () => {
     expect(hiddenFlight.body.error.message).toBe('The selected airline is not available.');
   });
 
-  it('retains linked System Global refs and snapshots after tenant hide, archive and revision', async () => {
+  it('retains linked System Global refs and snapshots after tenant hide and master delete', async () => {
     const sys = await systemAdmin();
     const global = await masters(sys, ' Retained');
     const galleries = await seedGlobalGalleries(global);
@@ -1807,23 +1806,30 @@ describe('Phase 14 quotation master references', () => {
     const first = quotation.versions[0];
 
     expect((await client.post(`/api/masters/VEHICLE/${global.vehicle.id}/hide`)).status).toBe(200);
+    // Hard delete nulls the quotation link; snapshots stay authoritative.
     expect((await sys.delete(`/api/masters/cruises/${global.cruise.id}`)).status).toBe(200);
 
     const edited = await client.patch(`/api/quotations/${quotation.id}/versions/${first.id}`, {
-      title: 'Retained after hide and archive',
+      title: 'Retained after hide and delete',
     });
     expect(edited.status, JSON.stringify(edited.body)).toBe(200);
     expect(edited.body.data.services).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ vehicleId: global.vehicle.id }),
-        expect.objectContaining({ cruiseId: global.cruise.id }),
+        expect.objectContaining({ cruiseId: null }),
       ]),
     );
 
     const updatedTemplate = await client.patch(
       `/api/quotation-templates/${template.body.data.id}`,
       {
-        services: linked.services,
+        // The deleted cruise can no longer be resubmitted; its snapshot
+        // columns on existing rows are untouched.
+        services: linked.services.map((row: Record<string, unknown>) =>
+          row.serviceType === 'CRUISE'
+            ? { ...row, cruiseId: null, cruiseRoomTypeId: null }
+            : row,
+        ),
       },
     );
     expect(updatedTemplate.status, JSON.stringify(updatedTemplate.body)).toBe(200);
@@ -1849,8 +1855,9 @@ describe('Phase 14 quotation master references', () => {
       (row: { vehicleId?: string | null }) => row.vehicleId === global.vehicle.id,
     );
     const revisedCruise = revision.body.data.services.find(
-      (row: { cruiseId?: string | null }) => row.cruiseId === global.cruise.id,
+      (row: { name?: string | null }) => row.name === 'Overnight cruise',
     );
+    expect(revisedCruise.cruiseId).toBeNull();
     expect(revisedVehicle.images.map((image: { id: string }) => image.id)).toEqual(
       galleries.vehicle.map((image) => image.id),
     );
@@ -2534,7 +2541,7 @@ describe('Phase 14 quotation master references', () => {
     expect(service.name).toBe('Typed service');
   });
 
-  it('keeps the snapshot readable after the linked master is archived or deleted', async () => {
+  it('keeps the snapshot readable after the linked master is hard-deleted', async () => {
     const client = await owner();
     const m = await masters(client);
     const lead = (await client.post('/api/queries', leadPayload())).body.data;
@@ -2542,18 +2549,8 @@ describe('Phase 14 quotation master references', () => {
       await client.post('/api/quotations', { queryId: lead.id, version: linkedVersion(m) })
     ).body.data;
 
-    // Archiving keeps the link intact — historical rows must not change.
-    await client.delete(`/api/masters/vehicles/${m.vehicle.id}`);
-    const afterArchive = await client.get(`/api/quotations/${quotation.id}`);
-    expect(afterArchive.status).toBe(200);
-    expect(
-      afterArchive.body.data.versions[0].services.find(
-        (row: { serviceType: string }) => row.serviceType === 'VEHICLE_TRANSFER',
-      ),
-    ).toMatchObject({ name: 'Airport transfer', vehicleId: m.vehicle.id });
-
     // A hard delete nulls the FK but leaves the snapshot text untouched.
-    await db.vehicle.delete({ where: { id: m.vehicle.id } });
+    expect((await client.delete(`/api/masters/vehicles/${m.vehicle.id}`)).status).toBe(200);
     const afterDelete = await client.get(`/api/quotations/${quotation.id}`);
     expect(afterDelete.status).toBe(200);
     expect(
@@ -2563,7 +2560,7 @@ describe('Phase 14 quotation master references', () => {
     ).toMatchObject({ name: 'Airport transfer', vehicleId: null });
   });
 
-  it('accepts an archived master when editing an existing quotation', async () => {
+  it('rejects a deleted master id when editing an existing quotation', async () => {
     const client = await owner();
     const m = await masters(client);
     const lead = (await client.post('/api/queries', leadPayload())).body.data;
@@ -2572,7 +2569,8 @@ describe('Phase 14 quotation master references', () => {
     ).body.data;
     await client.delete(`/api/masters/sightseeing/${m.sightseeing.id}`);
 
-    const updated = await client.patch(
+    // Resubmitting the deleted master id is rejected; the snapshot stays.
+    const rejected = await client.patch(
       `/api/quotations/${quotation.id}/versions/${quotation.versions[0].id}`,
       {
         services: [
@@ -2587,8 +2585,33 @@ describe('Phase 14 quotation master references', () => {
         ],
       },
     );
+    expect(rejected.status).toBe(400);
+    expect(
+      await db.quotationVersionService.findFirst({
+        where: {
+          quotationVersionId: quotation.versions[0].id,
+          serviceType: 'SIGHTSEEING',
+        },
+      }),
+    ).toMatchObject({ sightseeingId: null, name: 'Gobustan' });
+
+    // Editing without the deleted link succeeds.
+    const updated = await client.patch(
+      `/api/quotations/${quotation.id}/versions/${quotation.versions[0].id}`,
+      {
+        services: [
+          {
+            serviceType: 'SIGHTSEEING',
+            name: 'Gobustan',
+            quantity: 2,
+            sellingPrice: 3200,
+            sequence: 1,
+          },
+        ],
+      },
+    );
     expect(updated.status).toBe(200);
-    expect(updated.body.data.services[0].sightseeingId).toBe(m.sightseeing.id);
+    expect(updated.body.data.services[0].sightseeingId).toBeNull();
   });
 });
 

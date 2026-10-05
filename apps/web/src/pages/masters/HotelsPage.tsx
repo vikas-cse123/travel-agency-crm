@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Archive,
   BedDouble,
   Building2,
   ChartNoAxesColumn,
@@ -15,6 +14,7 @@ import {
   Plus,
   Search,
   Star,
+  Trash2,
   Upload,
   Utensils,
 } from 'lucide-react';
@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/Button';
 import { ExcelImportDialog } from '@/features/masters/excel-import/ExcelImportDialog';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useArchiveHotel,
+  useDeleteHotel,
   useDestination,
   useDestinations,
   useHideGlobalMaster,
@@ -57,12 +57,12 @@ export function HotelsPage() {
   const destinations = useDestinations(LARGE);
   const selectedDestination = params.get('destinationId') ?? '';
   const destinationDetail = useDestination(selectedDestination || undefined);
-  const archive = useArchiveHotel();
+  const remove = useDeleteHotel();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_HOTELS_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_HOTELS_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_HOTELS_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_HOTELS_DELETE);
   const [openDestinations, setOpenDestinations] = useState<Set<string>>(new Set());
 
   const cityOptions = useMemo(() => {
@@ -103,8 +103,9 @@ export function HotelsPage() {
       else next.add(id);
       return next;
     });
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this hotel?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete hotel ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -254,8 +255,8 @@ export function HotelsPage() {
                     <HotelTable
                       hotels={group.hotels}
                       canUpdate={canUpdate}
-                      canArchive={canArchive}
-                      onArchive={archiveRow}
+                      canDelete={canDelete}
+                      onDelete={deleteRow}
                       onHide={hideRow}
                     />
                   )}
@@ -328,14 +329,14 @@ function HotelStatisticsPanel({
 function HotelTable({
   hotels,
   canUpdate,
-  canArchive,
-  onArchive,
+  canDelete,
+  onDelete,
   onHide,
 }: {
   hotels: HotelSummary[];
   canUpdate: boolean;
-  canArchive: boolean;
-  onArchive: (id: string) => void;
+  canDelete: boolean;
+  onDelete: (id: string, name: string) => void;
   onHide: (id: string) => void;
 }) {
   return (
@@ -435,13 +436,14 @@ function HotelTable({
                       <EyeOff className="h-4 w-4" />
                     </button>
                   )}
-                  {canArchive && hotel.status !== 'ARCHIVED' && !hotel.isGlobal && (
+                  {canDelete && !hotel.isGlobal && (
                     <button
-                      aria-label={`Archive ${hotel.name}`}
-                      onClick={() => onArchive(hotel.id)}
+                      aria-label={`Delete ${hotel.name}`}
+                      title="Permanently delete"
+                      onClick={() => onDelete(hotel.id, hotel.name)}
                       className="rounded border border-red-600 p-2 text-red-600"
                     >
-                      <Archive className="h-4 w-4" />
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   )}
                 </div>

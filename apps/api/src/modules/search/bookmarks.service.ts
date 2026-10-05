@@ -325,11 +325,11 @@ async function attachRoomToHotelMaster(
       const normalized = normalizeCustomerName(name);
       let hotelRow = providerId
         ? await tx.hotel.findFirst({
-            where: { companyId: auth.companyId, externalCode: providerId, deletedAt: null },
+            where: { companyId: auth.companyId, externalCode: providerId },
           })
         : null;
       hotelRow ??= await tx.hotel.findFirst({
-        where: { companyId: auth.companyId, cityId: city.id, normalizedName: normalized, deletedAt: null },
+        where: { companyId: auth.companyId, cityId: city.id, normalizedName: normalized },
       });
       // Safety net: if the provider id and the city-scoped lookup both miss
       // (e.g. the search provider spells the city differently between calls),
@@ -337,7 +337,7 @@ async function attachRoomToHotelMaster(
       // splits into duplicates.
       hotelRow ??= normalized
         ? await tx.hotel.findFirst({
-            where: { companyId: auth.companyId, normalizedName: normalized, deletedAt: null },
+            where: { companyId: auth.companyId, normalizedName: normalized },
           })
         : null;
 

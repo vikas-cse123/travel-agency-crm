@@ -19,11 +19,11 @@ import { ValidationError } from '../../utils/errors.js';
  *  3. TYPE COMPATIBILITY — each service master is valid only for its matching
  *     ServiceType.
  *
- * Archived masters are accepted: a booking may legitimately reference something
- * archived after it was written, and conversion must never be blocked because a
- * master was archived. Soft-deleted masters are rejected for fresh writes; the
- * selectors only ever offer active masters, so an archived id in practice only
- * arrives from a row that already had it.
+ * Inactive masters are accepted: a booking may legitimately reference something
+ * deactivated after it was written, and conversion must never be blocked because
+ * a master was deactivated. Missing (hard-deleted) masters are rejected for
+ * fresh writes; the selectors only ever offer active masters, so a deleted id
+ * in practice only arrives from stale input.
  *
  * Lookups are batched per master type — one query each, regardless of how many
  * services the booking contains.

@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Archive, Bus, Eye, EyeOff, Pencil, Plus, RotateCcw, Search, Upload } from 'lucide-react';
+import { Bus, Eye, EyeOff, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { ExcelImportDialog } from '@/features/masters/excel-import/ExcelImportDialog';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useArchiveVehicle,
+  useDeleteVehicle,
   masterImageFingerprint,
   useHideGlobalMaster,
-  useRestoreVehicle,
   useVehicles,
   useVehicleTypes,
   vehicleImageUrl,
@@ -31,14 +30,13 @@ export function VehiclesPage() {
   const vehicles = useVehicles(params);
   // Free-text field, so the dropdown is built from values actually in use.
   const types = useVehicleTypes();
-  const archive = useArchiveVehicle();
-  const restore = useRestoreVehicle();
+  const remove = useDeleteVehicle();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const canCreate = hasPermission(PERMISSIONS.MASTER_VEHICLES_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_VEHICLES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_VEHICLES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_VEHICLES_DELETE);
   const imageIdsKey =
     vehicles.data?.data
       .filter((vehicle) => vehicle.hasImage)
@@ -111,8 +109,9 @@ export function VehiclesPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this vehicle?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete vehicle ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -177,7 +176,6 @@ export function VehiclesPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -280,22 +278,14 @@ export function VehiclesPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive && vehicle.status !== 'ARCHIVED' && !vehicle.isGlobal && (
+                          {canDelete && !vehicle.isGlobal && (
                             <button
-                              aria-label={`Archive ${vehicle.name}`}
-                              onClick={() => archiveRow(vehicle.id)}
+                              aria-label={`Delete ${vehicle.name}`}
+                              title="Permanently delete"
+                              onClick={() => deleteRow(vehicle.id, vehicle.name)}
                               className="rounded bg-red-600 p-2 text-white"
                             >
-                              <Archive className="h-4 w-4" />
-                            </button>
-                          )}
-                          {canUpdate && vehicle.status === 'ARCHIVED' && (
-                            <button
-                              aria-label={`Restore ${vehicle.name}`}
-                              onClick={() => restore.mutate(vehicle.id)}
-                              className="rounded bg-emerald-600 p-2 text-white"
-                            >
-                              <RotateCcw className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           )}
                         </div>

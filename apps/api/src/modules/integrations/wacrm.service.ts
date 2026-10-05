@@ -62,7 +62,7 @@ const LINK_SELECT = { id: true, queryId: true, status: true } as const;
  * global list another tenant also sees in the native UI. No separate
  * destination source: stable master ids become `value`, names become
  * `label`, and each linked city carries its parent destination's
- * `value` as `destinationValue`. Only ACTIVE, non-deleted rows are
+ * `value` as `destinationValue`. Only ACTIVE rows are
  * exposed, and linked cities must belong to the same scope company
  * (a cross-company city can never leak into another workspace's feed).
  */
@@ -76,7 +76,7 @@ interface MasterDestinationRow {
   name: string;
   cities?: Array<{
     cityId: string;
-    city?: { id: string; name: string; companyId: string; status?: string; deletedAt?: Date | null } | null;
+    city?: { id: string; name: string; companyId: string; status?: string } | null;
   }>;
 }
 
@@ -89,7 +89,6 @@ async function itineraryDestinationFeed(companyId: string): Promise<ItineraryDes
     where: {
       companyId,
       status: 'ACTIVE',
-      deletedAt: null,
     },
     orderBy: { name: 'asc' },
     include: { cities: { orderBy: { sequence: 'asc' }, include: { city: true } } },
@@ -108,7 +107,6 @@ async function itineraryDestinationFeed(companyId: string): Promise<ItineraryDes
       // cities and any city owned by another account are excluded.
       if (city.companyId !== companyId) continue;
       if (city.status && city.status !== 'ACTIVE') continue;
-      if (city.deletedAt !== null) continue;
       const key = `${row.id}:${city.id}`;
       if (seenCityLinks.has(key)) continue;
       seenCityLinks.add(key);

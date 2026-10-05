@@ -76,7 +76,7 @@ async function followUpVisibility(auth: AuthContext): Promise<Prisma.QueryFollow
   return {
     OR: [
       { assignedToId: auth.userId },
-      { query: { is: { companyId: auth.companyId, deletedAt: null, ...queryVis } } },
+      { query: { is: { companyId: auth.companyId, ...queryVis } } },
     ],
   };
 }
@@ -260,7 +260,7 @@ export const dashboardService = {
       companyId: auth.companyId,
       deletedAt: null,
       query: {
-        is: { companyId: auth.companyId, deletedAt: null, ...(await queryVisibility(auth)) },
+        is: { companyId: auth.companyId, ...(await queryVisibility(auth)) },
       },
       ...dateFilter,
     };
@@ -444,7 +444,7 @@ export const dashboardService = {
       companyId: auth.companyId,
       deletedAt: null,
       status: 'PENDING',
-      query: { is: { deletedAt: null } },
+      query: { isNot: null },
       ...(await followUpVisibility(auth)),
     };
     const totalCount = await prisma.queryFollowUp.count({ where: base });

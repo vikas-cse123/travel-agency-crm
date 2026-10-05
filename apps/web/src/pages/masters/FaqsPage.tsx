@@ -3,17 +3,17 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
-import { useArchiveFaq, useFaqs } from '@/features/masters/masters.api';
+import { useDeleteFaq, useFaqs } from '@/features/masters/masters.api';
 import { formatMasterDate, MasterHeader, Pagination, StatusBadge } from './MasterUi';
 
 export function FaqsPage() {
   const [params, setParams] = useSearchParams();
   const faqs = useFaqs(params);
-  const archive = useArchiveFaq();
+  const remove = useDeleteFaq();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_FAQS_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_FAQS_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_FAQS_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_FAQS_DELETE);
 
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -23,8 +23,9 @@ export function FaqsPage() {
     setParams(next);
   };
 
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this FAQ?')) archive.mutate(id);
+  const deleteRow = (id: string, question: string) => {
+    if (window.confirm(`Permanently delete FAQ ${question}? This action cannot be undone.`))
+      remove.mutate(id);
   };
 
   const data = faqs.data;
@@ -71,7 +72,6 @@ export function FaqsPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -144,7 +144,7 @@ export function FaqsPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </Link>
-                          {canUpdate && faq.status !== 'ARCHIVED' && (
+                          {canUpdate && (
                             <Link
                               aria-label={`Edit ${faq.question}`}
                               to={`/masters/faqs/${faq.id}/edit`}
@@ -153,10 +153,11 @@ export function FaqsPage() {
                               <Pencil className="h-4 w-4" />
                             </Link>
                           )}
-                          {canArchive && faq.status !== 'ARCHIVED' && (
+                          {canDelete && (
                             <button
-                              aria-label={`Archive ${faq.question}`}
-                              onClick={() => archiveRow(faq.id)}
+                              aria-label={`Delete ${faq.question}`}
+                              title="Permanently delete"
+                              onClick={() => deleteRow(faq.id, faq.question)}
                               className="rounded bg-red-600 p-2 text-white"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -184,14 +185,19 @@ export function FaqsPage() {
                     <Link to={`/masters/faqs/${faq.id}`}>
                       <Button variant="secondary">View</Button>
                     </Link>
-                    {canUpdate && faq.status !== 'ARCHIVED' && (
+                    {canUpdate && (
                       <Link to={`/masters/faqs/${faq.id}/edit`}>
                         <Button variant="secondary">Edit</Button>
                       </Link>
                     )}
-                    {canArchive && faq.status !== 'ARCHIVED' && (
-                      <Button variant="danger" onClick={() => archiveRow(faq.id)}>
-                        Archive
+                    {canDelete && (
+                      <Button
+                        variant="danger"
+                        aria-label={`Delete ${faq.question}`}
+                        title="Permanently delete"
+                        onClick={() => deleteRow(faq.id, faq.question)}
+                      >
+                        Delete
                       </Button>
                     )}
                   </div>

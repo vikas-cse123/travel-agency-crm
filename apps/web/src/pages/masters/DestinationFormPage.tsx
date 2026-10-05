@@ -47,7 +47,7 @@ const schema = z.object({
   cancellationPolicies: z.string().max(50_000),
   bookingTerms: z.string().max(50_000),
   childPolicy: z.string().max(50_000),
-  status: z.enum(['ACTIVE', 'INACTIVE', 'ARCHIVED']),
+  status: z.enum(['ACTIVE', 'INACTIVE']),
 });
 type Values = z.infer<typeof schema>;
 const initial: Values = {
@@ -403,7 +403,6 @@ export function DestinationFormPage() {
                   <select className={fieldClass} {...form.register('status')}>
                     <option>ACTIVE</option>
                     <option>INACTIVE</option>
-                    <option>ARCHIVED</option>
                   </select>
                 </label>
               )}

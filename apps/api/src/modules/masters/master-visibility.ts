@@ -151,15 +151,12 @@ export function buildVisibleWhere(scope: MasterScope) {
     });
   }
 
-  // A tenant must never see an archived global record — System Admin archiving
-  // removes it from every tenant's future lists. Tenant-owned records keep
-  // their existing per-status visibility.
+  // A tenant must never see a non-active global record — the System Admin
+  // deactivating it removes it from every tenant's future lists.
+  // Tenant-owned records keep their existing per-status visibility.
   if (scope.systemCompanyId && !scope.isSystemAdmin) {
     conditions.push({
-      AND: [
-        { companyId: scope.systemCompanyId },
-        { OR: [{ status: { not: 'ACTIVE' } }, { deletedAt: { not: null } }] },
-      ],
+      AND: [{ companyId: scope.systemCompanyId }, { status: { not: 'ACTIVE' } }],
     });
   }
 

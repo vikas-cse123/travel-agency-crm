@@ -89,12 +89,17 @@ import {
   useSightseeingList,
   useVehicles,
   vehicleImageUrl,
+  type AddOnServicePricingEntry,
   type MasterImageMeta,
   type Airline,
   type Destination,
   type Page,
   type Sightseeing,
 } from '@/features/masters/masters.api';
+import {
+  formatAddonPricingOption,
+  normalizeAddonPricingSnapshot,
+} from '@/features/quotations/addonPricing';
 import { useUsers } from '@/features/users/users.api';
 import { useFaqs } from '@/features/masters/masters.api';
 import {
@@ -1791,6 +1796,109 @@ export function buildVehiclePrefillRows(
   return rows;
 }
 
+/** Add-on master shape needed for destination-default prefill. */
+export interface PrefillAddOnMaster {
+  id: string;
+  name: string;
+  status: string;
+  description: string | null;
+  price?: number | null;
+  currency?: string | null;
+  pricingBasis?: string | null;
+  /** Repeatable pricing options (legacy single price arrives as one entry). */
+  pricing?: AddOnServicePricingEntry[];
+  images: MasterImageMeta[];
+  destinations?: Array<{ id: string; name: string; isDefault: boolean }>;
+}
+
+/**
+ * Every active default add-on service for one destination (stable
+ * destination-ID match), sorted by name. Default status is per destination:
+ * the same service may be default for one destination and not for another.
+ */
+export function matchDefaultAddOnsForDestination(
+  destinationId: string,
+  masters: PrefillAddOnMaster[],
+): PrefillAddOnMaster[] {
+  if (!destinationId) return [];
+  return masters
+    .filter(
+      (master) =>
+        master.status === 'ACTIVE' &&
+        (master.destinations ?? []).some(
+          (destination) => destination.id === destinationId && destination.isDefault,
+        ),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Add-on default prefill applies to brand-new quotations; saved rows are never rewritten. */
+export function shouldAutoPrefillAddons(savedAddonCount: number): boolean {
+  return savedAddonCount === 0;
+}
+
+/** One independent prefilled add-on entry (same mapping as manual toggle). */
+export function mapMasterToAddonRow(
+  master: PrefillAddOnMaster,
+  sequence: number,
+): QuotationVersionInput['services'][number] {
+  const snapshot = masterGallerySnapshot(master.images, master.name);
+  // All options travel in the quotation-owned snapshot; the chargeable unit
+  // price defaults to the first priced option (legacy single price otherwise).
+  const pricingSnapshot = normalizeAddonPricingSnapshot(master);
+  const chargeable =
+    pricingSnapshot.find((entry) => entry.price != null)?.price ??
+    (master.price != null ? Number(master.price) : null);
+  const firstLabel = (pricingSnapshot[0]?.label ?? '').trim();
+
+  return {
+    serviceType: 'OTHER_ADD_ON',
+    ...CLEARED_SERVICE_MASTERS,
+    addOnServiceId: master.id,
+    name: master.name,
+    description: master.description ?? null,
+    dayNumber: null,
+    city: null,
+    quantity: 1,
+    pricingBasis: 'FIXED' as never,
+    internalCost: 0,
+    sellingPrice: chargeable != null ? Number(chargeable) : 0,
+    pricingBasisLabel: firstLabel !== '' ? firstLabel : (master.pricingBasis ?? null),
+    pricingSnapshot,
+    taxCategory: null,
+    notes: null,
+    sequence,
+    images: snapshot,
+    imageSnapshotPresent: masterGalleryPresence(master),
+    pdfImageUrl: snapshot[0] ? quotationSnapshotImageIdentity(snapshot[0]) : null,
+  } as QuotationVersionInput['services'][number];
+}
+
+/**
+ * Build prefill rows for destinations in order: every default add-on not
+ * already present (stable add-on-ID dedupe across destinations, so a default
+ * for several selected destinations appears once). Existing rows are never
+ * touched.
+ */
+export function buildAddonPrefillRows(
+  destinationIds: string[],
+  masters: PrefillAddOnMaster[],
+  startSequence: number,
+  existingAddonIds: Set<string>,
+): QuotationVersionInput['services'][number][] {
+  const rows: QuotationVersionInput['services'][number][] = [];
+  const seen = new Set(existingAddonIds);
+  let sequence = startSequence;
+  for (const destinationId of destinationIds) {
+    for (const master of matchDefaultAddOnsForDestination(destinationId, masters)) {
+      if (seen.has(master.id)) continue;
+      seen.add(master.id);
+      rows.push(mapMasterToAddonRow(master, sequence++));
+    }
+  }
+  return rows;
+}
+
 /** A clean, empty Cruise service row; the section title defaults to "Cruise Details". */
 const newCruiseServiceRow = (sequence: number) => ({
   serviceType: 'CRUISE' as const,
@@ -2176,6 +2284,13 @@ export function QuotationBuilderPage() {
     userToggledHotel: false,
     enabledByAuto: false,
   });
+  // Add-on defaults the user explicitly removed in the table. The automatic
+  // population below must not resurrect them while the same version is open.
+  // Reset whenever a different version loads (checked inside the effect).
+  const dismissedAddonsRef = useRef<{ versionId: string | null; ids: Set<string> }>({
+    versionId: null,
+    ids: new Set(),
+  });
   const hotelPreviewImportsRef = useRef<Set<string>>(new Set());
   // Automatic vehicle prefill: for NEW quotations, each selected destination's
   // Manual cruise cabin-rate overrides per service row index (sellingPrice). Set when user types, cleared on room/cruise change.
@@ -2477,6 +2592,20 @@ export function QuotationBuilderPage() {
       queryFn: ({ signal }: { signal: AbortSignal }) =>
         apiClient.get<Page<any>>(
           `/masters/vehicles?status=ACTIVE&pageSize=100&destinationId=${encodeURIComponent(destinationId)}`,
+          signal,
+        ),
+      enabled: !!destinationId,
+    })),
+  });
+  // Per-destination default add-on services for auto-populate: for each
+  // quotation destination ID, fetch ACTIVE add-ons marked default for it.
+  // Reuses the same effective destination IDs as the vehicle prefill.
+  const addonsByDestination = useQueries({
+    queries: [...vehicleEffectiveDestinationIds].map((destinationId) => ({
+      queryKey: ['masters', 'add-on-services', 'byDestination', destinationId, 'defaults'],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        apiClient.get<Page<PrefillAddOnMaster>>(
+          `/masters/add-on-services?status=ACTIVE&pageSize=100&destinationId=${encodeURIComponent(destinationId)}&isDefault=true`,
           signal,
         ),
       enabled: !!destinationId,
@@ -3174,6 +3303,7 @@ export function QuotationBuilderPage() {
 
   const watchedHotels = useWatch({ control: form.control, name: 'hotels' });
   const watchedServices = useWatch({ control: form.control, name: 'services' });
+  const watchedAddOnInclude = useWatch({ control: form.control, name: 'addOnDetails.include' });
   const markupMode = useWatch({ control: form.control, name: 'markupMode' });
   const markupValue = useWatch({ control: form.control, name: 'markupValue' }) ?? 0;
   const taxRate = useWatch({ control: form.control, name: 'taxRate' }) ?? 0;
@@ -3516,6 +3646,57 @@ export function QuotationBuilderPage() {
     if (missing.length) placeMissingVehicles(missing);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, initializedFormVersionId, destinationMasters.data, vehicleEffectiveDestinationIds, excluded.vehicle, form, vehiclesByDestination]);
+
+  // Automatic default add-on population for NEW quotations: for every
+  // effective destination, append every default add-on master not already
+  // present. Saved quotations (any linked add-on row) are authoritative and
+  // never rewritten; explicitly removed defaults are never resurrected while
+  // the same version is open; unchecking the Add-On Services include stops it.
+  useEffect(() => {
+    if (!version) return;
+    if (dismissedAddonsRef.current.versionId !== version.id) {
+      dismissedAddonsRef.current = { versionId: version.id, ids: new Set() };
+    }
+    const savedAddonCount = (version.services ?? []).filter(
+      (service) => (service as { addOnServiceId?: string | null }).addOnServiceId,
+    ).length;
+    if (!shouldAutoPrefillAddons(savedAddonCount)) return;
+    if (initializedFormVersionId !== version.id) return;
+    if (watchedAddOnInclude === false) return;
+    const effectiveIds = [...vehicleEffectiveDestinationIds];
+    if (!effectiveIds.length) return;
+    // Wait until all per-destination default queries have loaded.
+    const isAnyPending = effectiveIds.some((_, idx) => {
+      const q = addonsByDestination[idx];
+      return !q || q.isPending || !q.data;
+    });
+    if (isAnyPending) return;
+    const allMasters: PrefillAddOnMaster[] = [];
+    for (let idx = 0; idx < effectiveIds.length; idx++) {
+      const q = addonsByDestination[idx];
+      const data = (q?.data as unknown as Page<PrefillAddOnMaster> | undefined)?.data ?? [];
+      for (const master of data) allMasters.push(master as unknown as PrefillAddOnMaster);
+    }
+    const present = new Set(
+      (
+        ((form.getValues('services') ?? []) as Array<{
+          addOnServiceId?: string | null;
+        }>) ?? []
+      )
+        .filter((row) => row.addOnServiceId)
+        .map((row) => row.addOnServiceId as string),
+    );
+    for (const row of buildAddonPrefillRows(
+      effectiveIds,
+      allMasters,
+      services.fields.length + 1,
+      present,
+    )) {
+      if (dismissedAddonsRef.current.ids.has(row.addOnServiceId as string)) continue;
+      services.append(row as never);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, initializedFormVersionId, destinationMasters.data, vehicleEffectiveDestinationIds, watchedAddOnInclude, form, addonsByDestination]);
 
   const createHotelRow = (
     sequence: number,
@@ -5884,26 +6065,12 @@ export function QuotationBuilderPage() {
       if (checked) {
         const newIndex = services.fields.length;
         const snapshot = masterGallerySnapshot(master.images, master.name);
-        services.append({
-          serviceType: 'OTHER_ADD_ON',
-          ...CLEARED_SERVICE_MASTERS,
-          addOnServiceId: master.id,
-          name: master.name,
-          description: master.description ?? null,
-          dayNumber: null,
-          city: null,
-          quantity: 1,
-          pricingBasis: 'FIXED' as never,
-          internalCost: 0,
-          sellingPrice: master.price != null ? Number(master.price) : 0,
-          pricingBasisLabel: master.pricingBasis ?? null,
-          taxCategory: null,
-          notes: null,
-          sequence: services.fields.length + 1,
-          images: snapshot,
-          imageSnapshotPresent: masterGalleryPresence(master),
-          pdfImageUrl: snapshot[0] ? quotationSnapshotImageIdentity(snapshot[0]) : null,
-        });
+        services.append(
+          mapMasterToAddonRow(
+            master as unknown as PrefillAddOnMaster,
+            services.fields.length + 1,
+          ) as never,
+        );
         if (master?.images?.length)
           void importMasterGalleryPreviews(master.id, snapshot, addOnServiceImageUrl).then(
             (images) => {
@@ -5920,7 +6087,12 @@ export function QuotationBuilderPage() {
           );
       } else {
         const index = includedIndex(master.id);
-        if (index >= 0) services.remove(index);
+        if (index >= 0) {
+          // Explicit user removal: never re-add this default automatically
+          // for the loaded version (until the version itself changes).
+          dismissedAddonsRef.current.ids.add(master.id);
+          services.remove(index);
+        }
       }
     };
     const isAddonSectionWise = (form.watch('pricingMode') as string) === 'SECTION_WISE';
@@ -6005,6 +6177,27 @@ export function QuotationBuilderPage() {
                                 onRemove={(imageIndex) => removeServiceImage(index, imageIndex)}
                                 onSelectPdf={(identity) => setServicePdfImage(index, identity)}
                               />
+                              {(() => {
+                                const options = normalizeAddonPricingSnapshot({
+                                  id: master.id,
+                                  pricing:
+                                    watchedServices?.[index]?.pricingSnapshot ??
+                                    master.pricing,
+                                  price: master.price,
+                                  currency: master.currency,
+                                  pricingBasis: master.pricingBasis,
+                                });
+                                if (options.length === 0) return null;
+                                return (
+                                  <p className="mt-2 text-xs text-slate-500">
+                                    Pricing options:{' '}
+                                    {options
+                                      .map((option) => formatAddonPricingOption(option))
+                                      .join(' · ')}
+                                  </p>
+                                );
+                              })()}
+
                             </>
                           ) : (
                             <p className="text-slate-500">

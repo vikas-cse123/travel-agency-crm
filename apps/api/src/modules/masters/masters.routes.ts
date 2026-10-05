@@ -270,7 +270,7 @@ router.delete(
   '/cities/:cityId',
   requirePermission(PERMISSIONS.MASTER_CITIES_DELETE),
   validateRequest({ params: cityId }),
-  asyncHandler(cities.archive),
+  asyncHandler(cities.remove),
 );
 
 router.get(
@@ -313,7 +313,7 @@ router.delete(
   '/destinations/:destinationId',
   requirePermission(PERMISSIONS.MASTER_DESTINATIONS_DELETE),
   validateRequest({ params: destinationId }),
-  asyncHandler(destinations.archive),
+  asyncHandler(destinations.remove),
 );
 router.get(
   '/destinations/:destinationId/cities',
@@ -414,7 +414,7 @@ router.delete(
   '/hotels/:hotelId',
   requirePermission(PERMISSIONS.MASTER_HOTELS_DELETE),
   validateRequest({ params: hotelId }),
-  asyncHandler(hotels.archive),
+  asyncHandler(hotels.remove),
 );
 router.post(
   '/hotels/:hotelId/room-types',
@@ -623,7 +623,7 @@ router.delete(
   '/airlines/:airlineId',
   requirePermission(PERMISSIONS.MASTER_AIRLINES_DELETE),
   validateRequest({ params: airlineId }),
-  asyncHandler(airlines.archive),
+  asyncHandler(airlines.remove),
 );
 router.post(
   '/airlines/:airlineId/logo/upload',
@@ -705,7 +705,7 @@ router.delete(
   '/cruises/:cruiseId',
   requirePermission(PERMISSIONS.MASTER_CRUISES_DELETE),
   validateRequest({ params: cruiseId }),
-  asyncHandler(cruises.archive),
+  asyncHandler(cruises.remove),
 );
 router.post(
   '/cruises/:cruiseId/image/upload',
@@ -794,7 +794,7 @@ router.delete(
   '/vehicles/:vehicleId',
   requirePermission(PERMISSIONS.MASTER_VEHICLES_DELETE),
   validateRequest({ params: vehicleId }),
-  asyncHandler(vehicles.archive),
+  asyncHandler(vehicles.remove),
 );
 router.post(
   '/vehicles/:vehicleId/image/upload',
@@ -933,7 +933,7 @@ router.delete(
   '/sightseeing/:sightseeingId',
   requirePermission(PERMISSIONS.MASTER_SIGHTSEEING_DELETE),
   validateRequest({ params: sightseeingId }),
-  asyncHandler(sightseeing.archive),
+  asyncHandler(sightseeing.remove),
 );
 router.post(
   '/sightseeing/:sightseeingId/image/upload',
@@ -973,6 +973,8 @@ router.patch(
 const addOnServiceList = z.object({
   ...commonList,
   sortBy: z.enum(['name', 'price', 'createdAt', 'updatedAt']).optional(),
+  destinationId: z.string().uuid().optional(),
+  isDefault: z.coerce.boolean().optional(),
 });
 
 router.get(
@@ -1015,7 +1017,7 @@ router.delete(
   '/add-on-services/:addOnServiceId',
   requirePermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_DELETE),
   validateRequest({ params: addOnServiceId }),
-  asyncHandler(addOnServices.archive),
+  asyncHandler(addOnServices.remove),
 );
 router.post(
   '/add-on-services/:addOnServiceId/image/upload',
@@ -1094,7 +1096,7 @@ router.delete(
   '/visa-types/:visaTypeId',
   requirePermission(PERMISSIONS.MASTER_VISA_TYPES_DELETE),
   validateRequest({ params: visaTypeId }),
-  asyncHandler(visaTypes.archive),
+  asyncHandler(visaTypes.remove),
 );
 
 // ---------------------------------------------------------------------------
@@ -1142,7 +1144,7 @@ router.delete(
   '/testimonials/:testimonialId',
   requirePermission(PERMISSIONS.MASTER_TESTIMONIALS_DELETE),
   validateRequest({ params: testimonialId }),
-  asyncHandler(testimonials.archive),
+  asyncHandler(testimonials.remove),
 );
 router.post(
   '/testimonials/:testimonialId/image/upload',
@@ -1222,7 +1224,7 @@ router.delete(
   '/faqs/:faqId',
   requirePermission(PERMISSIONS.MASTER_FAQS_DELETE),
   validateRequest({ params: faqId }),
-  asyncHandler(faqs.archive),
+  asyncHandler(faqs.remove),
 );
 
 export { router as mastersRoutes };

@@ -193,7 +193,6 @@ async function resolveDestination(auth: AuthContext, name: string) {
       ...buildVisibleWhere(scope),
       normalizedName: normalizeCustomerName(name),
       status: 'ACTIVE',
-      deletedAt: null,
     },
     select: { id: true, name: true },
   });
@@ -212,7 +211,6 @@ async function resolveCityInDestination(
       ...buildVisibleWhere(scope),
       normalizedName: normalizeCustomerName(name),
       status: 'ACTIVE',
-      deletedAt: null,
       destinationLinks: { some: { destinationId } },
     },
     select: { id: true, name: true },

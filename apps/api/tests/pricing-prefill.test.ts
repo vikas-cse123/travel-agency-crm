@@ -388,3 +388,54 @@ describe('Sightseeing pricing options → activity snapshot', () => {
     ]);
   });
 });
+
+describe('Add-on pricing snapshot', () => {
+  const snapshotEntries = [
+    { id: '11111111-1111-4111-8111-111111111111', label: 'Adult', price: 6000, currency: 'INR' },
+    { id: '22222222-2222-4222-8222-222222222222', label: 'Child', price: 4000, currency: 'INR' },
+    { id: '33333333-3333-4333-8333-333333333333', label: 'Per Group', price: 20000, currency: 'USD' },
+  ];
+
+  it('persists every pricing option on the quotation and ignores later master edits', async () => {
+    const client = await owner();
+    const masters = await setupMasters(client, 1000);
+    const quotation = await createQuotation(client);
+
+    const saved = await client.patch(`/api/quotations/${quotation.id}/versions/${quotation.versionId}`, {
+      title: 'Add-on snapshot',
+      services: [
+        {
+          serviceType: 'OTHER_ADD_ON',
+          addOnServiceId: masters.addOn.id,
+          name: 'Visa Assistance',
+          quantity: 1,
+          sellingPrice: 6000,
+          pricingBasisLabel: 'Adult',
+          pricingSnapshot: snapshotEntries,
+          sequence: 1,
+        },
+      ],
+    });
+    expect(saved.status).toBe(200);
+
+    const reloaded = await client.get(`/api/quotations/${quotation.id}`);
+    const services = reloaded.body.data.versions[0].services;
+    expect(services).toHaveLength(1);
+    expect(services[0].pricingSnapshot).toHaveLength(3);
+    expect(services[0].pricingSnapshot.map((entry: { label: string }) => entry.label)).toEqual([
+      'Adult',
+      'Child',
+      'Per Group',
+    ]);
+    expect(Number(services[0].unitSellingPrice)).toBe(6000);
+    expect(services[0]).toMatchObject({ pricingBasisLabel: 'Adult' });
+
+    // Later master edits must not rewrite the saved snapshot.
+    const repriced = await client.patch(`/api/masters/add-on-services/${masters.addOn.id}`, {
+      pricing: [{ label: 'Only', price: 1, currency: 'INR' }],
+    });
+    expect(repriced.status).toBe(200);
+    const reloadedAgain = await client.get(`/api/quotations/${quotation.id}`);
+    expect(reloadedAgain.body.data.versions[0].services[0].pricingSnapshot).toHaveLength(3);
+  });
+});

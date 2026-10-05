@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Archive, Eye, EyeOff, Pencil, Plus, RotateCcw, Search, Ship, Upload } from 'lucide-react';
+import { Eye, EyeOff, Pencil, Plus, Search, Ship, Trash2, Upload } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
@@ -8,10 +8,9 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import {
   cruiseImageUrl,
   masterImageFingerprint,
-  useArchiveCruise,
+  useDeleteCruise,
   useCruises,
   useHideGlobalMaster,
-  useRestoreCruise,
 } from '@/features/masters/masters.api';
 import {
   formatMasterDate,
@@ -37,14 +36,13 @@ export function CruisesPage() {
   const [params, setParams] = useSearchParams();
   const [importOpen, setImportOpen] = useState(false);
   const cruises = useCruises(params);
-  const archive = useArchiveCruise();
-  const restore = useRestoreCruise();
+  const remove = useDeleteCruise();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const canCreate = hasPermission(PERMISSIONS.MASTER_CRUISES_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_CRUISES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_CRUISES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_CRUISES_DELETE);
   const canViewCosting = hasPermission(PERMISSIONS.MASTER_CRUISES_VIEW_COSTING);
   const imageIdsKey =
     cruises.data?.data
@@ -118,8 +116,9 @@ export function CruisesPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this cruise?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete cruise ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -182,7 +181,6 @@ export function CruisesPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -282,22 +280,14 @@ export function CruisesPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive && cruise.status !== 'ARCHIVED' && !cruise.isGlobal && (
+                          {canDelete && !cruise.isGlobal && (
                             <button
-                              aria-label={`Archive ${cruise.name}`}
-                              onClick={() => archiveRow(cruise.id)}
+                              aria-label={`Delete ${cruise.name}`}
+                              title="Permanently delete"
+                              onClick={() => deleteRow(cruise.id, cruise.name)}
                               className="rounded bg-red-600 p-2 text-white"
                             >
-                              <Archive className="h-4 w-4" />
-                            </button>
-                          )}
-                          {canUpdate && cruise.status === 'ARCHIVED' && (
-                            <button
-                              aria-label={`Restore ${cruise.name}`}
-                              onClick={() => restore.mutate(cruise.id)}
-                              className="rounded bg-emerald-600 p-2 text-white"
-                            >
-                              <RotateCcw className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           )}
                         </div>

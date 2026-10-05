@@ -2795,6 +2795,64 @@ describe('PDF rendering with long content', () => {
     expect(visible).not.toContain('other add on');
   });
 
+  it('renders every add-on pricing option as compact boxes (classic + stylish)', async () => {
+    const services = [
+      {
+        serviceType: 'OTHER_ADD_ON' as const,
+        addOnServiceId: 'master-visa',
+        name: 'Singapore Visa',
+        description: null,
+        city: null,
+        notes: null,
+        quantity: '1',
+        unitSellingPrice: '1500',
+        pricingSnapshot: [
+          { id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' },
+          { id: 'opt-child', label: 'Child', price: 4000, currency: 'INR' },
+          { id: 'opt-group', label: 'Per Group', price: 20000, currency: 'USD' },
+        ],
+      },
+    ];
+    const classic = await renderQuotationPdf({
+      company: footerEmptyCompanyForOverlap(),
+      consultant: { name: 'Only Name', phone: null, email: null },
+      quotation: quotationOverlap(),
+      version: {
+        ...baseVersionOverlap(),
+        addOnDetails: { include: true },
+        services,
+      },
+    });
+    expect(isPdf(classic)).toBe(true);
+    for (const word of ['Adult', 'Child', 'Per Group', '6,000', '4,000', '20,000']) {
+      expect(pdfText(classic)).toContain(word);
+    }
+    // Label sits above its price inside the tile (same page).
+    const tilePage = pageWordBoxes(classic).find((page) =>
+      page.words.some((w) => w.text.endsWith('6,000')),
+    );
+    expect(tilePage).toBeDefined();
+    const labelY = tilePage!.words.find((w) => w.text === 'Adult')?.yMax;
+    const priceY = tilePage!.words.find((w) => w.text.endsWith('6,000'))?.yMax;
+    expect(labelY).toBeDefined();
+    expect(priceY).toBeDefined();
+    expect(labelY!).toBeLessThan(priceY!);
+    const stylish = await renderStylishQuotationPdf({
+      company: footerEmptyCompanyForOverlap(),
+      consultant: { name: 'Only Name', phone: null, email: null },
+      quotation: quotationOverlap(),
+      version: {
+        ...baseVersionOverlap(),
+        addOnDetails: { include: true },
+        services,
+      },
+    });
+    expect(isPdf(stylish)).toBe(true);
+    for (const word of ['Adult', 'Child', 'Per Group', '6,000', '4,000', '20,000']) {
+      expect(pdfText(stylish)).toContain(word);
+    }
+  });
+
   it('hides the ADD-ON SERVICES section when no add-on row is selected', async () => {
     const pdf = await renderQuotationPdf({
       company: footerEmptyCompanyForOverlap(),

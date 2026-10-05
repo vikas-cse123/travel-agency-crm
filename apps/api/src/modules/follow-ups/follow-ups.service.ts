@@ -66,7 +66,7 @@ async function where(auth: AuthContext, extra: Prisma.QueryFollowUpWhereInput = 
 
 async function get(auth: AuthContext, followUpId: string) {
   const row = await prisma.queryFollowUp.findFirst({
-    where: await where(auth, { id: followUpId, query: { is: { deletedAt: null } } }),
+    where: await where(auth, { id: followUpId, query: { isNot: null } }),
     include: followUpInclude,
   });
   if (!row) throw new NotFoundError('Follow-up not found.');
@@ -125,7 +125,6 @@ export const followUpsService = {
                 : {};
     const destination = string(q, 'destination');
     const queryFilters: Prisma.QueryWhereInput = {
-      deletedAt: null,
       ...(string(q, 'leadStage') ? { leadStage: string(q, 'leadStage') as LeadStage } : {}),
       ...(string(q, 'leadType')
         ? { leadType: string(q, 'leadType') as Prisma.EnumLeadTypeFilter }
@@ -153,7 +152,7 @@ export const followUpsService = {
     if (completedAt) filters.push({ completedAt });
     if (createdAt) filters.push({ createdAt });
     filters.push({
-      query: { is: queryFilters },
+      AND: [{ query: { isNot: null } }, { query: { is: queryFilters } }],
     });
     if (search)
       filters.push({
@@ -257,7 +256,7 @@ export const followUpsService = {
     });
     const day = localDayBounds(company.timezone, now);
     const weekStart = localWeekStart(company.timezone, now);
-    const base = await where(auth, { query: { is: { deletedAt: null } } });
+    const base = await where(auth, { query: { isNot: null } });
     const leadWhere = await visibleWhere(auth);
     const [
       dueToday,
@@ -347,7 +346,6 @@ export const followUpsService = {
       JOIN "queries" q ON q."id" = f."queryId"
       WHERE f."companyId" = ${auth.companyId}::uuid
         AND f."deletedAt" IS NULL
-        AND q."deletedAt" IS NULL
         AND f."status" = 'COMPLETED'
         AND (${isManager} OR f."assignedToId" = ${auth.userId}::uuid OR q."assignedToId" = ${auth.userId}::uuid OR q."createdById" = ${auth.userId}::uuid)
     `);

@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import { Prisma, type MasterStatus } from '@prisma/client';
 import {
-  ERROR_CODES,
   MASTER_TYPE,
   PERMISSIONS,
   type SightseeingImageUploadInput,
@@ -22,7 +21,6 @@ import {
   toPrismaPagination,
 } from '../../utils/pagination.js';
 import {
-  ConflictDetailsError,
   ConflictError,
   NotFoundError,
   ValidationError,
@@ -39,9 +37,12 @@ import type { MastersRequestContext } from './airlines.service.js';
 import { sanitizeRichText } from './masters.service.js';
 import {
   appendMasterImage,
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
   effectiveMasterImages,
   findMasterImage,
   masterImageWriteData,
+  partitionKeysBySnapshotReferences,
   presentMasterImages,
   removeMasterImage,
   reorderMasterImages,
@@ -117,7 +118,6 @@ function present<T extends Record<string, unknown>>(row: T, scope: MasterScope) 
   const {
     companyId,
     normalizedTitle,
-    deletedAt,
     imageBucket,
     imageObjectKey,
     imageStorageProvider,
@@ -129,7 +129,6 @@ function present<T extends Record<string, unknown>>(row: T, scope: MasterScope) 
   } = row;
   void companyId;
   void normalizedTitle;
-  void deletedAt;
   void imageBucket;
   void imageStorageProvider;
   void pendingImageObjectKey;
@@ -165,8 +164,8 @@ async function validateDestinationCity(scope: MasterScope, destinationId: string
     where: {
       destinationId,
       cityId,
-      destination: { ...buildVisibleWhere(scope), status: 'ACTIVE', deletedAt: null },
-      city: { ...buildVisibleWhere(scope), status: 'ACTIVE', deletedAt: null },
+      destination: { ...buildVisibleWhere(scope), status: 'ACTIVE' },
+      city: { ...buildVisibleWhere(scope), status: 'ACTIVE' },
     },
     select: { id: true },
   });
@@ -185,7 +184,7 @@ async function getSightseeing(
     where: {
       id: sightseeingId,
       ...buildVisibleWhere(scope),
-      ...(canManageRows ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? {} : { status: 'ACTIVE' }),
     },
     include: sightseeingInclude,
   });
@@ -229,11 +228,7 @@ export const sightseeingService = {
 
     const where: Prisma.SightseeingWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageRows
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.destinationId ? { destinationId: String(query.destinationId) } : {}),
       ...(query.cityId ? { cityId: String(query.cityId) } : {}),
       ...(search
@@ -280,11 +275,7 @@ export const sightseeingService = {
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const where: Prisma.SightseeingWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageRows
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageRows ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.destinationId ? { destinationId: String(query.destinationId) } : {}),
       ...(query.cityId ? { cityId: String(query.cityId) } : {}),
       ...(search
@@ -319,7 +310,6 @@ export const sightseeingService = {
       where: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
         ...(query.destinationId ? { destinationId: String(query.destinationId) } : {}),
         ...(query.cityId ? { cityId: String(query.cityId) } : {}),
         ...(search ? { title: { contains: search, mode: 'insensitive' } } : {}),
@@ -357,43 +347,7 @@ export const sightseeingService = {
   async create(auth: AuthContext, input: SightseeingInput, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.SIGHTSEEING);
     await validateDestinationCity(scope, input.destinationId, input.cityId);
-    // If an archived record with the same unique identity exists, surface a
-    // structured error so the create form can offer a restore flow instead of
-    // the generic "already exists" message.
     const normalizedTitle = normalizeCustomerName(input.title);
-    const archivedDuplicate = await prisma.sightseeing.findFirst({
-      where: {
-        companyId: auth.companyId,
-        cityId: input.cityId,
-        normalizedTitle,
-        status: 'ARCHIVED',
-      },
-      select: {
-        id: true,
-        title: true,
-        destinationId: true,
-        cityId: true,
-        status: true,
-        destination: { select: { name: true } },
-        city: { select: { name: true } },
-      },
-    });
-    if (archivedDuplicate) {
-      throw new ConflictDetailsError(
-        ERROR_CODES.SIGHTSEEING_ARCHIVED_DUPLICATE,
-        'A sightseeing with that title already exists in this city but is archived. Restore the existing sightseeing instead of creating a duplicate.',
-        {
-          sightseeingId: archivedDuplicate.id,
-          title: archivedDuplicate.title,
-          destinationId: archivedDuplicate.destinationId,
-          cityId: archivedDuplicate.cityId,
-          destinationName: archivedDuplicate.destination.name,
-          cityName: archivedDuplicate.city.name,
-          status: archivedDuplicate.status,
-          canRestore: true,
-        },
-      );
-    }
     try {
       const row = await prisma.$transaction(async (tx) => {
         let sequence = input.sequence ?? 1;
@@ -402,8 +356,6 @@ export const sightseeingService = {
             where: {
               companyId: auth.companyId,
               cityId: input.cityId,
-              deletedAt: null,
-              status: { not: 'ARCHIVED' },
             },
             _max: { sequence: true },
           });
@@ -417,7 +369,6 @@ export const sightseeingService = {
             title: input.title.trim(),
             normalizedTitle,
             status: input.status,
-            deletedAt: input.status === 'ARCHIVED' ? new Date() : null,
             createdById: auth.userId,
             sequence,
             ...writeData({ ...input, sequence }),
@@ -465,9 +416,7 @@ export const sightseeingService = {
             ...(input.destinationId ? { destinationId: input.destinationId } : {}),
             ...(input.cityId ? { cityId: input.cityId } : {}),
             updatedById: auth.userId,
-            ...(input.status
-              ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-              : {}),
+            ...(input.status ? { status: input.status } : {}),
           },
           include: sightseeingInclude,
         });
@@ -503,7 +452,6 @@ export const sightseeingService = {
       where: {
         companyId: auth.companyId,
         cityId: current.cityId,
-        deletedAt: null,
         sequence: direction === 'UP' ? { lt: current.sequence } : { gt: current.sequence },
       },
       orderBy: { sequence: direction === 'UP' ? 'desc' : 'asc' },
@@ -543,39 +491,17 @@ export const sightseeingService = {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.SIGHTSEEING);
     const current = await getSightseeing(auth, sightseeingId, scope, true);
     assertCanModifyMaster(current, scope);
-    if (current.status === 'ARCHIVED' && status !== 'ARCHIVED') {
-      const conflict = await prisma.sightseeing.findFirst({
-        where: {
-          companyId: auth.companyId,
-          cityId: current.cityId,
-          normalizedTitle: current.normalizedTitle,
-          status: { in: ['ACTIVE', 'INACTIVE'] },
-          deletedAt: null,
-          id: { not: current.id },
-        },
-        select: { id: true },
-      });
-      if (conflict)
-        throw new ConflictError(
-          'Another sightseeing with this title already exists in this city. The archived record cannot be restored.',
-        );
-    }
     const row = await prisma.$transaction(async (tx) => {
       const updated = await tx.sightseeing.update({
         where: { id: current.id },
         data: {
           status,
           updatedById: auth.userId,
-          deletedAt: status === 'ARCHIVED' ? new Date() : null,
         },
         include: sightseeingInclude,
       });
-      const action =
-        current.status === 'ARCHIVED' && status !== 'ARCHIVED'
-          ? 'SIGHTSEEING_RESTORED'
-          : 'SIGHTSEEING_STATUS_CHANGED';
       await tx.activityLog.create({
-        data: audit(auth, action, current.id, context, {
+        data: audit(auth, 'SIGHTSEEING_STATUS_CHANGED', current.id, context, {
           previousStatus: current.status,
           status,
         }),
@@ -585,22 +511,37 @@ export const sightseeingService = {
     return present(row as unknown as Record<string, unknown>, scope);
   },
 
-  async archive(auth: AuthContext, sightseeingId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, sightseeingId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.SIGHTSEEING);
     const current = await getSightseeing(auth, sightseeingId, scope, true);
     assertCanModifyMaster(current, scope);
-    const row = await prisma.$transaction(async (tx) => {
-      const updated = await tx.sightseeing.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date(), updatedById: auth.userId },
-        include: sightseeingInclude,
-      });
-      await tx.activityLog.create({
-        data: audit(auth, 'SIGHTSEEING_ARCHIVED', current.id, context),
-      });
-      return updated;
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'SIGHTSEEING',
+      masterId: current.id,
     });
-    return present(row as unknown as Record<string, unknown>, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Sightseeing not deleted. Please retry.`,
+      );
+    const metadata = { title: current.title, retainedStorageFiles: retained.length };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Quotation/booking links are SetNull and survive with snapshots.
+        await tx.sightseeing.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'SIGHTSEEING_DELETED', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this sightseeing because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 
   async createImageUpload(
@@ -719,7 +660,7 @@ export const sightseeingService = {
     );
     if (!uniqueIds.length) return {};
     const rows = await prisma.sightseeing.findMany({
-      where: { id: { in: uniqueIds }, ...buildVisibleWhere(scope), deletedAt: null },
+      where: { id: { in: uniqueIds }, ...buildVisibleWhere(scope) },
       select: {
         id: true,
         images: true,
@@ -844,7 +785,6 @@ export const sightseeingService = {
           where: {
             ...buildVisibleWhere(scope),
             normalizedName: destName,
-            deletedAt: null,
             status: 'ACTIVE',
           },
           select: { id: true, name: true },
@@ -861,7 +801,6 @@ export const sightseeingService = {
           ...buildVisibleWhere(scope),
           name: { equals: cityNameNorm, mode: 'insensitive' },
           destinationLinks: { some: { destinationId: destination.id } },
-          deletedAt: null,
           status: 'ACTIVE',
         },
         select: { id: true, name: true },
@@ -875,7 +814,6 @@ export const sightseeingService = {
     const where: Prisma.SightseeingWhereInput = {
       ...buildVisibleWhere(scope),
       status: 'ACTIVE',
-      deletedAt: null,
       ...(destination ? { destinationId: destination.id } : {}),
       ...(cityId ? { cityId } : {}),
     };

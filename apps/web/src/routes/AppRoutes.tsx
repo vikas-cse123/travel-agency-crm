@@ -101,7 +101,6 @@ import { HiddenGlobalRecordsPage } from '@/pages/masters/HiddenGlobalRecordsPage
 import { MastersImportPage } from '@/pages/masters/MastersImportPage';
 import { TravelSearchPage } from '@/pages/search/TravelSearchPage';
 import { BookmarksPage } from '@/pages/search/BookmarksPage';
-import { CallRecordingsPage } from '@/pages/call-recordings/CallRecordingsPage';
 
 /**
  * Route table.
@@ -226,14 +225,6 @@ export function AppRoutes() {
             element={
               <PermissionRoute permission={PERMISSIONS.QUERIES_VIEW}>
                 <LeadDetailsPage />
-              </PermissionRoute>
-            }
-          />
-          <Route
-            path="/call-recordings"
-            element={
-              <PermissionRoute permission={PERMISSIONS.QUERIES_VIEW}>
-                <CallRecordingsPage />
               </PermissionRoute>
             }
           />

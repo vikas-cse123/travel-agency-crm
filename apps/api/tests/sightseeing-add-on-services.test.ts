@@ -342,23 +342,15 @@ describe('Sightseeing master', () => {
     expect(third.sequence).toBe(3);
   });
 
-  it('archives, filters by status and restores', async () => {
+  it('hard-deletes and drops the row from the default list', async () => {
     const client = await owner();
     const geo = await createGeo(client);
     const row = await createSightseeing(client, geo);
 
     expect((await client.delete(`/api/masters/sightseeing/${row.id}`)).status).toBe(200);
     expect((await client.get('/api/masters/sightseeing')).body.data.data).toHaveLength(0);
-    expect(
-      (await client.get('/api/masters/sightseeing?status=ARCHIVED')).body.data.data,
-    ).toHaveLength(1);
-
-    const restored = await client.patch(`/api/masters/sightseeing/${row.id}/status`, {
-      status: 'ACTIVE',
-    });
-    expect(restored.body.data.status).toBe('ACTIVE');
-    const stored = await db.sightseeing.findUniqueOrThrow({ where: { id: row.id } });
-    expect(stored.deletedAt).toBeNull();
+    expect(await db.sightseeing.findUnique({ where: { id: row.id } })).toBeNull();
+    expect((await client.delete(`/api/masters/sightseeing/${row.id}`)).status).toBe(404);
   });
 
   it('reports summary statistics for the tenant', async () => {
@@ -382,11 +374,11 @@ describe('Sightseeing master', () => {
     const client = await owner();
     const geo = await createGeo(client);
     const active = await createSightseeing(client, geo, { title: 'Lookup Active' });
-    const archived = await createSightseeing(client, geo, {
-      title: 'Lookup Archived',
+    const removed = await createSightseeing(client, geo, {
+      title: 'Lookup Removed',
       sequence: 2,
     });
-    await client.delete(`/api/masters/sightseeing/${archived.id}`);
+    await client.delete(`/api/masters/sightseeing/${removed.id}`);
 
     const lookups = await client.get('/api/masters/sightseeing/lookups');
     expect(lookups.body.data.sightseeings).toHaveLength(1);
@@ -599,14 +591,12 @@ describe('Sightseeing master', () => {
     const row = await createSightseeing(client, geo);
     await client.patch(`/api/masters/sightseeing/${row.id}`, { title: 'Audited Tour' });
     await client.delete(`/api/masters/sightseeing/${row.id}`);
-    await client.patch(`/api/masters/sightseeing/${row.id}/status`, { status: 'ACTIVE' });
 
     const logs = await db.activityLog.findMany({ where: { entityId: row.id } });
     const actions = logs.map((log) => log.action);
     expect(actions).toContain('SIGHTSEEING_CREATED');
     expect(actions).toContain('SIGHTSEEING_UPDATED');
-    expect(actions).toContain('SIGHTSEEING_ARCHIVED');
-    expect(actions).toContain('SIGHTSEEING_RESTORED');
+    expect(actions).toContain('SIGHTSEEING_DELETED');
     // Logs must never carry storage keys or whole rich-text documents.
     expect(JSON.stringify(logs)).not.toContain('companies/');
     expect(JSON.stringify(logs)).not.toContain('Begin your exploration');
@@ -718,29 +708,21 @@ describe('Add-on services master', () => {
     expect(search.body.data.data[0].name).toBe('Ferry Service');
   });
 
-  it('archives, filters by status and restores', async () => {
+  it('hard-deletes and drops the row from the default list', async () => {
     const client = await owner();
     const service = await createService(client);
 
     expect((await client.delete(`/api/masters/add-on-services/${service.id}`)).status).toBe(200);
     expect((await client.get('/api/masters/add-on-services')).body.data.data).toHaveLength(0);
-    expect(
-      (await client.get('/api/masters/add-on-services?status=ARCHIVED')).body.data.data,
-    ).toHaveLength(1);
-
-    const restored = await client.patch(`/api/masters/add-on-services/${service.id}/status`, {
-      status: 'ACTIVE',
-    });
-    expect(restored.body.data.status).toBe('ACTIVE');
-    const stored = await db.addOnService.findUniqueOrThrow({ where: { id: service.id } });
-    expect(stored.deletedAt).toBeNull();
+    expect(await db.addOnService.findUnique({ where: { id: service.id } })).toBeNull();
+    expect((await client.delete(`/api/masters/add-on-services/${service.id}`)).status).toBe(404);
   });
 
   it('returns active services through the lookup endpoint only', async () => {
     const client = await owner();
     const active = await createService(client, { name: 'Lookup Active' });
-    const archived = await createService(client, { name: 'Lookup Archived' });
-    await client.delete(`/api/masters/add-on-services/${archived.id}`);
+    const removed = await createService(client, { name: 'Lookup Removed' });
+    await client.delete(`/api/masters/add-on-services/${removed.id}`);
 
     const lookups = await client.get('/api/masters/add-on-services/lookups');
     expect(lookups.body.data.addOnServices).toHaveLength(1);
@@ -781,15 +763,13 @@ describe('Add-on services master', () => {
     const service = await createService(client);
     await client.patch(`/api/masters/add-on-services/${service.id}`, { price: 100 });
     await client.delete(`/api/masters/add-on-services/${service.id}`);
-    await client.patch(`/api/masters/add-on-services/${service.id}/status`, { status: 'ACTIVE' });
 
     const actions = (await db.activityLog.findMany({ where: { entityId: service.id } })).map(
       (log) => log.action,
     );
     expect(actions).toContain('ADD_ON_SERVICE_CREATED');
     expect(actions).toContain('ADD_ON_SERVICE_UPDATED');
-    expect(actions).toContain('ADD_ON_SERVICE_ARCHIVED');
-    expect(actions).toContain('ADD_ON_SERVICE_RESTORED');
+    expect(actions).toContain('ADD_ON_SERVICE_DELETED');
   });
 
   it('validates image MIME type and size, and scopes the key to the tenant', async () => {
@@ -922,5 +902,128 @@ describe('Add-on services master', () => {
     );
     expect(actions).toContain('ADD_ON_SERVICE_IMAGE_UPLOADED');
     expect(actions).toContain('ADD_ON_SERVICE_IMAGE_DELETED');
+  });
+});
+
+describe('Add-on service repeatable pricing', () => {
+  const tenEntries = Array.from({ length: 10 }, (_, i) => ({
+    label: `P${i + 1}`,
+    price: (i + 1) * 1000,
+    currency: 'INR',
+  }));
+
+  it('creates 10 entries with stable ids and mirrors the first in legacy fields', async () => {
+    const client = await owner();
+    const response = await client.post('/api/masters/add-on-services', {
+      name: 'Multi Price Tour',
+      status: 'ACTIVE',
+      pricing: tenEntries,
+    });
+    expect(response.status).toBe(201);
+    expect(response.body.data.pricing).toHaveLength(10);
+    const ids = response.body.data.pricing.map((entry: { id: string }) => entry.id);
+    expect(new Set(ids).size).toBe(10);
+    expect(response.body.data.pricing[0]).toMatchObject({
+      label: 'P1',
+      price: 1000,
+      currency: 'INR',
+    });
+    expect(response.body.data).toMatchObject({
+      price: 1000,
+      currency: 'INR',
+      pricingBasis: 'P1',
+    });
+
+    // Reload keeps every entry in order.
+    const detail = await client.get(`/api/masters/add-on-services/${response.body.data.id}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.pricing.map((entry: { label: string }) => entry.label)).toEqual(
+      tenEntries.map((entry) => entry.label),
+    );
+  });
+
+  it('rejects more than 50 entries', async () => {
+    const client = await owner();
+    const tooMany = Array.from({ length: 51 }, (_, i) => ({ label: `P${i}`, price: 100 }));
+    const response = await client.post('/api/masters/add-on-services', {
+      name: 'Too Many Prices',
+      status: 'ACTIVE',
+      pricing: tooMany,
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('replaces entries on update without touching other fields', async () => {
+    const client = await owner();
+    const service = await createService(client);
+    const updated = await client.patch(`/api/masters/add-on-services/${service.id}`, {
+      description: '<p>Kept</p>',
+      pricing: [
+        { label: 'Adult', price: 6000, currency: 'INR' },
+        { label: 'Child', price: 4000, currency: 'USD' },
+      ],
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.pricing).toHaveLength(2);
+    expect(updated.body.data.pricing[1]).toMatchObject({
+      label: 'Child',
+      price: 4000,
+      currency: 'USD',
+    });
+    expect(updated.body.data).toMatchObject({ price: 6000, pricingBasis: 'Adult' });
+    expect(updated.body.data.description).toContain('Kept');
+  });
+
+  it('removes entries down to a single row', async () => {
+    const client = await owner();
+    const created = await client.post('/api/masters/add-on-services', {
+      name: 'Shrinking Prices',
+      status: 'ACTIVE',
+      pricing: [
+        { label: 'Adult', price: 6000, currency: 'INR' },
+        { label: 'Child', price: 4000, currency: 'INR' },
+      ],
+    });
+    const updated = await client.patch(
+      `/api/masters/add-on-services/${created.body.data.id}`,
+      {
+        pricing: [{ id: created.body.data.pricing[1].id, label: 'Child', price: 4000, currency: 'INR' }],
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.pricing).toHaveLength(1);
+    expect(updated.body.data.pricing[0].label).toBe('Child');
+  });
+
+  it('presents a legacy single price as exactly one entry', async () => {
+    const client = await owner();
+    const created = await client.post('/api/masters/add-on-services', {
+      name: 'Legacy Price Tour',
+      price: 3000,
+      pricingBasis: 'Per Person',
+      status: 'ACTIVE',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.pricing).toHaveLength(1);
+    expect(created.body.data.pricing[0]).toMatchObject({
+      label: 'Per Person',
+      price: 3000,
+      currency: 'INR',
+    });
+  });
+
+  it('leaves pricing untouched when omitted on update', async () => {
+    const client = await owner();
+    const created = await client.post('/api/masters/add-on-services', {
+      name: 'Untouched Prices',
+      status: 'ACTIVE',
+      pricing: [{ label: 'Adult', price: 6000, currency: 'INR' }],
+    });
+    const updated = await client.patch(`/api/masters/add-on-services/${created.body.data.id}`, {
+      name: 'Untouched Prices Renamed',
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.pricing).toHaveLength(1);
+    expect(updated.body.data.pricing[0]).toMatchObject({ label: 'Adult', price: 6000 });
   });
 });

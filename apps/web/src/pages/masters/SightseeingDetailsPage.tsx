@@ -1,12 +1,11 @@
-import { Link, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, MapPinned, Pencil, RotateCcw } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, MapPinned, Pencil, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   sightseeingImageUrl,
-  useArchiveSightseeing,
-  useRestoreSightseeing,
+  useDeleteSightseeing,
   useSightseeing,
 } from '@/features/masters/masters.api';
 import { MasterImageGalleryView } from './MasterImageGallery';
@@ -20,12 +19,12 @@ function money(amount: number | null | undefined, currency: string): string {
 
 export function SightseeingDetailsPage() {
   const { sightseeingId = '' } = useParams<{ sightseeingId: string }>();
+  const navigate = useNavigate();
   const record = useSightseeing(sightseeingId);
-  const archive = useArchiveSightseeing();
-  const restore = useRestoreSightseeing();
+  const remove = useDeleteSightseeing();
   const { hasPermission } = useAuth();
   const canUpdate = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_DELETE);
 
   if (record.isPending) return <LoadingCard />;
   if (record.isError)
@@ -77,21 +76,21 @@ export function SightseeingDetailsPage() {
               </Button>
             </Link>
           )}
-          {canArchive && value.status !== 'ARCHIVED' && (
+          {canDelete && (
             <Button
               variant="danger"
+              isLoading={remove.isPending}
               onClick={() => {
-                if (window.confirm('Are you sure you want to delete this sightseeing?')) {
-                  archive.mutate(sightseeingId);
+                if (
+                  window.confirm(
+                    `Permanently delete sightseeing ${value.title}? This action cannot be undone.`,
+                  )
+                ) {
+                  remove.mutate(sightseeingId, { onSuccess: () => navigate('/masters/sightseeing') });
                 }
               }}
             >
-              <Archive className="h-4 w-4" /> Archive
-            </Button>
-          )}
-          {canUpdate && value.status === 'ARCHIVED' && (
-            <Button variant="secondary" onClick={() => restore.mutate(sightseeingId)}>
-              <RotateCcw className="h-4 w-4" /> Restore
+              <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
         </div>

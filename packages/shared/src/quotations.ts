@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SERVICE_TYPES } from './queries.js';
+import { MAX_ADD_ON_PRICING_ENTRIES } from './masters.js';
 
 export const QUOTATION_TEMPLATE_STATUSES = ['ACTIVE', 'INACTIVE'] as const;
 export const QUOTATION_STATUSES = [
@@ -493,6 +494,27 @@ export const SERVICE_PRICING_BASES = [
 ] as const;
 export type ServicePricingBasis = (typeof SERVICE_PRICING_BASES)[number];
 
+/**
+ * One quotation-owned pricing snapshot entry. Same shape as the master
+ * pricing entries, except `id` is an opaque stable string rather than a UUID:
+ * masters use UUIDs while legacy synthesis uses `legacy-<masterId>`, and
+ * snapshots must never fail validation because of id format.
+ */
+export const quotationPricingSnapshotEntrySchema = z.object({
+  id: z.string().trim().min(1).max(100).optional(),
+  label: optionalText(80),
+  price: optionalMoney,
+  currency: z
+    .string()
+    .trim()
+    .transform((value) => value.toUpperCase())
+    .refine((value) => /^[A-Z]{3}$/.test(value), 'Use a three-letter currency code.')
+    .default('INR'),
+});
+export type QuotationPricingSnapshotEntry = z.infer<
+  typeof quotationPricingSnapshotEntrySchema
+>;
+
 export const quotationServiceSchema = z.object({
   serviceType: z.enum(SERVICE_TYPES),
   // Master references, each valid only for its matching service type. The
@@ -519,6 +541,11 @@ export const quotationServiceSchema = z.object({
   // Free-text master pricing basis snapshot (e.g. "Per Person"), carried
   // from the Add-On Service master. NULL for legacy rows and other types.
   pricingBasisLabel: optionalText(80),
+  // Quotation-owned snapshot of ALL master pricing options available when the
+  // Add-On Service was selected (same shape as the master entries). Saved rows
+  // are authoritative: later master edits never rewrite them. Nullish for
+  // legacy rows and other service types.
+  pricingSnapshot: z.array(quotationPricingSnapshotEntrySchema).max(MAX_ADD_ON_PRICING_ENTRIES).nullish(),
   taxCategory: optionalText(80),
   notes: optionalText(2000),
   // Cruise-specific structured duration and multi-room allocation.

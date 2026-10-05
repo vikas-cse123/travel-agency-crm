@@ -289,7 +289,7 @@ describe('Global Master edit protection', () => {
     expect(stored.name).toBe('Dubai');
   });
 
-  it('returns 403 when a tenant archives a global City', async () => {
+  it('returns 403 when a tenant deletes a global City', async () => {
     await bootstrap();
     const city = await createGlobalCity(await systemAdminClient());
     const clientA = await tenant('owner@archive.test');
@@ -437,23 +437,21 @@ describe('Hide and restore global records', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Global archive
+// Global delete
 // ---------------------------------------------------------------------------
 
-describe('Global archive', () => {
-  it('removes an archived global City from every tenant list', async () => {
+describe('Global delete', () => {
+  it('removes a deleted global City from every tenant list', async () => {
     await bootstrap();
     const sys = await systemAdminClient();
     const city = await createGlobalCity(sys);
     const clientA = await tenant('a@archive.test');
     const clientB = await tenant('b@archive.test');
 
-    const archive = await sys.delete(`/api/masters/cities/${city.id}`);
-    expect(archive.status).toBe(200);
+    const removed = await sys.delete(`/api/masters/cities/${city.id}`);
+    expect(removed.status).toBe(200);
 
-    const stored = await db.city.findUniqueOrThrow({ where: { id: city.id } });
-    expect(stored.status).toBe('ARCHIVED');
-    expect(stored.deletedAt).not.toBeNull();
+    expect(await db.city.findUnique({ where: { id: city.id } })).toBeNull();
 
     for (const client of [clientA, clientB]) {
       const res = await client.get('/api/masters/cities');

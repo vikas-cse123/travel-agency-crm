@@ -155,13 +155,12 @@ async function resolveCityIds(
   const countryCode = String(input.countryCode ?? '').toUpperCase();
   const normalized = [...new Set(names.map(normalizeCustomerName))];
   const scope = await resolveMasterScope(auth, MASTER_TYPE.DESTINATION);
-  const cities = await prisma.city.findMany({
-    where: {
-      countryCode,
-      status: 'ACTIVE',
-      deletedAt: null,
-      AND: [buildVisibleWhere(scope), { OR: normalized.map((name) => ({ normalizedName: name })) }],
-    },
+    const cities = await prisma.city.findMany({
+      where: {
+        countryCode,
+        status: 'ACTIVE',
+        AND: [buildVisibleWhere(scope), { OR: normalized.map((name) => ({ normalizedName: name })) }],
+      },
     select: { id: true, normalizedName: true },
   });
   const byName = new Map(cities.map((city) => [city.normalizedName, city.id]));
@@ -247,7 +246,7 @@ export const destinationAdapter = {
       throw new ValidationError('A city can only be selected once.');
     }
     const usable = await tx.city.count({
-      where: { id: { in: cityIds }, countryCode, status: 'ACTIVE', deletedAt: null },
+      where: { id: { in: cityIds }, countryCode, status: 'ACTIVE' },
     });
     if (usable !== cityIds.length) {
       throw new ValidationError('Every selected city must be active, visible and belong to the chosen country.');

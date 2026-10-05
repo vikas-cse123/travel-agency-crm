@@ -839,7 +839,7 @@ describe('Phase 6 lead pages', () => {
               canAddNote: false,
               canScheduleFollowUp: false,
               canCompleteFollowUp: false,
-              canArchive: false,
+              canDelete: false,
               canViewQuotations: true,
               canCreateQuotation: false,
               canSendQuotation: false,
@@ -859,7 +859,7 @@ describe('Phase 6 lead pages', () => {
     );
     expect(await screen.findByRole('heading', { name: 'Aarav Mehta' })).toBeInTheDocument();
     // Overview is the default tab; action controls are gated off by permissions.
-    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete Lead' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
     expect(screen.queryByText('Reassign lead')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('New stage')).not.toBeInTheDocument();
@@ -1092,7 +1092,7 @@ describe('Phase 17 lead workspace tabs', () => {
       canAddNote: true,
       canScheduleFollowUp: true,
       canCompleteFollowUp: true,
-      canArchive: true,
+      canDelete: true,
       canViewQuotations: true,
       canCreateQuotation: true,
       canSendQuotation: true,
@@ -2105,9 +2105,9 @@ describe('Lead actions', () => {
     expect(screen.queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument();
   });
 
-  it('deletes (archives) the lead after confirmation', async () => {
+  it('permanently deletes the lead after confirmation', async () => {
     const mock = stubLeadList([enrichedLead]);
-    const confirmSpy = vi.fn(() => true);
+    const confirmSpy = vi.fn((_message?: unknown) => true);
     vi.stubGlobal('confirm', confirmSpy);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
@@ -2115,6 +2115,9 @@ describe('Lead actions', () => {
     const deleteButton = screen.getAllByRole('button', { name: /Delete/ })[0]!;
     await userEvent.click(deleteButton);
     expect(confirmSpy).toHaveBeenCalled();
+    // Confirmation must warn that deletion is permanent.
+    expect(String(confirmSpy.mock.calls[0]?.[0])).toMatch(/Permanently delete lead/);
+    expect(String(confirmSpy.mock.calls[0]?.[0])).toMatch(/cannot be undone/);
     await waitFor(() =>
       expect(
         mock.mock.calls.some(
@@ -2928,6 +2931,26 @@ describe('Dense operational Leads table structure', () => {
     expect(noPhoneRow!.querySelector('[aria-disabled="true"]')).not.toBeNull();
     expect(document.querySelector('a[href="tel:undefined"]')).toBeNull();
     expect(document.querySelector('a[href="tel:null"]')).toBeNull();
+  });
+
+  it('has no Call Recording column, controls or statuses anywhere', async () => {
+    stubLeadList([enrichedLead]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Aarav Mehta');
+    // No header, no cells, no empty-state text, no player controls.
+    const thead = document.querySelector('.leads-thead');
+    const headers = Array.from(thead!.querySelectorAll('th')).map((th) => th.textContent?.trim());
+    expect(headers).not.toContain('Call Recording');
+    // Destination follows Call directly — no placeholder column between them.
+    expect(headers[headers.indexOf('Call') + 1]).toBe('Destination');
+    const firstRow = document.querySelector('.leads-tbody tr') as HTMLElement;
+    expect(within(firstRow).queryByText('No recording')).not.toBeInTheDocument();
+    expect(within(firstRow).queryByRole('button', { name: /play recording/i })).not.toBeInTheDocument();
+    expect(document.querySelector('audio')).toBeNull();
+    // Header count still matches the row's cell count exactly.
+    expect(thead!.querySelectorAll('th').length).toBe(firstRow.querySelectorAll('td').length);
+    // Normal CALL functionality is untouched.
+    expect(document.querySelector('a[href="tel:+91 98765 43210"]')).not.toBeNull();
   });
 
   it('renders compact metadata blocks for destination and travellers info', async () => {

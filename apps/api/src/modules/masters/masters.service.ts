@@ -36,8 +36,11 @@ import {
 } from './master-visibility.js';
 import {
   appendMasterImage,
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
   findMasterImage,
   masterImageWriteData,
+  partitionKeysBySnapshotReferences,
   presentMasterImages,
   removeMasterImage,
   reorderMasterImages,
@@ -145,10 +148,9 @@ function duplicateError(error: unknown, label: string): never {
 }
 
 function presentCity<T extends Record<string, unknown>>(row: T, scope: MasterScope) {
-  const { companyId, normalizedName, deletedAt, ...safe } = row;
+  const { companyId, normalizedName, ...safe } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   return {
     ...safe,
     ...masterRecordMeta({ companyId: String(companyId) }, scope),
@@ -159,7 +161,6 @@ function presentDestination<T extends Record<string, unknown>>(row: T, scope: Ma
   const {
     companyId,
     normalizedName,
-    deletedAt,
     imageBucket,
     imageObjectKey,
     pendingImageObjectKey,
@@ -171,7 +172,6 @@ function presentDestination<T extends Record<string, unknown>>(row: T, scope: Ma
   } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   void imageBucket;
   void imageObjectKey;
   void pendingImageObjectKey;
@@ -187,12 +187,10 @@ function presentDestination<T extends Record<string, unknown>>(row: T, scope: Ma
           const {
             companyId: _companyId,
             normalizedName: _normalizedName,
-            deletedAt: _deletedAt,
             ...safeCity
           } = city;
           void _companyId;
           void _normalizedName;
-          void _deletedAt;
           return { id: value.id, sequence: value.sequence, cityId: value.cityId, city: safeCity };
         })
         .filter(
@@ -226,7 +224,7 @@ async function getCity(auth: AuthContext, cityId: string, scope: MasterScope) {
     where: {
       id: cityId,
       ...buildVisibleWhere(scope),
-      ...(canManage ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManage ? {} : { status: 'ACTIVE' }),
     },
     include: { createdBy: { select: userSelect }, _count: { select: { destinationLinks: true } } },
   });
@@ -246,7 +244,7 @@ async function getDestination(auth: AuthContext, destinationId: string, scope: M
     where: {
       id: destinationId,
       ...buildVisibleWhere(scope),
-      ...(canManage ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManage ? {} : { status: 'ACTIVE' }),
     },
     include: destinationInclude,
   });
@@ -262,7 +260,6 @@ async function validateCities(scope: MasterScope, countryCode: string, cityIds: 
       id: { in: cityIds },
       countryCode,
       status: 'ACTIVE',
-      deletedAt: null,
       ...buildVisibleWhere(scope),
     },
     select: { id: true },
@@ -300,11 +297,7 @@ export const citiesService = {
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const where: Prisma.CityWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManage
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManage ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.country ? { countryCode: String(query.country) } : {}),
       ...(query.hasAirportCode !== undefined
         ? query.hasAirportCode
@@ -369,7 +362,6 @@ export const citiesService = {
             ...buildVisibleWhere(scope),
             countryCode,
             status: 'ACTIVE',
-            deletedAt: null,
             ...(search
               ? {
                   OR: [
@@ -457,7 +449,6 @@ export const citiesService = {
             ...(input.status
               ? {
                   status: input.status,
-                  deletedAt: input.status === 'ARCHIVED' ? new Date() : null,
                 }
               : {}),
           },
@@ -492,7 +483,7 @@ export const citiesService = {
       const city = await prisma.$transaction(async (tx) => {
         const updated = await tx.city.update({
           where: { id: current.id },
-          data: { status, deletedAt: status === 'ARCHIVED' ? new Date() : null },
+          data: { status },
           include: {
             createdBy: { select: userSelect },
             _count: { select: { destinationLinks: true } },
@@ -512,27 +503,36 @@ export const citiesService = {
     }
   },
 
-  async archive(auth: AuthContext, cityId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, cityId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.CITY);
     const current = await getCity(auth, cityId, scope);
     assertCanModifyMaster(current, scope);
-    const city = await prisma.$transaction(async (tx) => {
-      const updated = await tx.city.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date() },
-        include: {
-          createdBy: { select: userSelect },
-          _count: { select: { destinationLinks: true } },
-        },
+    const [destinationLinks, hotels, sightseeings] = await Promise.all([
+      prisma.destinationCity.count({ where: { companyId: auth.companyId, cityId: current.id } }),
+      prisma.hotel.count({ where: { companyId: auth.companyId, cityId: current.id } }),
+      prisma.sightseeing.count({ where: { companyId: auth.companyId, cityId: current.id } }),
+    ]);
+    if (destinationLinks + hotels + sightseeings > 0)
+      throw new ConflictError(
+        'Cannot delete this city because it is being used by existing master records.',
+        { destinationLinks, hotels, sightseeings },
+      );
+    const metadata = { name: current.name, countryCode: current.countryCode };
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.city.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'CITY_DELETED', 'City', current.id, context, metadata),
+        });
       });
-      await tx.activityLog.create({
-        data: audit(auth, 'CITY_ARCHIVED', 'City', updated.id, context, {
-          destinationCount: current._count.destinationLinks,
-        }),
-      });
-      return updated;
-    });
-    return presentCity(city as unknown as Record<string, unknown>, scope);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this city because it is being used by existing master records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 };
 
@@ -548,11 +548,7 @@ export const destinationsService = {
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const where: Prisma.DestinationWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManage
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManage ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(query.country ? { countryCode: String(query.country) } : {}),
       ...(query.destinationType
         ? { destinationType: String(query.destinationType) as DestinationType }
@@ -705,9 +701,7 @@ export const destinationsService = {
               : {}),
             ...('privateName' in input ? { privateName: blankToNull(input.privateName) } : {}),
             ...(input.destinationType ? { destinationType: input.destinationType } : {}),
-            ...(input.status
-              ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-              : {}),
+            ...(input.status ? { status: input.status } : {}),
             ...policyData(input),
           },
         });
@@ -741,7 +735,7 @@ export const destinationsService = {
       const destination = await prisma.$transaction(async (tx) => {
         await tx.destination.update({
           where: { id: current.id },
-          data: { status, deletedAt: status === 'ARCHIVED' ? new Date() : null },
+          data: { status },
         });
         await tx.activityLog.create({
           data: audit(auth, 'DESTINATION_STATUS_CHANGED', 'Destination', current.id, context, {
@@ -760,26 +754,59 @@ export const destinationsService = {
     }
   },
 
-  async archive(auth: AuthContext, destinationId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, destinationId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.DESTINATION);
     const current = await getDestination(auth, destinationId, scope);
     assertCanModifyMaster(current, scope);
-    const destination = await prisma.$transaction(async (tx) => {
-      await tx.destination.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date() },
-      });
-      await tx.activityLog.create({
-        data: audit(auth, 'DESTINATION_ARCHIVED', 'Destination', current.id, context, {
-          cityCount: current.cities.length,
-        }),
-      });
-      return tx.destination.findUniqueOrThrow({
-        where: { id: current.id },
-        include: destinationInclude,
-      });
+    const [hotels, sightseeings, visaTypes] = await Promise.all([
+      prisma.hotel.count({ where: { companyId: auth.companyId, destinationId: current.id } }),
+      prisma.sightseeing.count({
+        where: { companyId: auth.companyId, destinationId: current.id },
+      }),
+      prisma.visaType.count({ where: { companyId: auth.companyId, destinationId: current.id } }),
+    ]);
+    if (hotels + sightseeings + visaTypes > 0)
+      throw new ConflictError(
+        'Cannot delete this destination because it is being used by existing master records.',
+        { hotels, sightseeings, visaTypes },
+      );
+    // Master-owned storage only: gallery + legacy + pending keys under this
+    // company's masters/ prefix. Quotation snapshot objects are never touched.
+    // Keys still referenced by quotation snapshots are retained so saved
+    // quotations, weblinks and PDFs keep rendering.
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'DESTINATION',
+      masterId: current.id,
     });
-    return presentDestination(destination as unknown as Record<string, unknown>, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Destination not deleted. Please retry.`,
+      );
+    const metadata = {
+      name: current.name,
+      countryCode: current.countryCode,
+      retainedStorageFiles: retained.length,
+    };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // DestinationCity, VehicleDestination and AddOnServiceDestination
+        // cascade automatically; hotels/sightseeings/visa types were blocked
+        // above and quotation/booking links are SetNull.
+        await tx.destination.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'DESTINATION_DELETED', 'Destination', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this destination because it is being used by existing master records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 
   async cities(auth: AuthContext, destinationId: string) {

@@ -252,7 +252,7 @@ export interface LeadWorkspace {
     canAddNote: boolean;
     canScheduleFollowUp: boolean;
     canCompleteFollowUp: boolean;
-    canArchive: boolean;
+    canDelete: boolean;
     canViewQuotations: boolean;
     canCreateQuotation: boolean;
     canSendQuotation: boolean;
@@ -417,10 +417,10 @@ export function useLeadAction(id: string) {
     },
   });
 }
-export function useArchiveLead(id: string) {
+export function useDeleteLead(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiClient.delete<{ archived: boolean; id: string }>(`/queries/${id}`),
+    mutationFn: () => apiClient.delete<{ deleted: boolean; id: string }>(`/queries/${id}`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.all });
     },

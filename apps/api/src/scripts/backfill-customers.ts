@@ -38,7 +38,7 @@ async function run() {
       if (customer.normalizedEmail) byEmail.set(customer.normalizedEmail, customer.id);
     }
     const leads = await prisma.query.findMany({
-      where: { companyId: company.id, customerId: null, deletedAt: null },
+      where: { companyId: company.id, customerId: null },
       orderBy: { createdAt: 'asc' },
     });
     for (const lead of leads) {

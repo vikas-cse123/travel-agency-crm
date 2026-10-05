@@ -1,10 +1,10 @@
-import { Archive, Eye, EyeOff, MessageSquareQuote, Pencil, Plus, Search } from 'lucide-react';
+import { Eye, EyeOff, MessageSquareQuote, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useArchiveTestimonial,
+  useDeleteTestimonial,
   useHideGlobalMaster,
   useTestimonials,
 } from '@/features/masters/masters.api';
@@ -20,12 +20,12 @@ import {
 export function TestimonialsPage() {
   const [params, setParams] = useSearchParams();
   const testimonials = useTestimonials(params);
-  const archive = useArchiveTestimonial();
+  const remove = useDeleteTestimonial();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_TESTIMONIALS_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_TESTIMONIALS_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_TESTIMONIALS_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_TESTIMONIALS_DELETE);
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -33,8 +33,9 @@ export function TestimonialsPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveRow = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this testimonial?')) archive.mutate(id);
+  const deleteRow = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete testimonial ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideRow = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -81,7 +82,6 @@ export function TestimonialsPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -165,15 +165,14 @@ export function TestimonialsPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive &&
-                            testimonial.status !== 'ARCHIVED' &&
-                            !testimonial.isGlobal && (
+                          {canDelete && !testimonial.isGlobal && (
                               <button
-                                aria-label={`Archive testimonial from ${label(testimonial.clientName)}`}
-                                onClick={() => archiveRow(testimonial.id)}
+                                aria-label={`Delete testimonial from ${label(testimonial.clientName)}`}
+                                title="Permanently delete"
+                                onClick={() => deleteRow(testimonial.id, label(testimonial.clientName))}
                                 className="rounded bg-red-600 p-2 text-white"
                               >
-                                <Archive className="h-4 w-4" />
+                                <Trash2 className="h-4 w-4" />
                               </button>
                             )}
                         </div>

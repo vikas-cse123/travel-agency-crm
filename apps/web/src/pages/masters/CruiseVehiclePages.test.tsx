@@ -169,7 +169,7 @@ describe('Phase 13C master pages', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Cruises could not be loaded.');
   });
 
-  it('hides cruise create, edit and archive actions without permission', async () => {
+  it('hides cruise create, edit and delete actions without permission', async () => {
     auth.permissions = new Set(['masters.cruises.view']);
     vi.stubGlobal(
       'fetch',
@@ -183,7 +183,7 @@ describe('Phase 13C master pages', () => {
       screen.queryByRole('link', { name: /edit la regina legend cruise/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /archive la regina legend cruise/i }),
+      screen.queryByRole('button', { name: /delete la regina legend cruise/i }),
     ).not.toBeInTheDocument();
     // Without costing rights the price column is not rendered at all.
     expect(screen.queryByText('Price Range')).not.toBeInTheDocument();
@@ -335,7 +335,7 @@ describe('Phase 13C master pages', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Vehicles could not be loaded.');
   });
 
-  it('hides vehicle create, edit and archive actions without permission', async () => {
+  it('hides vehicle create, edit and delete actions without permission', async () => {
     auth.permissions = new Set(['masters.vehicles.view']);
     vi.stubGlobal(
       'fetch',
@@ -353,7 +353,7 @@ describe('Phase 13C master pages', () => {
       screen.queryByRole('link', { name: /edit toyota innova crysta/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /archive toyota innova crysta/i }),
+      screen.queryByRole('button', { name: /delete toyota innova crysta/i }),
     ).not.toBeInTheDocument();
   });
 

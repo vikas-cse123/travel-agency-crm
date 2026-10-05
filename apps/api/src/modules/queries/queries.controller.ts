@@ -49,11 +49,11 @@ export const queriesController = {
       'Lead updated.',
     );
   },
-  async archive(req: Request, res: Response) {
+  async remove(req: Request, res: Response) {
     sendSuccess(
       res,
-      await queriesService.archive(auth(req), req.params.queryId!, context(req)),
-      'Lead archived.',
+      await queriesService.remove(auth(req), req.params.queryId!, context(req)),
+      'Lead permanently deleted.',
     );
   },
   async stage(req: Request, res: Response) {

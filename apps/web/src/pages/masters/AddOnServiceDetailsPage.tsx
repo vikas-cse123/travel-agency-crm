@@ -1,13 +1,12 @@
-import { Link, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, Pencil, RotateCcw } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
   addOnServiceImageUrl,
   useAddOnService,
-  useArchiveAddOnService,
-  useRestoreAddOnService,
+  useDeleteAddOnService,
 } from '@/features/masters/masters.api';
 import { Breadcrumbs, formatMasterDate, LoadingCard, SafeRichText, StatusBadge } from './MasterUi';
 import { MasterImageGalleryView } from './MasterImageGallery';
@@ -22,12 +21,12 @@ function money(amount: number, currency: string): string {
 
 export function AddOnServiceDetailsPage() {
   const { addOnServiceId = '' } = useParams<{ addOnServiceId: string }>();
+  const navigate = useNavigate();
   const record = useAddOnService(addOnServiceId);
-  const archive = useArchiveAddOnService();
-  const restore = useRestoreAddOnService();
+  const remove = useDeleteAddOnService();
   const { hasPermission } = useAuth();
   const canUpdate = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_ADD_ON_SERVICES_DELETE);
 
   if (record.isPending) return <LoadingCard />;
   if (record.isError)
@@ -38,6 +37,20 @@ export function AddOnServiceDetailsPage() {
     );
 
   const value = record.data;
+  // Repeatable pricing wins; legacy single price/basis renders as one row.
+  const pricingRows =
+    value.pricing?.length > 0
+      ? value.pricing
+      : value.price != null || value.pricingBasis
+        ? [
+            {
+              id: `legacy-${value.id}`,
+              label: value.pricingBasis ?? '',
+              price: value.price,
+              currency: value.currency,
+            },
+          ]
+        : [];
 
   return (
     <div className="space-y-5">
@@ -62,21 +75,23 @@ export function AddOnServiceDetailsPage() {
               </Button>
             </Link>
           )}
-          {canArchive && value.status !== 'ARCHIVED' && (
+          {canDelete && (
             <Button
               variant="danger"
+              isLoading={remove.isPending}
               onClick={() => {
-                if (window.confirm('Are you sure you want to delete this add-on service?')) {
-                  archive.mutate(addOnServiceId);
+                if (
+                  window.confirm(
+                    `Permanently delete add-on service ${value.name}? This action cannot be undone.`,
+                  )
+                ) {
+                  remove.mutate(addOnServiceId, {
+                    onSuccess: () => navigate('/masters/add-on-services'),
+                  });
                 }
               }}
             >
-              <Archive className="h-4 w-4" /> Archive
-            </Button>
-          )}
-          {canUpdate && value.status === 'ARCHIVED' && (
-            <Button variant="secondary" onClick={() => restore.mutate(addOnServiceId)}>
-              <RotateCcw className="h-4 w-4" /> Restore
+              <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
         </div>
@@ -101,21 +116,53 @@ export function AddOnServiceDetailsPage() {
             />
           </div>
         )}
+        {(value.destinations ?? []).length > 0 && (
+          <div className="border-b p-4">
+            <h3 className="mb-2 text-sm font-semibold text-slate-800">Destinations</h3>
+            <ul className="flex flex-wrap gap-1.5">
+              {value.destinations.map((link) => (
+                <li
+                  key={link.id}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700"
+                >
+                  {link.name}
+                  {link.isDefault && (
+                    <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold text-emerald-700">
+                      Default
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <table className="w-full text-left text-sm">
           <tbody className="divide-y">
             <tr>
               <th scope="row" className="w-52 bg-slate-50 px-4 py-2.5 font-medium text-slate-700">
-                Price
+                Pricing
               </th>
-              <td className="px-4 py-2.5 font-medium text-slate-900">
-                {money(value.price ?? 0, value.currency)}
+              <td className="px-4 py-2.5 text-slate-800">
+                {pricingRows.length > 0 ? (
+                  <ul className="space-y-1">
+                    {pricingRows.map((entry) => (
+                      <li key={entry.id} className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-medium text-slate-900">
+                          {entry.label || 'Standard'}
+                        </span>
+                        <span>
+                          {entry.price != null
+                            ? money(entry.price, entry.currency)
+                            : '—'}
+                        </span>
+                        <span className="text-xs text-slate-500">{entry.currency}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  '—'
+                )}
               </td>
-            </tr>
-            <tr>
-              <th scope="row" className="bg-slate-50 px-4 py-2.5 font-medium text-slate-700">
-                Pricing Basis
-              </th>
-              <td className="px-4 py-2.5 text-slate-800">{value.pricingBasis?.trim() || '—'}</td>
             </tr>
             <tr>
               <th scope="row" className="bg-slate-50 px-4 py-2.5 font-medium text-slate-700">

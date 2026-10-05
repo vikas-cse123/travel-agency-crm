@@ -1,4 +1,4 @@
-import { Archive, Eye, EyeOff, MapPin, Pencil, Plus, Search, Upload } from 'lucide-react';
+import { Eye, EyeOff, MapPin, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@interscale/shared';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ExcelImportDialog } from '@/features/masters/excel-import/ExcelImportDialog';
 import {
-  useArchiveCity,
+  useDeleteCity,
   useCities,
   useHideGlobalMaster,
   useMasterLookups,
@@ -25,12 +25,12 @@ export function CitiesPage() {
   const [importOpen, setImportOpen] = useState(false);
   const cities = useCities(params);
   const lookups = useMasterLookups();
-  const archive = useArchiveCity();
+  const remove = useDeleteCity();
   const hideMaster = useHideGlobalMaster();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission(PERMISSIONS.MASTER_CITIES_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.MASTER_CITIES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_CITIES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_CITIES_DELETE);
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -38,8 +38,9 @@ export function CitiesPage() {
     if (key !== 'page') next.delete('page');
     setParams(next);
   };
-  const archiveCity = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this city?')) archive.mutate(id);
+  const deleteCity = (id: string, name: string) => {
+    if (window.confirm(`Permanently delete city ${name}? This action cannot be undone.`))
+      remove.mutate(id);
   };
   const hideCity = (id: string) => {
     if (window.confirm(HIDE_GLOBAL_CONFIRM))
@@ -104,7 +105,6 @@ export function CitiesPage() {
               <option value="">Current statuses</option>
               <option>ACTIVE</option>
               <option>INACTIVE</option>
-              <option>ARCHIVED</option>
             </select>
           ) : (
             <div />
@@ -184,13 +184,14 @@ export function CitiesPage() {
                               <EyeOff className="h-4 w-4" />
                             </button>
                           )}
-                          {canArchive && city.status !== 'ARCHIVED' && !city.isGlobal && (
+                          {canDelete && !city.isGlobal && (
                             <button
-                              aria-label={`Archive ${city.name}`}
-                              onClick={() => archiveCity(city.id)}
+                              aria-label={`Delete ${city.name}`}
+                              title="Permanently delete"
+                              onClick={() => deleteCity(city.id, city.name)}
                               className="rounded bg-red-600 p-2 text-white"
                             >
-                              <Archive className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           )}
                         </div>

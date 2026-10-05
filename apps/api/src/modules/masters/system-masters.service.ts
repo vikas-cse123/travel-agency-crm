@@ -38,7 +38,6 @@ async function loadRegistryRecord(
     id: true,
     companyId: true,
     status: true,
-    deletedAt: true,
   };
   if (info.nameField) select[info.nameField] = true;
   if (info.type === 'TESTIMONIAL') select.destinationName = true;
@@ -49,7 +48,6 @@ async function loadRegistryRecord(
     id: String(row.id),
     companyId: String(row.companyId),
     status: String(row.status),
-    deletedAt: (row.deletedAt as Date | null) ?? null,
     name: row.name != null ? String(row.name) : null,
     title: row.title != null ? String(row.title) : null,
     clientName: row.clientName != null ? String(row.clientName) : null,
@@ -78,7 +76,7 @@ export const systemMastersService = {
     }
 
     const record = await loadRegistryRecord(type, masterId);
-    if (!record || record.deletedAt !== null || record.status === 'ARCHIVED') {
+    if (!record || record.status !== 'ACTIVE') {
       throw new NotFoundError(`${MASTER_TYPE_LABELS[type]} not found.`);
     }
     if (record.companyId !== systemCompanyId) {
@@ -131,7 +129,7 @@ export const systemMastersService = {
 
   /**
    * List the global records the current tenant has hidden, optionally for one
-   * master type. Rows whose original record was archived or removed are
+   * master type. Rows whose original record is inactive or removed are
    * omitted, and the original record is included with a friendly display name.
    */
   async listHidden(auth: AuthContext, rawType?: string | undefined) {
@@ -149,7 +147,7 @@ export const systemMastersService = {
       rows.map(async (row) => {
         if (!isMasterType(row.masterType)) return null;
         const record = await loadRegistryRecord(row.masterType, row.masterId);
-        if (!record || record.deletedAt !== null || record.status === 'ARCHIVED') return null;
+        if (!record || record.status !== 'ACTIVE') return null;
         const info = masterTypeInfo(row.masterType);
         const hiddenBy = row.hiddenByUserId
           ? await prisma.user.findUnique({

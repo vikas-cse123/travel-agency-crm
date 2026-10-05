@@ -799,7 +799,7 @@ describe('Phase 15 booking master references and conversion', () => {
     }
   });
 
-  it('converts even when a linked master was archived after quoting', async () => {
+  it('converts even when a linked master was hard-deleted after quoting', async () => {
     const client = await owner();
     const m = await masters(client);
     const lead = (await client.post('/api/queries', leadPayload())).body.data;
@@ -812,13 +812,20 @@ describe('Phase 15 booking master references and conversion', () => {
       where: { id: quotation.id },
       data: { status: 'ACCEPTED', acceptedVersionId: version.id, acceptedAt: new Date() },
     });
-    await client.delete(`/api/masters/vehicles/${m.vehicle.id}`); // archive
+    // Hard delete nulls the quotation link; the snapshot survives.
+    expect((await client.delete(`/api/masters/vehicles/${m.vehicle.id}`)).status).toBe(200);
+    expect(
+      await db.quotationVersionService.findFirst({
+        where: { quotationVersionId: version.id, serviceType: 'VEHICLE_TRANSFER' },
+      }),
+    ).toMatchObject({ vehicleId: null, name: 'Transfer' });
     const response = await client.post(`/api/quotations/${quotation.id}/convert-to-booking`, {});
     expect(response.status).toBe(201);
     const vehicleRow = await db.bookingService.findFirstOrThrow({
       where: { bookingId: response.body.data.id, serviceType: 'VEHICLE_TRANSFER' },
     });
-    expect(vehicleRow.vehicleId).toBe(m.vehicle.id);
+    expect(vehicleRow.vehicleId).toBeNull();
+    expect(vehicleRow.name).toBe('Transfer');
   });
 
   it('accepts a master on a manual service but rejects a cross-tenant one', async () => {

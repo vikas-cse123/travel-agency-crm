@@ -17,7 +17,7 @@ const LARGE = new URLSearchParams('pageSize=100&status=ACTIVE');
 interface FormValues {
   destinationId: string;
   name: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  status: 'ACTIVE' | 'INACTIVE';
   sections: { title: string; content: string }[];
 }
 
@@ -126,7 +126,6 @@ export function VisaTypeFormPage() {
               <select className={fieldClass} {...form.register('status')}>
                 <option value="ACTIVE">ACTIVE</option>
                 <option value="INACTIVE">INACTIVE</option>
-                <option value="ARCHIVED">ARCHIVED</option>
               </select>
             </label>
           </div>

@@ -31,8 +31,11 @@ import type { MastersRequestContext } from './airlines.service.js';
 import { sanitizeRichText } from './masters.service.js';
 import {
   appendMasterImage,
+  collectMasterStorageKeys,
+  deleteMasterStorageKeys,
   findMasterImage,
   masterImageWriteData,
+  partitionKeysBySnapshotReferences,
   presentMasterImages,
   removeMasterImage,
   reorderMasterImages,
@@ -115,7 +118,6 @@ function presentCruise<T extends Record<string, unknown>>(
   const {
     companyId,
     normalizedName,
-    deletedAt,
     imageBucket,
     imageObjectKey,
     imageStorageProvider,
@@ -128,7 +130,6 @@ function presentCruise<T extends Record<string, unknown>>(
   } = row;
   void companyId;
   void normalizedName;
-  void deletedAt;
   void imageBucket;
   void imageStorageProvider;
   void pendingImageObjectKey;
@@ -191,7 +192,7 @@ async function getCruise(
     where: {
       id: cruiseId,
       ...buildVisibleWhere(scope),
-      ...(canManageCruises ? {} : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageCruises ? {} : { status: 'ACTIVE' }),
     },
     include: cruiseInclude,
   });
@@ -243,11 +244,7 @@ export const cruisesService = {
     const status = query.status ? (String(query.status) as MasterStatus) : undefined;
     const where: Prisma.CruiseWhereInput = {
       ...buildVisibleWhere(scope),
-      ...(canManageCruises
-        ? status === 'ARCHIVED'
-          ? { status: 'ARCHIVED' }
-          : { deletedAt: null, ...(status ? { status } : {}) }
-        : { status: 'ACTIVE', deletedAt: null }),
+      ...(canManageCruises ? { ...(status ? { status } : {}) } : { status: 'ACTIVE' }),
       ...(search
         ? {
             OR: [
@@ -300,7 +297,6 @@ export const cruisesService = {
       where: {
         ...buildVisibleWhere(scope),
         status: 'ACTIVE',
-        deletedAt: null,
         ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
       },
       orderBy: { name: 'asc' },
@@ -395,9 +391,7 @@ export const cruisesService = {
           data: {
             ...writeData(input),
             updatedById: auth.userId,
-            ...(input.status
-              ? { status: input.status, deletedAt: input.status === 'ARCHIVED' ? new Date() : null }
-              : {}),
+            ...(input.status ? { status: input.status } : {}),
           },
           include: cruiseInclude,
         });
@@ -429,16 +423,11 @@ export const cruisesService = {
         data: {
           status,
           updatedById: auth.userId,
-          deletedAt: status === 'ARCHIVED' ? new Date() : null,
         },
         include: cruiseInclude,
       });
-      const action =
-        current.status === 'ARCHIVED' && status !== 'ARCHIVED'
-          ? 'CRUISE_RESTORED'
-          : 'CRUISE_STATUS_CHANGED';
       await tx.activityLog.create({
-        data: audit(auth, action, current.id, context, {
+        data: audit(auth, 'CRUISE_STATUS_CHANGED', current.id, context, {
           previousStatus: current.status,
           status,
         }),
@@ -448,20 +437,37 @@ export const cruisesService = {
     return presentCruise(cruise as unknown as Record<string, unknown>, true, scope);
   },
 
-  async archive(auth: AuthContext, cruiseId: string, context: MastersRequestContext) {
+  async remove(auth: AuthContext, cruiseId: string, context: MastersRequestContext) {
     const scope = await resolveMasterScope(auth, MASTER_TYPE.CRUISE);
     const current = await getCruise(auth, cruiseId, scope, true);
     assertCanModifyMaster(current, scope);
-    const cruise = await prisma.$transaction(async (tx) => {
-      const updated = await tx.cruise.update({
-        where: { id: current.id },
-        data: { status: 'ARCHIVED', deletedAt: new Date(), updatedById: auth.userId },
-        include: cruiseInclude,
-      });
-      await tx.activityLog.create({ data: audit(auth, 'CRUISE_ARCHIVED', current.id, context) });
-      return updated;
+    const storageKeys = collectMasterStorageKeys(current, auth.companyId);
+    const { deletable, retained } = await partitionKeysBySnapshotReferences(storageKeys);
+    const s3Failures = await deleteMasterStorageKeys(deletable, {
+      masterType: 'CRUISE',
+      masterId: current.id,
     });
-    return presentCruise(cruise as unknown as Record<string, unknown>, true, scope);
+    if (s3Failures.length > 0)
+      throw new ValidationError(
+        `Failed to delete ${s3Failures.length} associated file(s) from storage. Cruise not deleted. Please retry.`,
+      );
+    const metadata = { name: current.name, retainedStorageFiles: retained.length };
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Room types cascade automatically; quotation/booking links are SetNull.
+        await tx.cruise.delete({ where: { id: current.id } });
+        await tx.activityLog.create({
+          data: audit(auth, 'CRUISE_DELETED', current.id, context, metadata),
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003')
+        throw new ConflictError(
+          'Cannot delete this cruise because it is being used by existing records.',
+        );
+      throw error;
+    }
+    return { deleted: true, id: current.id };
   },
 
   async createImageUpload(auth: AuthContext, cruiseId: string, input: CruiseImageUploadInput) {

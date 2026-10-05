@@ -481,7 +481,7 @@ describe('WACRM lookups: itinerary destinations come from the Destinations maste
     expect(byValue.get(south.id)?.destinationValue).not.toBe(destNorth.id);
   });
 
-  it('excludes archived destinations and inactive cities', async () => {
+  it('excludes deleted destinations and inactive cities', async () => {
     const { admin, token } = await setup();
     const activeCity = await createCity(admin, 'Wacrm Active City');
     const retiringCity = await createCity(admin, 'Wacrm Retiring City');

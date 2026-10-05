@@ -30,6 +30,10 @@ import {
   pdfActivityImageOrCover,
   type PdfRichTextLine,
   type QuotationPdfInput,
+  addonPricingBoxes,
+  addonPricingGridHeight,
+  drawAddonPricingGrid,
+  type AddonPricingBox,
 } from './pdf.service.js';
 
 const W = 595.28;
@@ -2414,15 +2418,18 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
       hasVisaContent &&
       !addOns.some(({ service }) => /visa/i.test(service.name));
     if (addOns.length || hasVisaCard) {
+      const versionCurrency = input.version.currency;
       const cards: Array<{
         name: string;
         description: string;
         index: number | null;
+        boxes: AddonPricingBox[];
       }> = [
         ...addOns.map(({ service, index }) => ({
           name: service.name,
           description: clean(service.description) || clean(service.notes),
           index,
+          boxes: addonPricingBoxes(service, versionCurrency),
         })),
         ...(hasVisaCard
           ? [
@@ -2432,6 +2439,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
                   .filter(Boolean)
                   .join(' · '),
                 index: null,
+                boxes: [] as AddonPricingBox[],
               },
             ]
           : []),
@@ -2451,12 +2459,16 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
         const lines = wrapRichLinesToWidth(htmlToRichTextLines(card.description), textW, 10, 1.32);
         const descriptionHeight = measureRichHeight(lines, textW, 10, 1.32);
         const bodyHeight = image ? Math.max(descriptionHeight, ADDON_IMAGE_H) : descriptionHeight;
+        // Quotation-owned pricing snapshot as compact bordered tiles below the
+        // description. Legacy cards (no boxes) keep their exact old height.
+        const gridH = addonPricingGridHeight(card.boxes.length);
         return {
           ...card,
           lines,
           image,
           textW,
-          height: Math.min(610, Math.max(190, 116 + bodyHeight)),
+          gridH,
+          height: Math.min(610, Math.max(190, 116 + bodyHeight + gridH)),
         };
       });
       for (const [cardIndex, card] of measuredCards.entries()) {
@@ -2518,9 +2530,20 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
         }
         const onCard = card.lines.slice(
           0,
-          Math.max(0, Math.floor((card.height - 92) / cardLineHeight)),
+          Math.max(
+            0,
+            Math.floor((card.height - 92 - (card.gridH ? card.gridH + 8 : 0)) / cardLineHeight),
+          ),
         );
         drawRichLines(onCard, textX, top + 92, card.textW, 10, INK, 1.32);
+        if (card.boxes.length)
+          drawAddonPricingGrid(
+            doc,
+            card.boxes,
+            textX,
+            top + 92 + onCard.length * cardLineHeight + 8,
+            card.textW,
+          );
         y = top + card.height + 14;
         // A description taller than the card flows onto continuation pages as
         // plain text under the same heading, so it can never be drawn into the

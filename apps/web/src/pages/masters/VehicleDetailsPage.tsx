@@ -1,11 +1,10 @@
-import { Link, useParams } from 'react-router-dom';
-import { Archive, ArrowLeft, Bus, Pencil, RotateCcw } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Bus, Pencil, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useArchiveVehicle,
-  useRestoreVehicle,
+  useDeleteVehicle,
   useVehicle,
   vehicleImageUrl,
 } from '@/features/masters/masters.api';
@@ -19,12 +18,12 @@ function money(amount: number | null | undefined, currency: string): string {
 
 export function VehicleDetailsPage() {
   const { vehicleId = '' } = useParams<{ vehicleId: string }>();
+  const navigate = useNavigate();
   const vehicle = useVehicle(vehicleId);
-  const archive = useArchiveVehicle();
-  const restore = useRestoreVehicle();
+  const remove = useDeleteVehicle();
   const { hasPermission } = useAuth();
   const canUpdate = hasPermission(PERMISSIONS.MASTER_VEHICLES_UPDATE);
-  const canArchive = hasPermission(PERMISSIONS.MASTER_VEHICLES_DELETE);
+  const canDelete = hasPermission(PERMISSIONS.MASTER_VEHICLES_DELETE);
 
   if (vehicle.isPending) return <LoadingCard />;
   if (vehicle.isError)
@@ -72,21 +71,21 @@ export function VehicleDetailsPage() {
               </Button>
             </Link>
           )}
-          {canArchive && value.status !== 'ARCHIVED' && (
+          {canDelete && (
             <Button
               variant="danger"
+              isLoading={remove.isPending}
               onClick={() => {
-                if (window.confirm('Are you sure you want to delete this vehicle?')) {
-                  archive.mutate(vehicleId);
+                if (
+                  window.confirm(
+                    `Permanently delete vehicle ${value.name}? This action cannot be undone.`,
+                  )
+                ) {
+                  remove.mutate(vehicleId, { onSuccess: () => navigate('/masters/vehicles') });
                 }
               }}
             >
-              <Archive className="h-4 w-4" /> Archive
-            </Button>
-          )}
-          {canUpdate && value.status === 'ARCHIVED' && (
-            <Button variant="secondary" onClick={() => restore.mutate(vehicleId)}>
-              <RotateCcw className="h-4 w-4" /> Restore
+              <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
         </div>

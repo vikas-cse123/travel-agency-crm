@@ -186,7 +186,7 @@ describe('Phase 13B master pages', () => {
     ]);
   });
 
-  it('renders the hotel list with the default badge and archive action', async () => {
+  it('renders the hotel list with the default badge and delete action', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: RequestInfo | URL) =>
@@ -199,7 +199,7 @@ describe('Phase 13B master pages', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Azerbaijan/ }));
     expect((await screen.findAllByText('Shah Palace Hotel')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('Default').length).toBeGreaterThan(0);
-    expect(screen.getByLabelText('Archive Shah Palace Hotel')).toBeInTheDocument();
+    expect(screen.getByLabelText('Delete Shah Palace Hotel')).toBeInTheDocument();
   });
 
   it('shows hotel loading, empty and error states', async () => {
@@ -240,7 +240,7 @@ describe('Phase 13B master pages', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Hotels could not be loaded');
   });
 
-  it('hides create and archive controls from a read-only hotel role', async () => {
+  it('hides create and delete controls from a read-only hotel role', async () => {
     auth.permissions = new Set(['masters.hotels.view']);
     vi.stubGlobal(
       'fetch',
@@ -254,7 +254,7 @@ describe('Phase 13B master pages', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Azerbaijan/ }));
     await screen.findAllByText('Shah Palace Hotel');
     expect(screen.queryByRole('link', { name: 'Add New Hotel' })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Archive Shah Palace Hotel')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Delete Shah Palace Hotel')).not.toBeInTheDocument();
   });
 
   it('validates the hotel form and derives cities from the chosen destination', async () => {

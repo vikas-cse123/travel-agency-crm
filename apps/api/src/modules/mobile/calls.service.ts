@@ -39,7 +39,7 @@ export const callsService = {
         take: 3,
       });
       const queries = await prisma.query.findMany({
-        where: { companyId: auth.companyId, normalizedPhone: phoneNormForQuery, deletedAt: null },
+        where: { companyId: auth.companyId, normalizedPhone: phoneNormForQuery },
         select: { id: true, customerId: true, queryNumber: true, customerName: true },
         take: 3,
       });

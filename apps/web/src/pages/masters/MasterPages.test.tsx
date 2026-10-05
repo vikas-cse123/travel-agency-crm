@@ -191,7 +191,7 @@ describe('Phase 13A master pages', () => {
     renderWithProviders(<CitiesPage />);
     expect((await screen.findAllByText('Jaipur')).length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: 'Add New City' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Archive Jaipur')).toBeInTheDocument();
+    expect(screen.getByLabelText('Delete Jaipur')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Search cities'), 'jai');
     await userEvent.selectOptions(screen.getByLabelText('City country'), 'IN');
     await waitFor(() =>
@@ -237,7 +237,7 @@ describe('Phase 13A master pages', () => {
     });
   });
 
-  it('hides create, edit, archive, and status controls from a read-only role', async () => {
+  it('hides create, edit, delete, and status controls from a read-only role', async () => {
     auth.permissions = new Set(['masters.cities.view']);
     vi.stubGlobal(
       'fetch',
@@ -249,11 +249,11 @@ describe('Phase 13A master pages', () => {
     await screen.findAllByText('Jaipur');
     expect(screen.queryByRole('link', { name: 'Add New City' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Edit Jaipur')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Archive Jaipur')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Delete Jaipur')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('City status')).not.toBeInTheDocument();
   });
 
-  it('shows a Global badge and Hide action for a global City, without Edit or Archive', async () => {
+  it('shows a Global badge and Hide action for a global City, without Edit or Delete', async () => {
     auth.permissions = new Set([
       'masters.cities.view',
       'masters.cities.create',
@@ -283,9 +283,9 @@ describe('Phase 13A master pages', () => {
 
     // A Global badge marks the shared record (desktop + mobile render one each).
     expect(screen.getAllByText('Global').length).toBeGreaterThan(0);
-    // No Edit or Archive for a global record.
+    // No Edit or Delete for a global record.
     expect(screen.queryByLabelText('Edit Dubai')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Archive Dubai')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Delete Dubai')).not.toBeInTheDocument();
     // A Hide action is offered instead.
     const hide = screen.getByLabelText('Hide Dubai for this company');
     await userEvent.click(hide);

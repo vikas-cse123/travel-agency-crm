@@ -166,11 +166,9 @@ describe('Phase 13B hotels master', () => {
       (await db.hotel.findUniqueOrThrow({ where: { id: b.body.data.id } })).isDefaultForCity,
     ).toBe(true);
 
-    // Archiving the default hotel strips its default flag transactionally.
+    // Deleting the default hotel removes its row transactionally.
     expect((await client.delete(`/api/masters/hotels/${b.body.data.id}`)).status).toBe(200);
-    const archived = await db.hotel.findUniqueOrThrow({ where: { id: b.body.data.id } });
-    expect(archived).toMatchObject({ status: 'ARCHIVED', isDefaultForCity: false });
-    expect(archived.deletedAt).not.toBeNull();
+    expect(await db.hotel.findUnique({ where: { id: b.body.data.id } })).toBeNull();
   });
 
   it('manages room types and meal plans and redacts costing by permission', async () => {
@@ -225,7 +223,7 @@ describe('Phase 13B hotels master', () => {
     expect(stored.sellingPrice).toBeNull();
   });
 
-  it('enforces create and archive permissions for read-only roles', async () => {
+  it('enforces create and delete permissions for read-only roles', async () => {
     const client = await owner();
     const { city, destination } = await setupDestinationCity(client);
     const hotel = (await createHotel(client, destination.id, city.id)).body.data as { id: string };
@@ -283,7 +281,7 @@ describe('Phase 13B hotels master', () => {
     expect((await client.delete(`/api/masters/hotels/${hotel.id}/image`)).status).toBe(200);
   });
 
-  it('records hotel activity across create, default change and archive', async () => {
+  it('records hotel activity across create, default change and delete', async () => {
     const client = await owner();
     const { city, destination } = await setupDestinationCity(client);
     const hotel = (await createHotel(client, destination.id, city.id)).body.data as { id: string };
@@ -296,7 +294,7 @@ describe('Phase 13B hotels master', () => {
         'HOTEL_CREATED',
         'HOTEL_DEFAULT_CHANGED',
         'HOTEL_ROOM_TYPE_CREATED',
-        'HOTEL_ARCHIVED',
+        'HOTEL_DELETED',
       ]),
     );
   });
@@ -340,7 +338,7 @@ describe('Phase 13B airlines master', () => {
     expect(dupCode.status).toBe(409);
   });
 
-  it('lists, filters, updates, archives and isolates airlines by tenant', async () => {
+  it('lists, filters, updates, deletes and isolates airlines by tenant', async () => {
     const client = await owner();
     const a = (await createAirline(client, { name: 'Emirates', countryCode: 'AE' })).body.data as {
       id: string;
@@ -355,7 +353,7 @@ describe('Phase 13B airlines master', () => {
     });
     expect(updated.body.data).toMatchObject({ website: 'emirates.com' });
     expect((await client.delete(`/api/masters/airlines/${a.id}`)).status).toBe(200);
-    expect(await db.airline.count({ where: { id: a.id, status: 'ARCHIVED' } })).toBe(1);
+    expect(await db.airline.findUnique({ where: { id: a.id } })).toBeNull();
 
     const other = await owner('other@ha.test', 'Other Air');
     expect((await other.get(`/api/masters/airlines/${a.id}`)).status).toBe(404);

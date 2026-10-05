@@ -115,6 +115,29 @@ describe('Phase 18 settings page', () => {
     );
   });
 
+  it('saves the Google Maps link with the company profile', async () => {
+    const mock = stub(settings());
+    renderWithProviders(<SettingsPage />);
+    await screen.findByLabelText('Company name');
+    await userEvent.type(
+      screen.getByLabelText('Company Google Maps link'),
+      'https://maps.google.com/?q=Alambagh,Lucknow',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() =>
+      expect(
+        mock.mock.calls.some(([url, o]) => {
+          const body = o?.body ? JSON.parse(String(o.body)) : null;
+          return (
+            String(url).endsWith('/settings/profile') &&
+            o?.method === 'PATCH' &&
+            body?.googleMapsUrl === 'https://maps.google.com/?q=Alambagh,Lucknow'
+          );
+        }),
+      ).toBe(true),
+    );
+  });
+
   it('keeps primary colour data intact while hiding the control', async () => {
     stub(settings());
     renderWithProviders(<SettingsPage />);
