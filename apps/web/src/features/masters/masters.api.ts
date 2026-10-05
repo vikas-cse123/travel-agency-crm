@@ -245,7 +245,13 @@ export function useCreateDestination() {
   return useMutation({
     mutationFn: (input: DestinationInput) =>
       apiClient.post<Destination>('/masters/destinations', input),
-    onSuccess: () => invalidate(client, 'destinations'),
+    onSuccess: (saved) => {
+      // Seed the detail cache with the persisted record so the details page
+      // mounts on exactly what the server stored, then invalidate for a
+      // server-fresh re-read.
+      client.setQueryData(keys.destination(saved.id), saved);
+      invalidate(client, 'destinations');
+    },
   });
 }
 export function useUpdateDestination(id: string) {
@@ -253,7 +259,13 @@ export function useUpdateDestination(id: string) {
   return useMutation({
     mutationFn: (input: DestinationUpdateInput) =>
       apiClient.patch<Destination>(`/masters/destinations/${id}`, input),
-    onSuccess: () => invalidate(client, 'destinations', id),
+    onSuccess: (saved) => {
+      // Seed the detail cache with the persisted record so the details page
+      // mounts on exactly what the server stored — never on pre-save data —
+      // then invalidate for a server-fresh re-read.
+      client.setQueryData(keys.destination(id), saved);
+      invalidate(client, 'destinations', id);
+    },
   });
 }
 export function useDeleteDestination() {

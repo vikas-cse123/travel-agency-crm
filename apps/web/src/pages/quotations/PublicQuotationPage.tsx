@@ -61,7 +61,7 @@ import { PublicQuotationContact } from './PublicQuotationContact';
 import { PublicQuotationFooter } from './PublicQuotationFooter';
 import { BackToTop } from './BackToTop';
 import { QuotationLightbox } from './QuotationLightbox';
-import { scrollToSectionId } from './scroll';
+import { activeScrollSpyId, scrollToSectionId } from './scroll';
 import { serviceCardIcon, type ServiceCard } from './serviceCards';
 import { formatPublicQuotationNumber } from './quotationContact';
 import {
@@ -371,33 +371,45 @@ function SectionNav({ sticky }: { sticky: boolean }) {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // Scroll-spy: mark the chip for whichever section heading is currently near
-  // the top of the viewport (just below the sticky bar). The active id only
-  // changes when a heading enters the trigger band, so it persists smoothly
-  // between headings instead of flickering to empty.
+  // Scroll-spy: the active chip always tracks the section currently in view.
+  // The active section is the last heading at or above a trigger line just
+  // below the sticky bar (section headings carry scroll-margin-top, so an
+  // anchor scroll lands them exactly on that line). When the viewport reaches
+  // the bottom of the page the last section wins even if its heading rests
+  // below the line — short trailing sections such as Contact Us can never
+  // scroll fully under the bar, and without this the previous section would
+  // incorrectly keep the green state. Exactly one id is ever active.
   useEffect(() => {
     const nodes = sections
       .map((section) => document.getElementById(section.id))
       .filter((node): node is HTMLElement => Boolean(node));
     if (!nodes.length) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      setActiveId((current) => current || (nodes[0]?.id ?? ''));
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entered = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (entered[0]) setActiveId(entered[0].target.id);
-      },
-      // A thin band ~90px below the top (clearing the sticky nav).
-      { rootMargin: '-90px 0px -75% 0px', threshold: 0 },
-    );
-    nodes.forEach((node) => observer.observe(node));
-    // Default to the first section before any scroll happens.
-    setActiveId((current) => current || (nodes[0]?.id ?? ''));
-    return () => observer.disconnect();
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const tops = new Map(nodes.map((node) => [node.id, node.getBoundingClientRect().top]));
+      const next = activeScrollSpyId(
+        sections,
+        (id) => tops.get(id) ?? null,
+        {
+          scrollY: window.scrollY,
+          innerHeight: window.innerHeight,
+          documentHeight: document.documentElement.scrollHeight,
+        },
+      );
+      setActiveId((current) => (current === next ? current : next));
+    };
+    const schedule = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
   }, [sections]);
 
   // Keep the active chip centred within the horizontally scrollable bar (only

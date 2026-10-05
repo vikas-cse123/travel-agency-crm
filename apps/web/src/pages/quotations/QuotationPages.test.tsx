@@ -8230,24 +8230,35 @@ describe('Phase 8 quotation pages', () => {
       leadName: 'Aarav Mehta',
     };
 
-    it('shows the GST badge with the number directly below the phone row', () => {
+    it('shows the GST outline icon with the number as the last information row', () => {
       renderWithProviders(<PublicQuotationContact {...contactProps} />);
-      // Badge carries only "GST" (never "GSTIN"); the number is dynamic.
+      // Icon carries only "GST" (never "GSTIN"); the number is dynamic.
       expect(screen.getByText('GST', { exact: true })).toBeInTheDocument();
       expect(screen.getByText('29ABCDE1234F1Z5')).toBeInTheDocument();
       expect(screen.queryByText(/GSTIN/)).not.toBeInTheDocument();
-      // Order: phone row, then GST row, then email row.
+      const section = screen.getByRole('heading', { name: 'Contact Us' }).closest('section')!;
+      const gstRow = within(section).getByText('29ABCDE1234F1Z5').closest('p')!;
+      // Outline document icon with GST drawn inside: same size, colour,
+      // alignment and spacing as the other row icons, green stroke, and no
+      // filled badge anywhere in the row.
+      const gstIcon = gstRow.querySelector('svg');
+      expect(gstIcon?.getAttribute('class')).toContain('mt-0.5 h-4 w-4 shrink-0 text-emerald-600');
+      expect(gstIcon?.querySelector('text')?.textContent).toBe('GST');
+      expect(gstIcon?.getAttribute('fill')).toBe('none');
+      expect(gstRow.querySelector('[class*="bg-emerald"]')).toBeNull();
+      // Order: contact person, phone, email, address, then GST last —
+      // immediately before the Call Now / WhatsApp buttons.
+      const person = screen.getByText('Aditi Rao');
       const phone = screen.getByText('+91 90000 00000');
       const gst = screen.getByText('29ABCDE1234F1Z5');
       const email = screen.getByText('hello@alpha.test');
-      expect(
-        // eslint-disable-next-line no-bitwise
-        phone.compareDocumentPosition(gst) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(
-        // eslint-disable-next-line no-bitwise
-        gst.compareDocumentPosition(email) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
+      const address = screen.getByText('1 MG Road, Bengaluru');
+      const following = (node: Node, target: Node) =>
+        Boolean(node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(following(person, phone)).toBe(true);
+      expect(following(phone, email)).toBe(true);
+      expect(following(email, address)).toBe(true);
+      expect(following(address, gst)).toBe(true);
       // Phone, email, buttons unchanged.
       expect(screen.getByText('Call Now')).toBeInTheDocument();
       expect(screen.getByText('WhatsApp')).toBeInTheDocument();
@@ -8263,6 +8274,32 @@ describe('Phase 8 quotation pages', () => {
     it('hides the GST row for a blank GSTIN', () => {
       renderWithProviders(<PublicQuotationContact {...contactProps} gstin="   " />);
       expect(screen.queryByText('GST', { exact: true })).not.toBeInTheDocument();
+    });
+
+    it('uses the shared green MapPin for the Google Maps row and the WhatsApp brand glyph', () => {
+      renderWithProviders(
+        <PublicQuotationContact
+          {...contactProps}
+          googleMapsUrl="https://maps.google.com/?q=Lucknow"
+        />,
+      );
+      const section = screen.getByRole('heading', { name: 'Contact Us' }).closest('section')!;
+      // Google Maps row reuses the same MapPin icon + emerald classes as Address.
+      const mapsLink = within(section).getByRole('link', { name: /View on Google Maps/ });
+      const mapsIcon = mapsLink.closest('p')!.querySelector('svg');
+      const addressRow = within(section).getByText('1 MG Road, Bengaluru').closest('p')!;
+      const addressIcon = addressRow.querySelector('svg');
+      expect(mapsIcon?.getAttribute('class')).toBe(addressIcon?.getAttribute('class'));
+      // No multicolour Google Maps artwork remains anywhere in the card.
+      expect(section.querySelector('clipPath')).toBeNull();
+      // WhatsApp button carries a single-colour brand glyph, not MessageCircle.
+      const whatsapp = within(section).getByRole('link', { name: /WhatsApp/ });
+      const glyph = whatsapp.querySelector('svg');
+      expect(glyph).not.toBeNull();
+      expect(glyph!.querySelector('path')).not.toBeNull();
+      expect(glyph!.querySelector('circle')).toBeNull();
+      expect(glyph!.getAttribute('fill')).toBe('currentColor');
+      expect(glyph!.getAttribute('viewBox')).toBe('0 0 24 24');
     });
   });
 
@@ -9270,6 +9307,159 @@ describe('Phase 8 quotation pages', () => {
         headings[i - 1]!.compareDocumentPosition(headings[i]!) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     }
+  });
+
+  it('adds a Contact Us item to the Jump To nav after Policies that scrolls to the existing section', async () => {
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'hello@alpha.test',
+        phone: '+91 98765 43210',
+        website: null,
+        address: '1 MG Road, Bengaluru, Karnataka 560001',
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000001',
+        customerName: 'Aarav Mehta',
+        destinationSummary: 'Goa',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Goa proposal',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+        inclusionsHtml: '<ul><li>Hotel</li></ul>',
+        exclusionsHtml: null,
+        paymentPolicies: null,
+        cancellationPolicies: null,
+        bookingTerms: null,
+      },
+      downloadUrl: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<(input: RequestInfo | URL, options?: RequestInit) => Promise<Response>>(
+        async () => response(publicData),
+      ),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+
+    // Exactly one Contact Us section exists; the stable anchor points at its heading.
+    expect(screen.getAllByRole('heading', { name: 'Contact Us' })).toHaveLength(1);
+    const heading = screen.getByRole('heading', { name: 'Contact Us' });
+    expect(document.getElementById('contact-us')).toBe(heading);
+
+    // The Jump To nav lists Contact Us immediately after Policies.
+    const nav = screen.getByRole('navigation', { name: 'Quotation sections' });
+    const labels = within(nav)
+      .getAllByRole('button')
+      .map((chip) => chip.textContent);
+    const policiesIndex = labels.indexOf('Policies');
+    expect(policiesIndex).toBeGreaterThanOrEqual(0);
+    expect(labels[policiesIndex + 1]).toBe('Contact Us');
+
+    // Clicking the chip scrolls to the existing Contact Us heading.
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    await userEvent.click(within(nav).getByRole('button', { name: 'Contact Us' }));
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(heading).toBeInTheDocument();
+  });
+
+  it('moves the green Jump To state between Policies and Contact Us on click', async () => {
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'hello@alpha.test',
+        phone: '+91 98765 43210',
+        website: null,
+        address: '1 MG Road, Bengaluru, Karnataka 560001',
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000001',
+        customerName: 'Aarav Mehta',
+        destinationSummary: 'Goa',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Goa proposal',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+        inclusionsHtml: '<ul><li>Hotel</li></ul>',
+        exclusionsHtml: null,
+        paymentPolicies: null,
+        cancellationPolicies: null,
+        bookingTerms: null,
+      },
+      downloadUrl: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<(input: RequestInfo | URL, options?: RequestInit) => Promise<Response>>(
+        async () => response(publicData),
+      ),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const nav = screen.getByRole('navigation', { name: 'Quotation sections' });
+    const chip = (name: string) => within(nav).getByRole('button', { name });
+    const isActive = (element: HTMLElement) => element.className.includes('bg-emerald-600');
+
+    await userEvent.click(chip('Policies'));
+    expect(isActive(chip('Policies'))).toBe(true);
+    expect(isActive(chip('Contact Us'))).toBe(false);
+
+    await userEvent.click(chip('Contact Us'));
+    expect(isActive(chip('Contact Us'))).toBe(true);
+    expect(isActive(chip('Policies'))).toBe(false);
+
+    // Exactly one navigation item is ever green.
+    expect(within(nav).getAllByRole('button').filter(isActive)).toHaveLength(1);
   });
 });
 

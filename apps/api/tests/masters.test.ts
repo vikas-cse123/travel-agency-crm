@@ -211,6 +211,48 @@ describe('Phase 13A cities and destinations masters', () => {
     ).toBe(400);
   });
 
+  it('persists every destination policy through edit-save-details-refresh identically', async () => {
+    const client = await owner();
+    const kochi = await createCity(client, 'Kochi');
+    const created = await createDestination(client, [kochi.id], 'Kerala Backwaters');
+    const childPolicy =
+      '<ul><li>Age 1–2: Free (no bed)</li><li>Age 3–4: 30% of adult price (no bed)</li>' +
+      '<li>Age 5–8: 50% of adult price (no bed)</li>' +
+      '<li>Age 9–11: 75% of adult price (no bed); 85% of adult price with bed</li>' +
+      '<li>Age 12 and above: Adult price (with bed)</li></ul><h3>Important Notes</h3>' +
+      '<ul><li>Vehicle usage will remain strictly according to the confirmed itinerary.</li>' +
+      '<li>All scheduled pickups will take place from the designated hotel pickup point or hotel lobby.</li>' +
+      '<li>No amendments will be permitted after the tour has commenced.</li></ul>';
+    const policies = {
+      inclusions: '<ul><li>Daily breakfast</li><li>Airport transfers</li></ul>',
+      exclusions: '<ul><li>Personal expenses</li></ul>',
+      childPolicy,
+      paymentPolicies: '<p>50% advance to confirm the booking.</p>',
+      cancellationPolicies: '<p>Free cancellation up to 7 days before travel.</p>',
+      bookingTerms: '<p>Valid photo ID required for all travellers.</p>',
+    };
+    const patched = await client.patch(`/api/masters/destinations/${created.id}`, policies);
+    expect(patched.status).toBe(200);
+    // PATCH response echoes every saved policy, including the Important Notes block.
+    expect(patched.body.data).toMatchObject(policies);
+
+    // Details GET reads the same persisted values back identically.
+    const details = await client.get(`/api/masters/destinations/${created.id}`);
+    expect(details.status).toBe(200);
+    expect(details.body.data).toMatchObject(policies);
+
+    // A second edit overwrites cleanly and a fresh read still matches.
+    const secondChildPolicy = '<ul><li>Age 1–2: Free (no bed)</li></ul>';
+    expect(
+      (await client.patch(`/api/masters/destinations/${created.id}`, { childPolicy: secondChildPolicy }))
+        .status,
+    ).toBe(200);
+    const refreshed = await client.get(`/api/masters/destinations/${created.id}`);
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.data.childPolicy).toBe(secondChildPolicy);
+    expect(refreshed.body.data.inclusions).toBe(policies.inclusions);
+  });
+
   it('supports domestic/international uniqueness, destination filters, counts, and isolation', async () => {
     const client = await owner();
     const jaipur = await createCity(client);
