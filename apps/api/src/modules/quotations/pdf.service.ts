@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import {
   cabinLuggageLabel,
   formatAgeList,
+  formatDayPrefixedTitle,
   formatItineraryDayTitle,
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
@@ -2343,7 +2344,12 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
       planner.add(sectionHeaderBlock('Tour Itinerary'));
       sightDays.forEach((day, i) => {
         const validActivities = (day.activities ?? []).filter((a) => a.name || a.description);
-        const dayTitle = formatItineraryDayTitle(day.dayNumber ?? i + 1, day.title);
+        // Day heading carries the canonical day prefix (same rule as the
+        // Weblink): stored DAY prefixes render exactly, others receive
+        // `DAY N |`. Per-activity blocks below keep their own names.
+        const dayTitle =
+          formatDayPrefixedTitle(day.dayNumber ?? i + 1, day.title) ??
+          formatItineraryDayTitle(day.dayNumber ?? i + 1, null);
         const mealEntries = [
           ['breakfast', '(B) Breakfast'],
           ['lunch', '(L) Lunch'],

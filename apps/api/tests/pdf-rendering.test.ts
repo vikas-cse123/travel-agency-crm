@@ -2892,6 +2892,59 @@ describe('PDF rendering with long content', () => {
     expect(visible).not.toContain('Singapore Visa');
   });
 
+  it('prefixes Classic PDF tour-itinerary day headings with DAY N like the Weblink', async () => {
+    const pdf = await renderQuotationPdf({
+      company: footerEmptyCompanyForOverlap(),
+      consultant: { name: 'Only Name', phone: null, email: null },
+      quotation: quotationOverlap(),
+      version: {
+        ...baseVersionOverlap(),
+        sightseeingDetails: {
+          include: true,
+          days: [
+            {
+              dayNumber: 1,
+              title: 'Arrival in Singapore',
+              city: 'Singapore',
+              date: null,
+              meals: { breakfast: false, lunch: false, dinner: false },
+              dailyTransfer: 'NO_TRANSFER',
+              activities: [
+                { name: 'Night Safari', description: null, startTime: null },
+                { name: 'Universal Studios', description: null, startTime: null },
+              ],
+            },
+            {
+              dayNumber: 2,
+              title: 'DAY 2 | Singapore City Tour',
+              city: 'Singapore',
+              date: null,
+              meals: { breakfast: false, lunch: false, dinner: false },
+              dailyTransfer: 'NO_TRANSFER',
+              activities: [{ name: 'Shopping', description: null, startTime: null }],
+            },
+          ],
+        },
+      },
+    });
+    expect(isPdf(pdf)).toBe(true);
+    const flat = pdfText(pdf).replace(/\s+/g, ' ');
+    // CASE 1: bare day title gains the generated prefix.
+    expect(flat).toContain('DAY 1 | Arrival in Singapore');
+    // CASE 2: stored prefix preserved exactly.
+    expect(flat).toContain('DAY 2 | Singapore City Tour');
+    // CASE 3: same-day activities keep their own names with no repeated prefix.
+    expect(flat).toContain('Night Safari');
+    expect(flat).toContain('Universal Studios');
+    expect(flat).toContain('Shopping');
+    expect(flat).not.toContain('DAY 1 | Night Safari');
+    expect(flat).not.toContain('DAY 1 | Universal Studios');
+    expect(flat).not.toContain('DAY 2 | Shopping');
+    // CASE 5: never duplicated.
+    expect(flat).not.toMatch(/DAY 1 \| DAY 1/);
+    expect(flat).not.toMatch(/DAY 2 \| DAY 2/);
+  });
+
   it('renders the saved per-meal transfer mode in the itinerary meals (No Transfer)', async () => {
     const pdf = await renderQuotationPdf({
       company: footerEmptyCompanyForOverlap(),
