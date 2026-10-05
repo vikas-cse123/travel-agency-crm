@@ -584,7 +584,7 @@ export function LeadForm({
                 label={
                   (
                     {
-                      leadSource: 'Received *',
+                      leadSource: 'Lead Source *',
                       leadType: 'Type *',
                       leadStage: 'Stage *',
                       priority: 'Priority *',

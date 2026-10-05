@@ -42,7 +42,6 @@ import {
   resolveItineraryActivityImage,
   resolveItineraryDayImage,
   resolveQuotationPricing,
-  stripItineraryDayPrefixes,
   resolveWeblinkSectionOrder,
   normalizeFaqs,
   getFlightPerTravelerBreakdown,
@@ -1088,9 +1087,28 @@ function normalizeItineraryDay(raw: unknown, fallbackNumber: number) {
   };
 }
 
+/**
+ * Weblink-only sightseeing day-title rule (stored data is never modified, and
+ * builder/PDF/WhatsApp/email paths are untouched): a stored title that
+ * already begins with a day number — any separator (`|`, `-`, `:`, or none),
+ * any case — renders EXACTLY as stored, never stripped, renumbered, or
+ * re-separated. A title without a day prefix receives the sequential day
+ * number with a single space and no extra separator (`DAY N Title`).
+ */
+const weblinkDayPrefixPattern = /^day\s*\d+/i;
+function weblinkItineraryDayTitle(
+  dayNumber: number,
+  title: string | null | undefined,
+): string | null {
+  const raw = (title ?? '').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  if (weblinkDayPrefixPattern.test(raw)) return raw;
+  return `DAY ${dayNumber} ${raw}`;
+}
+
 function itineraryDayLabel(day: ReturnType<typeof normalizeItineraryDay>): string {
-  const base = stripItineraryDayPrefixes(day.title);
-  if (base) return formatItineraryDayTitle(day.dayNumber, base);
+  const titled = weblinkItineraryDayTitle(day.dayNumber, day.title);
+  if (titled) return titled;
   const primaryTitle = day.activities.find((activity) => activity.name?.trim())?.name?.trim();
   if (primaryTitle) return formatItineraryDayTitle(day.dayNumber, primaryTitle);
   if (day.city?.trim()) return formatItineraryDayTitle(day.dayNumber, day.city);
@@ -2815,16 +2833,23 @@ export function PublicQuotationPage() {
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                               {pricingOptions.map((option) => {
                                 const amount = formatAddonOptionPrice(option, v.currency);
+                                const label = (option.label ?? '').trim();
                                 return (
                                   <div
                                     key={option.id}
                                     className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
                                   >
-                                    <p className="break-words text-xs font-medium leading-4 text-[#000000]">
-                                      {(option.label ?? '').trim() || 'Standard'}
-                                    </p>
+                                    {label && (
+                                      <p className="break-words text-xs font-medium leading-4 text-[#000000]">
+                                        {label}
+                                      </p>
+                                    )}
                                     {amount != null && (
-                                      <p className="mt-0.5 break-words text-sm font-semibold leading-5 text-[#000000]">
+                                      <p
+                                        className={`break-words text-sm font-semibold leading-5 text-[#000000] ${
+                                          label ? 'mt-0.5' : ''
+                                        }`}
+                                      >
                                         {amount}
                                       </p>
                                     )}
