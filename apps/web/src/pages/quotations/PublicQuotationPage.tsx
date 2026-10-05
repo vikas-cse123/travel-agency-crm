@@ -31,6 +31,7 @@ import {
 import { useParams } from 'react-router-dom';
 import {
   cabinLuggageLabel,
+  formatDayPrefixedTitle,
   formatItineraryDayTitle,
   formatAgeList,
   hotelStayNights,
@@ -1087,27 +1088,10 @@ function normalizeItineraryDay(raw: unknown, fallbackNumber: number) {
   };
 }
 
-/**
- * Weblink-only sightseeing day-title rule (stored data is never modified, and
- * builder/PDF/WhatsApp/email paths are untouched): a stored title that
- * already begins with a day number — any separator (`|`, `-`, `:`, or none),
- * any case — renders EXACTLY as stored, never stripped, renumbered, or
- * re-separated. A title without a day prefix receives the sequential day
- * number with a single space and no extra separator (`DAY N Title`).
- */
-const weblinkDayPrefixPattern = /^day\s*\d+/i;
-function weblinkItineraryDayTitle(
-  dayNumber: number,
-  title: string | null | undefined,
-): string | null {
-  const raw = (title ?? '').replace(/\s+/g, ' ').trim();
-  if (!raw) return null;
-  if (weblinkDayPrefixPattern.test(raw)) return raw;
-  return `DAY ${dayNumber} ${raw}`;
-}
-
 function itineraryDayLabel(day: ReturnType<typeof normalizeItineraryDay>): string {
-  const titled = weblinkItineraryDayTitle(day.dayNumber, day.title);
+  // Single shared preserve-or-prefix rule (see formatDayPrefixedTitle):
+  // stored DAY prefixes render exactly, others receive `DAY N | Title`.
+  const titled = formatDayPrefixedTitle(day.dayNumber, day.title);
   if (titled) return titled;
   const primaryTitle = day.activities.find((activity) => activity.name?.trim())?.name?.trim();
   if (primaryTitle) return formatItineraryDayTitle(day.dayNumber, primaryTitle);

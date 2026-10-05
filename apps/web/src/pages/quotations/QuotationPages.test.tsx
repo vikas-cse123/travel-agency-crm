@@ -4279,19 +4279,19 @@ describe('Phase 8 quotation pages', () => {
     ]);
     await screen.findByText('Custom Package for Mira Shah');
 
-    // CASE B + D: single space, no invented separator.
+    // CASE B + D: auto-generated prefix uses exactly `DAY N | Title`.
     expect(
-      screen.getByRole('heading', { name: 'DAY 1 ARRIVAL IN LANGKAWI' }),
+      screen.getByRole('heading', { name: 'DAY 1 | ARRIVAL IN LANGKAWI' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { name: 'DAY 2 LANGKAWI ADVENTURE' }),
+      screen.getByRole('heading', { name: 'DAY 2 | LANGKAWI ADVENTURE' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { name: 'DAY 3 KUALA LUMPUR CITY TOUR' }),
+      screen.getByRole('heading', { name: 'DAY 3 | KUALA LUMPUR CITY TOUR' }),
     ).toBeInTheDocument();
     expect(screen.queryByText('DAY 1 - ARRIVAL IN LANGKAWI')).not.toBeInTheDocument();
     expect(screen.queryByText('DAY 1: ARRIVAL IN LANGKAWI')).not.toBeInTheDocument();
-    expect(screen.queryByText('DAY 1 | ARRIVAL IN LANGKAWI')).not.toBeInTheDocument();
+    expect(screen.queryByText('DAY 1 ARRIVAL IN LANGKAWI')).not.toBeInTheDocument();
   });
 
   it('mixes preserved and auto-numbered Weblink day titles without duplication', async () => {
@@ -4307,10 +4307,32 @@ describe('Phase 8 quotation pages', () => {
       screen.getByRole('heading', { name: 'DAY 1 | ARRIVAL IN LANGKAWI' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { name: 'DAY 2 LANGKAWI ADVENTURE' }),
+      screen.getByRole('heading', { name: 'DAY 2 | LANGKAWI ADVENTURE' }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: 'DAY 3 | KUALA LUMPUR CITY TOUR' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/DAY \d+ DAY \d+/)).not.toBeInTheDocument();
+    expect(screen.queryByText('DAY 2 LANGKAWI ADVENTURE')).not.toBeInTheDocument();
+  });
+
+  it('auto-prefixes with `DAY N |` while preserving separator-less existing prefixes', async () => {
+    renderWeblinkItinerary([
+      { dayNumber: 1, title: 'Arrival in Singapore – Explore Changi Airport & Hotel Check-in' },
+      { dayNumber: 2, title: 'Night Safari' },
+      { dayNumber: 4, title: 'DAY 4 Kuala Lumpur City Tour' },
+    ]);
+    await screen.findByText('Custom Package for Mira Shah');
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'DAY 1 | Arrival in Singapore – Explore Changi Airport & Hotel Check-in',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'DAY 2 | Night Safari' })).toBeInTheDocument();
+    // Existing prefix without a separator is preserved, not re-prefixed.
+    expect(
+      screen.getByRole('heading', { name: 'DAY 4 Kuala Lumpur City Tour' }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/DAY \d+ DAY \d+/)).not.toBeInTheDocument();
   });
@@ -5977,7 +5999,7 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
     await screen.findByText('Custom Package for Mira Shah');
-    expect(screen.getByRole('heading', { name: 'DAY 3 Legacy Day' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'DAY 3 | Legacy Day' })).toBeInTheDocument();
     expect(screen.getByText('Legacy Activity')).toBeInTheDocument();
     expect(screen.getByText('Private Transfer')).toBeInTheDocument();
     // Array meals normalize to booleans; the shared WITH_TRANSFER mode renders per meal.
@@ -16005,6 +16027,307 @@ describe.skip('Phase 14 master selectors', () => {
     );
   });
 });
+
+  it('keeps the first activity as the sightseeing day title (CASE 1)', async () => {
+    const quotation = builderQuotation({
+      destinationSummary: 'Singapore',
+      sightseeingDetails: {
+        include: true,
+        sectionTitle: 'Sightseeing & Experiences',
+        amount: '0',
+        description: null,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Universal studios',
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [
+              {
+                sightseeingId: null,
+                name: 'Universal studios',
+                description: null,
+                startTime: null,
+                duration: null,
+                city: null,
+                imageUrl: null,
+                sequence: null,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    vi.stubGlobal('fetch', masterFetch(quotation));
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+  });
+
+  it('never replaces the day title when later activities are picked (CASE 2, CASE 3, CASE 8)', async () => {
+    const masters = [
+      { id: 'sg-u', title: 'Universal studios' },
+      { id: 'sg-n', title: 'Night safari' },
+      { id: 'sg-l', title: 'LEGOLAND Malaysia' },
+    ].map(({ id, title }, index) => ({
+      id,
+      title,
+      sequence: index + 1,
+      status: 'ACTIVE',
+      destination: { id: 'dest-sg', name: 'Singapore', countryName: 'Singapore' },
+      city: { id: 'city-sg', name: 'Singapore' },
+      estimatedHours: 2,
+      suggestedStartTime: null,
+      description: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }));
+    const quotation = builderQuotation({
+      destinationSummary: 'Singapore',
+      sightseeingDetails: {
+        include: true,
+        sectionTitle: 'Sightseeing & Experiences',
+        amount: '0',
+        description: null,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Day 1',
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [
+              {
+                sightseeingId: null,
+                name: null,
+                description: null,
+                startTime: null,
+                duration: null,
+                city: null,
+                imageUrl: null,
+                sequence: null,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    vi.stubGlobal('fetch', masterFetch(quotation, { '/masters/sightseeing': page(masters) }));
+    renderBuilderPage();
+    await openTab('Sightseeing');
+
+    const pickActivity = async (slot: number, masterTitle: string) => {
+      const picker = await screen.findByLabelText(`Day 1 activity ${slot}`);
+      await openActivityPicker(picker, masterTitle);
+      fireEvent.change(picker, { target: { value: masterTitle } });
+      await waitFor(() =>
+        expect(screen.getByLabelText(`Day 1 activity ${slot} name`)).toHaveValue(masterTitle),
+      );
+    };
+
+    // First pick defines the day title.
+    await pickActivity(1, 'Universal studios');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+    // Adding + picking later activities must never hijack it (the reported bug
+    // showed the last pick, LEGOLAND Malaysia, as the day title).
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add activity after activity 1 on day 1' }),
+    );
+    await pickActivity(2, 'Night safari');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add activity after activity 2 on day 1' }),
+    );
+    await pickActivity(3, 'LEGOLAND Malaysia');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+  });
+
+  it('promotes the next activity when the first is removed (CASE 5, CASE 6)', async () => {
+    const named = (name: string | null) => ({
+      sightseeingId: null,
+      name,
+      description: null,
+      startTime: null,
+      duration: null,
+      city: null,
+      imageUrl: null,
+      sequence: null,
+    });
+    const quotation = builderQuotation({
+      destinationSummary: 'Singapore',
+      sightseeingDetails: {
+        include: true,
+        sectionTitle: 'Sightseeing & Experiences',
+        amount: '0',
+        description: null,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Universal studios',
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [named('Universal studios'), named('Night safari'), named('LEGOLAND Malaysia')],
+          },
+        ],
+      },
+    });
+    vi.stubGlobal('fetch', masterFetch(quotation));
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+
+    // Remove the first activity -> the next one is promoted.
+    await userEvent.click(screen.getAllByRole('button', { name: 'Remove activity' })[0]!);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Night safari'),
+    );
+    // Remove again -> the last remaining activity defines the title.
+    await userEvent.click(screen.getAllByRole('button', { name: 'Remove activity' })[0]!);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('LEGOLAND Malaysia'),
+    );
+    // Removing a non-first activity leaves the title alone.
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add activity after activity 1 on day 1' }),
+    );
+    fireEvent.change(screen.getByLabelText('Day 1 activity 2 name'), {
+      target: { value: 'Night safari' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Day 1 activity 2 name')).toHaveValue('Night safari'),
+    );
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('LEGOLAND Malaysia');
+  });
+
+  it('keeps each day title independent across days (CASE 7)', async () => {
+    const named = (name: string | null) => ({
+      sightseeingId: null,
+      name,
+      description: null,
+      startTime: null,
+      duration: null,
+      city: null,
+      imageUrl: null,
+      sequence: null,
+    });
+    const quotation = builderQuotation({
+      destinationSummary: 'Singapore',
+      sightseeingDetails: {
+        include: true,
+        sectionTitle: 'Sightseeing & Experiences',
+        amount: '0',
+        description: null,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Universal studios',
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [named('Universal studios'), named('Night safari')],
+          },
+          {
+            dayNumber: 2,
+            title: 'Singapore City Tour',
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [named('Singapore City Tour'), named('Shopping')],
+          },
+        ],
+      },
+    });
+    vi.stubGlobal('fetch', masterFetch(quotation));
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+    // Mutating day 1 must never affect day 2's title and vice versa.
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add activity after activity 1 on day 1' }),
+    );
+    fireEvent.change(screen.getByLabelText('Day 1 activity 2 name'), {
+      target: { value: 'Sentosa' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Day 1 activity 2 name')).toHaveValue('Sentosa'),
+    );
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+    // Switch to day 2: its title follows its own first activity.
+    await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 2' }));
+    expect(screen.getByLabelText('Sightseeing day 2 title')).toHaveValue('Singapore City Tour');
+    // And back to day 1: still independent.
+    await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 1' }));
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('Universal studios');
+  });
+
+  it('mirrors first-activity custom-name edits and ignores other slots', async () => {
+    const named = (name: string | null) => ({
+      sightseeingId: null,
+      name,
+      description: null,
+      startTime: null,
+      duration: null,
+      city: null,
+      imageUrl: null,
+      sequence: null,
+    });
+    const quotation = builderQuotation({
+      destinationSummary: 'Singapore',
+      sightseeingDetails: {
+        include: true,
+        sectionTitle: 'Sightseeing & Experiences',
+        amount: '0',
+        description: null,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Universal studios',
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [named('Universal studios'), named('Night safari')],
+          },
+        ],
+      },
+    });
+    vi.stubGlobal('fetch', masterFetch(quotation));
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    // Renaming the first activity renames the day.
+    fireEvent.change(screen.getByLabelText('Day 1 activity 1 name'), {
+      target: { value: 'Universal Studios Singapore' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue(
+        'Universal Studios Singapore',
+      ),
+    );
+    // Renaming any other activity leaves the day title alone.
+    fireEvent.change(screen.getByLabelText('Day 1 activity 2 name'), {
+      target: { value: 'Night Safari Evening' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Day 1 activity 2 name')).toHaveValue('Night Safari Evening'),
+    );
+    expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue(
+      'Universal Studios Singapore',
+    );
+  });
+
 
 describe('public quotation contact message helpers', () => {
   it('formats the public weblink quotation ID as a leading-# number', () => {

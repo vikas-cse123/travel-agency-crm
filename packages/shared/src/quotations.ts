@@ -108,6 +108,26 @@ export function formatItineraryDayTitle(
   return raw;
 }
 
+/**
+ * Preserve-or-prefix day rule shared by the public Weblink and the WhatsApp
+ * summary so both follow identical rules from this single implementation
+ * (stored data is never modified): a title that already begins with a day
+ * number — any separator (`|`, `-`, `:`, or none), any case — renders EXACTLY
+ * as stored, never stripped, renumbered, or re-separated. A title without a
+ * day prefix receives the sequential day number with a pipe separator
+ * (`DAY N | Title`). Blank titles resolve to null so callers can fall back.
+ */
+const dayPrefixPattern = /^day\s*\d+/i;
+export function formatDayPrefixedTitle(
+  dayNumber: number,
+  value: string | null | undefined,
+): string | null {
+  const raw = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  if (dayPrefixPattern.test(raw)) return raw;
+  return `DAY ${dayNumber} | ${raw}`;
+}
+
 /** True when an activity name duplicates the day title (after stripping Day N: prefixes). */
 export function isItineraryActivityTitleDuplicate(
   dayTitle: string | null | undefined,

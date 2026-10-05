@@ -668,7 +668,6 @@ function DayCard({
   const dayDailyTransfer =
     (form.watch(fp(`${base}.dailyTransfer`)) as string | null | undefined) ?? 'NO_TRANSFER';
   const dayTitle = (form.watch(fp(`${base}.title`)) as string | null) ?? '';
-  const titleTouched = form.watch(fp(`${base}.titleTouched`)) ?? false;
 
   // Current-day city activities stay at the top; every other destination/city
   // remains available below so users can pick any tenant activity (search is
@@ -723,7 +722,24 @@ function DayCard({
     return formatItineraryDayTitle(dayIndex + 1, activityName);
   };
 
-  const clearActivity = (abase: string) => {
+  // Day Title = first activity, always. The displayed/custom name lives on
+  // the activity itself (`name`), so the day title is synchronized from
+  // activities[0] after every mutation that can change it. Mutations to any
+  // other slot never touch the title, so the last added/edited/selected
+  // activity can never hijack it. Stored `title` is kept (never a second
+  // truth); it is simply re-synced instead of derived at read time.
+  const firstActivityDisplayName = (): string | null => {
+    const raw = form.getValues(fp(`${base}.activities.0.name`)) as unknown as string | null;
+    const name = (raw ?? '').trim();
+    return name || null;
+  };
+  const syncDayTitleFromFirstActivity = () => {
+    form.setValue(fp(`${base}.title`), autoDayTitle(firstActivityDisplayName()), {
+      shouldDirty: true,
+    });
+  };
+
+  const clearActivity = (abase: string, activityIndex: number) => {
     form.setValue(fp(`${abase}.sightseeingId`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.imageDocumentId`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.imageUrl`), null as never, { shouldDirty: true });
@@ -739,9 +755,11 @@ function DayCard({
     form.setValue(fp(`${abase}.sequence`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.displayPricing`), [] as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.displayPricingHeading`), 'PRICING' as never, { shouldDirty: true });
+    // Clearing the first activity resets the day title; any other slot leaves it alone.
+    if (activityIndex === 0) syncDayTitleFromFirstActivity();
   };
 
-  const pickSpecial = (abase: string, option: SightseeingSelectOption) => {
+  const pickSpecial = (abase: string, activityIndex: number, option: SightseeingSelectOption) => {
     form.setValue(fp(`${abase}.sightseeingId`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.imageDocumentId`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.imageUrl`), null as never, { shouldDirty: true });
@@ -768,11 +786,11 @@ function DayCard({
           ? SPECIAL_ARRIVAL_CHECKIN_DESCRIPTION
           : null;
     form.setValue(fp(`${abase}.description`), description as never, { shouldDirty: true });
-    if (!titleTouched && name)
-      form.setValue(fp(`${base}.title`), autoDayTitle(name), { shouldDirty: true });
+    // The first activity defines the day title; any other slot leaves it alone.
+    if (activityIndex === 0) syncDayTitleFromFirstActivity();
   };
 
-  const pickMaster = (abase: string, option: SightseeingSelectOption) => {
+  const pickMaster = (abase: string, activityIndex: number, option: SightseeingSelectOption) => {
     const picked = attractions.find((row) => row.id === option.id) ?? null;
     form.setValue(fp(`${abase}.sightseeingId`), (picked?.id ?? null) as never, {
       shouldDirty: true,
@@ -853,21 +871,25 @@ function DayCard({
           form.setValue(fp(`${abase}.displayPricingHeading`), 'PRICING' as never, { shouldDirty: true });
         }
       }
-      if (!titleTouched)
-        form.setValue(fp(`${base}.title`), autoDayTitle(picked.title), { shouldDirty: true });
+      // The first activity defines the day title; any other slot leaves it alone.
+      if (activityIndex === 0) syncDayTitleFromFirstActivity();
     }
   };
 
-  const applyActivitySelection = (abase: string, option: SightseeingSelectOption | null) => {
+  const applyActivitySelection = (
+    abase: string,
+    activityIndex: number,
+    option: SightseeingSelectOption | null,
+  ) => {
     if (!option) {
-      clearActivity(abase);
+      clearActivity(abase, activityIndex);
       return;
     }
     if (option.id.startsWith('special:')) {
-      pickSpecial(abase, option);
+      pickSpecial(abase, activityIndex, option);
       return;
     }
-    pickMaster(abase, option);
+    pickMaster(abase, activityIndex, option);
   };
 
   const uploadActivityImage = async (abase: string, activityIndex: number, file: File) => {
@@ -1030,7 +1052,7 @@ function DayCard({
                             masterOptions={masterOptions}
                             value={sightseeingId}
                             displayLabel={activityName}
-                            onSelect={(option) => applyActivitySelection(abase, option)}
+                            onSelect={(option) => applyActivitySelection(abase, aIndex, option)}
                             status={{
                               loading: attractionsStatus.loading,
                               error: attractionsStatus.error,
@@ -1087,7 +1109,17 @@ function DayCard({
                         aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} name`}
                         placeholder="Or type a custom activity name"
                         className={`${field} mt-1`}
-                        {...form.register(fp(`${abase}.name`))}
+                        {...form.register(fp(`${abase}.name`), {
+                          // The day title mirrors the first activity's
+                          // displayed name; other slots never touch it.
+                          ...(aIndex === 0
+                            ? {
+                                onChange: () => {
+                                  syncDayTitleFromFirstActivity();
+                                },
+                              }
+                            : {}),
+                        })}
                       />
                     </label>
                     <div>
@@ -1122,7 +1154,11 @@ function DayCard({
                         size="sm"
                         variant="secondary"
                         aria-label={`Add activity after activity ${aIndex + 1} on day ${dayIndex + 1}`}
-                        onClick={() => activities.insert(aIndex + 1, emptySightseeingActivity())}
+                        onClick={() => {
+                          activities.insert(aIndex + 1, emptySightseeingActivity());
+                          // Inserting at slot 0 redefines the first activity.
+                          if (aIndex + 1 === 0) syncDayTitleFromFirstActivity();
+                        }}
                       >
                         <Plus className="h-4 w-4" /> Add Activity After
                       </Button>
@@ -1131,7 +1167,11 @@ function DayCard({
                           size="sm"
                           variant="ghost"
                           className="text-red-600"
-                          onClick={() => activities.remove(aIndex)}
+                          onClick={() => {
+                            activities.remove(aIndex);
+                            // Removing the first activity promotes the next one.
+                            if (aIndex === 0) syncDayTitleFromFirstActivity();
+                          }}
                         >
                           <Trash2 className="h-4 w-4" /> Remove activity
                         </Button>
@@ -1358,7 +1398,12 @@ function DayCard({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => activities.append(emptySightseeingActivity())}
+                onClick={() => {
+                  const wasEmpty = activities.fields.length === 0;
+                  activities.append(emptySightseeingActivity());
+                  // Appending to an empty day creates its first activity.
+                  if (wasEmpty) syncDayTitleFromFirstActivity();
+                }}
               >
                 <Plus className="h-4 w-4" /> Add Activity at End
               </Button>
