@@ -33,11 +33,13 @@ function WhatsAppIcon({ className }: { className?: string }) {
 }
 
 /**
- * Outline document-style GST glyph with the letters drawn inside the icon,
- * following the lucide stroke convention (2px, currentColor) so it matches
- * the other Contact Us row icons in size, colour, weight and alignment.
- * lucide-react ships no GST-specific icon, so the glyph lives here next to
- * its only usage.
+ * Outline document-style GST glyph with large, bold letters drawn inside the
+ * icon, following the lucide stroke convention (2px, currentColor) so it
+ * matches the other Contact Us row icons in size, colour, weight and
+ * alignment. The document is a plain rounded rectangle (no folded corner) so
+ * the maximum interior space goes to legibility — readability of "GST" takes
+ * priority over decorative detail. lucide-react ships no GST-specific icon,
+ * so the glyph lives here next to its only usage.
  */
 function GstIcon({ className }: { className?: string }) {
   return (
@@ -52,14 +54,14 @@ function GstIcon({ className }: { className?: string }) {
       aria-hidden="true"
       focusable="false"
     >
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6" />
+      <rect x="4" y="2.5" width="16" height="19" rx="2" />
       <text
         x="12"
-        y="17.5"
+        y="15.5"
         textAnchor="middle"
-        fontSize="6"
-        fontWeight="700"
+        fontSize="8"
+        fontWeight="800"
+        letterSpacing="0.5"
         fill="currentColor"
         stroke="none"
       >

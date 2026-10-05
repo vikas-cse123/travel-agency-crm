@@ -8243,7 +8243,11 @@ describe('Phase 8 quotation pages', () => {
       // filled badge anywhere in the row.
       const gstIcon = gstRow.querySelector('svg');
       expect(gstIcon?.getAttribute('class')).toContain('mt-0.5 h-4 w-4 shrink-0 text-emerald-600');
-      expect(gstIcon?.querySelector('text')?.textContent).toBe('GST');
+      const gstText = gstIcon?.querySelector('text');
+      expect(gstText?.textContent).toBe('GST');
+      // Letters stay large and extra-bold enough to read without zooming.
+      expect(Number(gstText?.getAttribute('font-size'))).toBeGreaterThanOrEqual(8);
+      expect(Number(gstText?.getAttribute('font-weight'))).toBeGreaterThanOrEqual(800);
       expect(gstIcon?.getAttribute('fill')).toBe('none');
       expect(gstRow.querySelector('[class*="bg-emerald"]')).toBeNull();
       // Order: contact person, phone, email, address, then GST last —
