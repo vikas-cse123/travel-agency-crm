@@ -518,7 +518,12 @@ export function useCreateQuotation() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (input: QuotationInput) => apiClient.post<Quotation>('/quotations', input),
-    onSuccess: () => void client.invalidateQueries({ queryKey: quotationKeys.quotations }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: quotationKeys.quotations });
+      // The Leads table shows the linked quotation's amount/margin, so a new
+      // quotation must refresh the lead list as well.
+      void client.invalidateQueries({ queryKey: ['queries'] });
+    },
   });
 }
 export function useQuotationAction(id: string) {
@@ -526,6 +531,9 @@ export function useQuotationAction(id: string) {
   const refresh = () => {
     void client.invalidateQueries({ queryKey: quotationKeys.quotation(id) });
     void client.invalidateQueries({ queryKey: quotationKeys.quotations });
+    // Finalize/duplicate/delete change what the Leads table shows for the
+    // linked lead (quotation, amount, margin), so refresh it too.
+    void client.invalidateQueries({ queryKey: ['queries'] });
   };
   return useMutation({
     mutationFn: ({
@@ -599,6 +607,8 @@ export function useUpdateQuotationVersion(quotationId: string, versionId: string
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: quotationKeys.quotation(quotationId) });
       void client.invalidateQueries({ queryKey: quotationKeys.quotations });
+      // Version edits change the final amount/margin shown in the Leads table.
+      void client.invalidateQueries({ queryKey: ['queries'] });
     },
   });
 }

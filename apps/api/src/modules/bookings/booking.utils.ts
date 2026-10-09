@@ -11,7 +11,7 @@ const money = (value: Prisma.Decimal.Value) =>
 export async function nextBookingNumber(
   tx: Prisma.TransactionClient,
   companyId: string,
-  kind: 'booking' | 'payment' | 'refund',
+  kind: 'booking' | 'payment' | 'refund' | 'receipt',
 ) {
   // One lifetime counter keeps IDs compact and prevents yearly resets.
   const year = 0;
@@ -23,22 +23,28 @@ export async function nextBookingNumber(
       bookingValue: kind === 'booking' ? 1 : 0,
       paymentValue: kind === 'payment' ? 1 : 0,
       refundValue: kind === 'refund' ? 1 : 0,
+      receiptValue: kind === 'receipt' ? 1 : 0,
     },
     update:
       kind === 'booking'
         ? { bookingValue: { increment: 1 } }
         : kind === 'payment'
           ? { paymentValue: { increment: 1 } }
-          : { refundValue: { increment: 1 } },
-    select: { bookingValue: true, paymentValue: true, refundValue: true },
+          : kind === 'refund'
+            ? { refundValue: { increment: 1 } }
+            : { receiptValue: { increment: 1 } },
+    select: { bookingValue: true, paymentValue: true, refundValue: true, receiptValue: true },
   });
   const value =
     kind === 'booking'
       ? counter.bookingValue
       : kind === 'payment'
         ? counter.paymentValue
-        : counter.refundValue;
-  const prefix = kind === 'booking' ? 'BK' : kind === 'payment' ? 'PAY' : 'REF';
+        : kind === 'refund'
+          ? counter.refundValue
+          : counter.receiptValue;
+  const prefix =
+    kind === 'booking' ? 'BK' : kind === 'payment' ? 'PAY' : kind === 'refund' ? 'REF' : 'RCP';
   return `${prefix}-${String(value).padStart(6, '0')}`;
 }
 

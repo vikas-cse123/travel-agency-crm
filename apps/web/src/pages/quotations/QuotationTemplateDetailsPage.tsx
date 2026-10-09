@@ -1,4 +1,4 @@
-import { ArrowLeft, Edit3, Play, Printer, Route, Sparkles } from 'lucide-react';
+import { ArrowLeft, Pencil, Play, Printer, Route, Sparkles } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { PERMISSIONS, joinNonEmpty, labelForLookup } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
@@ -39,7 +39,7 @@ export function QuotationTemplateDetailsPage() {
           {hasPermission(PERMISSIONS.QUOTATION_TEMPLATES_UPDATE) && (
             <Link to={`/quotation-templates/${t.id}/edit`}>
               <Button>
-                <Edit3 className="h-4 w-4" />
+                <Pencil className="h-4 w-4" />
                 Edit
               </Button>
             </Link>

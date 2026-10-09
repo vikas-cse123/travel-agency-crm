@@ -186,6 +186,24 @@ export function callRecordingObjectKey(input: { companyId: string; callId: strin
   return `call-recordings/company/${input.companyId}/${year}/${month}/${input.callId}/recording.m4a`;
 }
 
+export function hotelVoucherObjectKey(input: {
+  companyId: string;
+  voucherId: string;
+  documentId: string;
+  fileName: string;
+}): string {
+  return `companies/${input.companyId}/hotel-vouchers/${input.voucherId}/documents/${input.documentId}/${sanitizeFileName(input.fileName)}`;
+}
+
+export function paymentVoucherObjectKey(input: {
+  companyId: string;
+  paymentId: string;
+  documentId: string;
+  fileName: string;
+}): string {
+  return `companies/${input.companyId}/payments/${input.paymentId}/vouchers/${input.documentId}/${sanitizeFileName(input.fileName)}`;
+}
+
 export const storageService =
   env.STORAGE_PROVIDER === 's3'
     ? new S3StorageService()

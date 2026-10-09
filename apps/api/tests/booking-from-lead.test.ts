@@ -24,26 +24,75 @@ async function owner(email = 'owner@bfl.test', companyName = 'Booking From Lead 
   return client;
 }
 
-const leadPayload = (overrides: Record<string, unknown> = {}) => ({
-  customerName: 'Booking Customer',
-  phone: '+91 90000 12345',
-  email: 'customer@example.test',
-  leadSource: 'REFERRAL',
-  leadType: 'HOT',
-  leadStage: 'BOOKING_CONFIRMED',
-  priority: 'HIGH',
-  travelStartDate: '2026-10-10',
-  travelEndDate: '2026-10-14',
-  rooms: 1,
-  adults: 2,
-  childrenWithBed: 1,
-  childrenWithoutBed: 0,
-  infants: 0,
-  extraBeds: 0,
-  currency: 'INR',
-  services: ['HOTEL'],
-  itinerary: [{ country: 'India', destination: 'Goa', nights: 4, sequence: 1 }],
-  ...overrides,
+const leadPayload = (overrides: Record<string, unknown> = {}) => {
+  // Travel dates stay ~30 days in the future so reminder scheduling inside
+  // booking creation never lands in the past, however old this file gets.
+  const start = new Date(Date.now() + 30 * 86_400_000);
+  const end = new Date(start.getTime() + 4 * 86_400_000);
+  const day = (date: Date) => date.toISOString().slice(0, 10);
+  return {
+    customerName: 'Booking Customer',
+    phone: '+91 90000 12345',
+    email: 'customer@example.test',
+    leadSource: 'REFERRAL',
+    leadType: 'HOT',
+    priority: 'HIGH',
+    travelStartDate: day(start),
+    travelEndDate: day(end),
+    rooms: 1,
+    adults: 2,
+    childrenWithBed: 1,
+    childrenWithoutBed: 0,
+    infants: 0,
+    extraBeds: 0,
+    currency: 'INR',
+    services: ['HOTEL'],
+    itinerary: [{ country: 'India', destination: 'Goa', nights: 4, sequence: 1 }],
+    ...overrides,
+  };
+};
+
+const templatePayload = () => ({
+  name: 'Booking source package',
+  destinationSummary: 'Goa',
+  durationDays: 5,
+  durationNights: 4,
+  baseCurrency: 'INR',
+  status: 'ACTIVE',
+  itinerary: [
+    {
+      dayNumber: 1,
+      title: 'Arrival',
+      destination: 'Goa',
+      description: 'Airport transfer and hotel check-in.',
+      sequence: 1,
+    },
+  ],
+  hotels: [
+    {
+      city: 'Goa',
+      hotelName: 'Harbour Hotel',
+      rooms: 1,
+      nights: 4,
+      internalCost: 20000,
+      sellingPrice: 26000,
+      selected: true,
+      sequence: 1,
+    },
+  ],
+  services: [
+    {
+      serviceType: 'SIGHTSEEING',
+      name: 'City tour',
+      quantity: 1,
+      internalCost: 4000,
+      sellingPrice: 6000,
+      sequence: 1,
+    },
+  ],
+  inclusions: [{ content: 'Breakfast', sequence: 1 }],
+  exclusions: [],
+  terms: [{ content: 'Non refundable', sequence: 1 }],
 });
 
 /** Lead with a finalized quotation version ready to be booked. */
@@ -62,10 +111,19 @@ async function readyLead(overrides: Record<string, unknown> = {}) {
     });
   }
   const refreshed = (await client.get(`/api/queries/${lead.id}`)).body.data;
-  const quotation = (await client.post('/api/quotations', { queryId: refreshed.id })).body.data;
+  const template = (await client.post('/api/quotation-templates', templatePayload())).body.data;
+  const quotation = (
+    await client.post('/api/quotations', { queryId: refreshed.id, templateId: template.id })
+  ).body.data;
   const version = quotation.versions[0];
+  // The pricing-completeness gate requires real per-traveler prices before a
+  // version can be finalized.
+  await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+    perAdultPrice: 26000,
+    perChildWithBedPrice: 20000,
+  });
   await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-  return { client, lead: refreshed, quotation, version };
+  return { client, lead: refreshed, quotation, version, template };
 }
 
 const fromLeadPayload = (quotationId: string, overrides: Record<string, unknown> = {}) => ({
@@ -90,7 +148,7 @@ describe('Create Booking from Lead', () => {
     expect(await db.customer.count()).toBe(before);
   });
 
-  it('creates a booking and a new customer transactionally for a Hot + Booking Confirmed lead', async () => {
+  it('creates a booking for a Hot lead and confirms the lead as part of creation', async () => {
     const { client, lead, quotation, version } = await readyLead();
     const customerBefore = await db.customer.count();
     const response = await client.post(
@@ -125,6 +183,15 @@ describe('Create Booking from Lead', () => {
     const reminders = await db.bookingReminder.findMany({ where: { bookingId: booking.id } });
     expect(reminders).toHaveLength(1);
     expect(reminders[0]).toMatchObject({ daysBefore: 2, dueTime: '11:00' });
+    // Booking creation confirms the lead: stage, convertedAt and history are
+    // set in the same transaction, so a confirmed lead always has a booking.
+    const confirmedLead = await db.query.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(confirmedLead.leadStage).toBe('BOOKING_CONFIRMED');
+    expect(confirmedLead.convertedAt).not.toBeNull();
+    const history = await db.queryStageHistory.findFirstOrThrow({
+      where: { queryId: lead.id, newStage: 'BOOKING_CONFIRMED' },
+    });
+    expect(history.previousStage).toBe('NEW_LEAD');
   });
 
   it('rejects a non-Hot lead', async () => {
@@ -137,14 +204,77 @@ describe('Create Booking from Lead', () => {
     expect(response.body.error.message).toContain('Lead type must be Hot');
   });
 
-  it('rejects a non-Booking-Confirmed lead', async () => {
+  it('books a lead at any non-terminal stage and confirms it on creation', async () => {
     const { client, lead, quotation } = await readyLead({ leadStage: 'NEW_LEAD' });
+    const before = await db.query.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(before.leadStage).toBe('NEW_LEAD');
     const response = await client.post(
       '/api/bookings/from-lead',
       fromLeadPayload(quotation.id, { leadId: lead.id }),
     );
-    expect(response.status).toBe(400);
-    expect(response.body.error.message).toContain('Lead stage must be Booking Confirmed');
+    expect(response.status).toBe(201);
+    const after = await db.query.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(after.leadStage).toBe('BOOKING_CONFIRMED');
+    expect(after.convertedAt).not.toBeNull();
+  });
+
+  it('lead to payment: confirmed-with-booking is searchable and payable', async () => {
+    const { client, lead, quotation } = await readyLead();
+    const created = await client.post(
+      '/api/bookings/from-lead',
+      fromLeadPayload(quotation.id, { leadId: lead.id }),
+    );
+    expect(created.status).toBe(201);
+    const booking = created.body.data as { id: string; bookingNumber: string };
+    // The confirmed lead now resolves to a real booking in the payments search.
+    const search = await client.get(
+      `/api/bookings/payments?search=${booking.bookingNumber}`,
+    );
+    expect(search.status).toBe(200);
+    // No payment yet; record one exactly as the Record Payment form does.
+    const recorded = await client.post(`/api/bookings/${booking.id}/payments`, {
+      amount: 10000,
+      currency: 'INR',
+      paymentMethod: 'UPI',
+      paymentStatus: 'RECEIVED',
+      receivedAt: '2026-10-08',
+      paymentScheduleId: null,
+      referenceNumber: 'UPI123',
+      notes: 'Advance',
+    });
+    expect(recorded.status).toBe(201);
+    const row = await db.bookingPayment.findUniqueOrThrow({
+      where: { id: recorded.body.data.id },
+    });
+    expect(row.bookingId).toBe(booking.id);
+    expect(row.amount.toFixed(2)).toBe('10000.00');
+    expect(row.paymentStatus).toBe('RECEIVED');
+    const details = (await client.get(`/api/bookings/${booking.id}`)).body.data;
+    expect(details.totalCustomerPaid).not.toBe('0.00');
+    expect(details.paymentStatus).toBe('PARTIALLY_PAID');
+    // And the payment is visible in the ledger under the booking.
+    const ledger = await client.get('/api/bookings/payments?search=UPI123');
+    expect(ledger.body.data.pagination.total).toBe(1);
+    expect(ledger.body.data.data[0].booking.bookingNumber).toBe(booking.bookingNumber);
+    expect(ledger.body.data.summary.totalCollected).toBe('10000.00');
+  });
+
+  it('still books a legacy already-confirmed lead without a booking', async () => {
+    // Leads confirmed before the system-stage rule (e.g. marked confirmed by
+    // hand) remain convertible: creation keeps their stage and history.
+    const { client, lead, quotation } = await readyLead();
+    await db.query.update({
+      where: { id: lead.id },
+      data: { leadStage: 'BOOKING_CONFIRMED', convertedAt: new Date('2026-10-01T00:00:00Z') },
+    });
+    const response = await client.post(
+      '/api/bookings/from-lead',
+      fromLeadPayload(quotation.id, { leadId: lead.id }),
+    );
+    expect(response.status).toBe(201);
+    const after = await db.query.findUniqueOrThrow({ where: { id: lead.id } });
+    expect(after.leadStage).toBe('BOOKING_CONFIRMED');
+    expect(after.convertedAt?.toISOString()).toBe('2026-10-01T00:00:00.000Z');
   });
 
   it('rejects a missing finalized quotation', async () => {
@@ -253,9 +383,11 @@ describe('Create Booking from Lead', () => {
       `/api/bookings/from-lead/preview?leadId=${lead.id}&quotationId=${quotation.id}`,
     );
     expect(preview.status).toBe(200);
+    const start = String(lead.travelStartDate).slice(0, 10);
+    const end = String(lead.travelEndDate).slice(0, 10);
     expect(preview.body.data.duration).toEqual({
-      travelStart: '2026-10-10',
-      travelEnd: '2026-10-14',
+      travelStart: start,
+      travelEnd: end,
       totalNights: 4,
       totalDays: 5,
       durationLabel: '4 Nights / 5 Days',
@@ -266,9 +398,19 @@ describe('Create Booking from Lead', () => {
   it('resolves duration from version stay-night allocations when dates are incomplete', async () => {
     const client = await owner();
     const company = await db.company.findFirstOrThrow({ select: { id: true } });
-    const lead = (await client.post('/api/queries', leadPayload())).body.data;
+    const lead = (
+      await client.post(
+        '/api/queries',
+        leadPayload({ travelStartDate: '2026-10-10', travelEndDate: '2026-10-14' }),
+      )
+    ).body.data;
     const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
     const version = quotation.versions[0];
+    // Per-traveler prices so the version can be finalized despite the pricing gate.
+    await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      perAdultPrice: 26000,
+      perChildWithBedPrice: 20000,
+    });
     // Only a start date exists; the stay-night allocation carries the length.
     await db.quotationVersion.update({
       where: { id: version.id },
@@ -593,7 +735,14 @@ describe('Create Booking from Lead', () => {
   it('returns a customer-conflict when multiple exact phone matches exist', async () => {
     const client = await owner();
     const lead = (await client.post('/api/queries', leadPayload())).body.data;
-    const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
+    const template = (await client.post('/api/quotation-templates', templatePayload())).body.data;
+    const quotation = (
+      await client.post('/api/quotations', { queryId: lead.id, templateId: template.id })
+    ).body.data;
+    await client.patch(`/api/quotations/${quotation.id}/versions/${quotation.versions[0].id}`, {
+      perAdultPrice: 26000,
+      perChildWithBedPrice: 20000,
+    });
     await client.post(
       `/api/quotations/${quotation.id}/versions/${quotation.versions[0].id}/finalize`,
     );

@@ -1,5 +1,9 @@
 import { Router } from 'express';
-import { PERMISSIONS, dashboardQuerySchema } from '@interscale/shared';
+import {
+  PERMISSIONS,
+  dashboardQuerySchema,
+  upcomingTravelQuerySchema,
+} from '@interscale/shared';
 import { requireAuth, requireVerifiedEmail } from '../../middleware/authenticate.js';
 import { requirePermission } from '../../middleware/require-permission.js';
 import { validateRequest } from '../../middleware/validate-request.js';
@@ -20,6 +24,12 @@ router.get(
   requirePermission(PERMISSIONS.DASHBOARD_VIEW),
   validateRequest({ query: dashboardQuerySchema }),
   asyncHandler(c.operations),
+);
+router.get(
+  '/upcoming-travel',
+  requirePermission(PERMISSIONS.DASHBOARD_VIEW),
+  validateRequest({ query: upcomingTravelQuerySchema }),
+  asyncHandler(c.upcomingTravel),
 );
 
 export { router as dashboardRoutes };

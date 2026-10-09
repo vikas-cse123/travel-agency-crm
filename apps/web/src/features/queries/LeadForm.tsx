@@ -601,11 +601,12 @@ export function LeadForm({
                         : name === 'leadStage'
                           ? 'leadStages'
                           : 'priorities'
-                  ].map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
+                  ]
+                    ?.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                 </select>
               </Field>
             ))}

@@ -311,6 +311,7 @@ describe('Phase 6 travel lead management', () => {
       200,
     );
     expect((await db.query.findUniqueOrThrow({ where: { id } })).convertedAt).toBeNull();
+    // Creation writes the initial history row, then one row per move.
     expect(await db.queryStageHistory.count({ where: { queryId: id } })).toBe(7);
   });
   it('allows BOOKING_CONFIRMED from any existing stage, including terminal stages', async () => {
@@ -612,6 +613,11 @@ async function restrictedClient(ownerEmail: string, keys: string[], email: strin
 async function acceptedQuotation(client: ReturnType<typeof createAuthClient>, leadId: string) {
   const quotation = (await client.post('/api/quotations', { queryId: leadId })).body.data;
   const version = quotation.versions[0];
+  // Per-traveler prices so the version passes the pricing-completeness gate.
+  await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+    perAdultPrice: 26000,
+    perChildWithBedPrice: 20000,
+  });
   await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
   await db.quotation.update({
     where: { id: quotation.id },

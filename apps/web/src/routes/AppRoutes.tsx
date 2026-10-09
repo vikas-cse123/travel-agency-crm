@@ -45,6 +45,12 @@ import { QuotationTemplatesPage } from '@/pages/quotations/QuotationTemplatesPag
 import { QuotationTemplateDetailsPage } from '@/pages/quotations/QuotationTemplateDetailsPage';
 import { QuotationTemplateFormPage } from '@/pages/quotations/QuotationTemplateFormPage';
 import { QuotationsPage } from '@/pages/quotations/QuotationsPage';
+import { HotelVouchersPage } from '@/pages/hotel-vouchers/HotelVouchersPage';
+import { PaymentsPage } from '@/pages/payments/PaymentsPage';
+import { EmailsPage } from '@/pages/email/EmailsPage';
+import { EmailSettingsPage } from '@/pages/settings/EmailSettingsPage';
+import { HotelVoucherFormPage } from '@/pages/hotel-vouchers/HotelVoucherFormPage';
+import { HotelVoucherDetailsPage } from '@/pages/hotel-vouchers/HotelVoucherDetailsPage';
 import { NewQuotationPage } from '@/pages/quotations/NewQuotationPage';
 import { QuotationDetailsPage } from '@/pages/quotations/QuotationDetailsPage';
 import { QuotationBuilderPage } from '@/pages/quotations/QuotationBuilderPage';
@@ -228,7 +234,7 @@ export function AppRoutes() {
               </PermissionRoute>
             }
           />
-          <Route path="/follow-ups" element={<Navigate to="/reminders" replace />} />
+          <Route path="/follow-ups" element={<Navigate to="/dashboard" replace />} />
           <Route
             path="/reminders"
             element={
@@ -354,6 +360,62 @@ export function AppRoutes() {
             element={
               <PermissionRoute permission={PERMISSIONS.QUOTATIONS_UPDATE}>
                 <QuotationBuilderPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/hotel-vouchers"
+            element={
+              <PermissionRoute permission={PERMISSIONS.HOTEL_VOUCHERS_VIEW}>
+                <HotelVouchersPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/hotel-vouchers/new"
+            element={
+              <PermissionRoute permission={PERMISSIONS.HOTEL_VOUCHERS_CREATE}>
+                <HotelVoucherFormPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/hotel-vouchers/:voucherId"
+            element={
+              <PermissionRoute permission={PERMISSIONS.HOTEL_VOUCHERS_VIEW}>
+                <HotelVoucherDetailsPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/hotel-vouchers/:voucherId/edit"
+            element={
+              <PermissionRoute permission={PERMISSIONS.HOTEL_VOUCHERS_UPDATE}>
+                <HotelVoucherFormPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/payments"
+            element={
+              <PermissionRoute permission={PERMISSIONS.PAYMENTS_VIEW}>
+                <PaymentsPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/emails"
+            element={
+              <PermissionRoute permission={PERMISSIONS.EMAILS_VIEW}>
+                <EmailsPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/settings/email"
+            element={
+              <PermissionRoute permission={PERMISSIONS.EMAILS_MANAGE_SETTINGS}>
+                <EmailSettingsPage />
               </PermissionRoute>
             }
           />

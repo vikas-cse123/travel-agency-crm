@@ -8,8 +8,7 @@
  */
 
 export const PERMISSION_MODULE = {
-  DASHBOARD: 'dashboard',
-  USERS: 'users',
+  DASHBOARD: 'dashboard',  USERS: 'users',
   ROLES: 'roles',
   PERMISSION_TEMPLATES: 'permission_templates',
   ACTIVITY_LOGS: 'activity_logs',
@@ -22,6 +21,9 @@ export const PERMISSION_MODULE = {
   QUOTATION_TEMPLATES: 'quotation_templates',
   QUOTATIONS: 'quotations',
   BOOKINGS: 'bookings',
+  HOTEL_VOUCHERS: 'hotel_vouchers',
+  PAYMENTS: 'payments',
+  EMAILS: 'emails',
   CUSTOMERS: 'customers',
   VENDORS: 'vendors',
   MASTERS: 'masters',
@@ -57,6 +59,9 @@ export const PERMISSION_MODULE_LABELS: Record<PermissionModule, string> = {
   quotation_templates: 'Quotation Templates',
   quotations: 'Quotations',
   bookings: 'Bookings',
+  hotel_vouchers: 'Hotel Vouchers',
+  payments: 'Payments',
+  emails: 'Emails',
   customers: 'Customers',
   vendors: 'Vendors',
   masters: 'Masters',
@@ -199,6 +204,24 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
   available(M.BOOKINGS, 'send_confirmation', 'Send booking confirmations and reminders'),
   available(M.BOOKINGS, 'export', 'Generate booking confirmation documents'),
   available(M.BOOKINGS, 'view_all', 'View all company bookings'),
+
+  available(M.HOTEL_VOUCHERS, 'view', 'View hotel vouchers'),
+  available(M.HOTEL_VOUCHERS, 'create', 'Create hotel vouchers'),
+  available(M.HOTEL_VOUCHERS, 'update', 'Edit draft hotel vouchers'),
+  available(M.HOTEL_VOUCHERS, 'delete', 'Delete draft hotel vouchers'),
+  available(M.HOTEL_VOUCHERS, 'export', 'Generate and download hotel voucher PDFs'),
+  available(M.HOTEL_VOUCHERS, 'send', 'Share hotel vouchers over WhatsApp and email'),
+
+  available(M.PAYMENTS, 'view', 'View standalone customer payments'),
+  available(M.PAYMENTS, 'create', 'Record standalone customer payments'),
+  available(M.PAYMENTS, 'edit', 'Edit standalone payment details'),
+  available(M.PAYMENTS, 'reverse', 'Reverse standalone customer payments'),
+  available(M.PAYMENTS, 'view_receipts', 'View standalone payment vouchers'),
+  available(M.PAYMENTS, 'generate_receipts', 'Generate standalone payment vouchers'),
+
+  available(M.EMAILS, 'view', 'View sent emails'),
+  available(M.EMAILS, 'send', 'Send standalone emails'),
+  available(M.EMAILS, 'manage_settings', 'Manage company email sending settings'),
 
   available(M.CUSTOMERS, 'view', 'View customers'),
   available(M.CUSTOMERS, 'create', 'Create customers'),
@@ -378,6 +401,24 @@ export const PERMISSIONS = {
   BOOKINGS_SEND_CONFIRMATION: 'bookings.send_confirmation',
   BOOKINGS_EXPORT: 'bookings.export',
   BOOKINGS_VIEW_ALL: 'bookings.view_all',
+
+  HOTEL_VOUCHERS_VIEW: 'hotel_vouchers.view',
+  HOTEL_VOUCHERS_CREATE: 'hotel_vouchers.create',
+  HOTEL_VOUCHERS_UPDATE: 'hotel_vouchers.update',
+  HOTEL_VOUCHERS_DELETE: 'hotel_vouchers.delete',
+  HOTEL_VOUCHERS_EXPORT: 'hotel_vouchers.export',
+  HOTEL_VOUCHERS_SEND: 'hotel_vouchers.send',
+
+  PAYMENTS_VIEW: 'payments.view',
+  PAYMENTS_CREATE: 'payments.create',
+  PAYMENTS_EDIT: 'payments.edit',
+  PAYMENTS_REVERSE: 'payments.reverse',
+  PAYMENTS_VIEW_RECEIPTS: 'payments.view_receipts',
+  PAYMENTS_GENERATE_RECEIPTS: 'payments.generate_receipts',
+
+  EMAILS_VIEW: 'emails.view',
+  EMAILS_SEND: 'emails.send',
+  EMAILS_MANAGE_SETTINGS: 'emails.manage_settings',
 
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_CREATE: 'customers.create',

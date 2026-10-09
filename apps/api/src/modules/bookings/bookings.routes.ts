@@ -4,6 +4,8 @@ import {
   BOOKING_PAYMENT_STATUSES,
   BOOKING_STATUSES,
   OPERATIONAL_STATUSES,
+  PAYMENT_METHODS,
+  PAYMENT_RECORD_STATUSES,
   PERMISSIONS,
   bookingAssignmentInputSchema,
   bookingCostInputSchema,
@@ -105,6 +107,25 @@ router.get(
     query: z.object({ leadId: z.string().uuid(), quotationId: z.string().uuid() }),
   }),
   asyncHandler(c.previewFromLead),
+);
+// Cross-booking payments ledger for the Payments page. Read-only view over
+// existing BookingPayment rows; registered before /:bookingId for the same
+// fixed-path-first reason. No new table, no duplicated totals.
+const paymentsLedgerQuery = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(100).optional(),
+  search: z.string().trim().max(120).optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  paymentStatus: z.enum(PAYMENT_RECORD_STATUSES).optional(),
+  dateFrom: z.coerce.date().optional(),
+  dateTo: z.coerce.date().optional(),
+  bookingId: z.string().uuid().optional(),
+});
+router.get(
+  '/payments',
+  requirePermission(PERMISSIONS.BOOKINGS_VIEW_FINANCIALS),
+  validateRequest({ query: paymentsLedgerQuery }),
+  asyncHandler(c.paymentsLedger),
 );
 router.post(
   '/from-lead',
@@ -284,6 +305,24 @@ router.post(
   requirePermission(PERMISSIONS.BOOKINGS_MANAGE_PAYMENTS),
   validateRequest({ params: childId('paymentId'), body: bookingPaymentReversalSchema }),
   asyncHandler(c.reversePayment),
+);
+router.get(
+  '/:bookingId/payments/:paymentId/receipt',
+  requirePermission(PERMISSIONS.BOOKINGS_VIEW_FINANCIALS),
+  validateRequest({ params: childId('paymentId') }),
+  asyncHandler(c.paymentReceipt),
+);
+router.post(
+  '/:bookingId/payments/:paymentId/receipt',
+  requirePermission(PERMISSIONS.BOOKINGS_MANAGE_PAYMENTS),
+  validateRequest({ params: childId('paymentId') }),
+  asyncHandler(c.generatePaymentReceipt),
+);
+router.get(
+  '/:bookingId/payments/:paymentId/receipt/download-url',
+  requirePermission(PERMISSIONS.BOOKINGS_VIEW_FINANCIALS),
+  validateRequest({ params: childId('paymentId') }),
+  asyncHandler(c.paymentReceiptDownloadUrl),
 );
 
 router.get(

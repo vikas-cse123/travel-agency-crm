@@ -105,8 +105,7 @@ async function createHotel(
 }
 
 describe('Phase 13B hotels master', () => {
-  it('creates hotels only for a valid destination-city pairing', async () => {
-    const client = await owner();
+  it('creates hotels only for a valid destination-city pairing', async () => {    const client = await owner();
     const { city, destination } = await setupDestinationCity(client);
     const created = await createHotel(client, destination.id, city.id);
     expect(created.status).toBe(201);
@@ -119,6 +118,53 @@ describe('Phase 13B hotels master', () => {
     const unlinked = await createCity(client, 'Ganja');
     const invalid = await createHotel(client, destination.id, unlinked.id);
     expect(invalid.status).toBe(400);
+  });
+
+  it('stores optional hotel phone and email verbatim and validates email format', async () => {
+    const client = await owner();
+    const { city, destination } = await setupDestinationCity(client);
+    // Phone keeps its plus sign and leading zero; email persists as given.
+    const created = await createHotel(client, destination.id, city.id, {
+      phone: '+91 09876543210',
+      email: 'stay@shahpalace.test',
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.data).toMatchObject({
+      phone: '+91 09876543210',
+      email: 'stay@shahpalace.test',
+    });
+    const row = await db.hotel.findUniqueOrThrow({ where: { id: created.body.data.id } });
+    expect(row.phone).toBe('+91 09876543210');
+    expect(row.email).toBe('stay@shahpalace.test');
+    // Details and list responses expose both for voucher prefill.
+    const details = await client.get(`/api/masters/hotels/${created.body.data.id}`);
+    expect(details.body.data).toMatchObject({
+      phone: '+91 09876543210',
+      email: 'stay@shahpalace.test',
+    });
+
+    // Edit updates both fields.
+    const updated = await client.patch(`/api/masters/hotels/${created.body.data.id}`, {
+      phone: '+91 90000 00000',
+      email: 'reservations@shahpalace.test',
+    });
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    expect(updated.body.data).toMatchObject({
+      phone: '+91 90000 00000',
+      email: 'reservations@shahpalace.test',
+    });
+
+    // Malformed email is rejected; blank email clears to null.
+    const badEmail = await createHotel(client, destination.id, city.id, {
+      name: 'Bad Email Hotel',
+      email: 'not-an-email',
+    });
+    expect(badEmail.status).toBe(400);
+    const blanked = await client.patch(`/api/masters/hotels/${created.body.data.id}`, {
+      email: '',
+    });
+    expect(blanked.status, JSON.stringify(blanked.body)).toBe(200);
+    expect(blanked.body.data.email).toBeNull();
   });
 
   it('supports search, destination, city and star filters with pagination', async () => {

@@ -1,8 +1,15 @@
 import { Prisma } from '@prisma/client';
-import { LEAD_SOURCES, PERMISSIONS, labelForLookup, type DashboardQuery } from '@interscale/shared';
+import {
+  LEAD_SOURCES,
+  PERMISSIONS,
+  labelForLookup,
+  type DashboardQuery,
+  type UpcomingTravelQuery,
+} from '@interscale/shared';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { prisma } from '../../config/prisma.js';
 import { localDayBounds } from '../../utils/timezone.js';
+import { ValidationError } from '../../utils/errors.js';
 import { permissionsService } from '../auth/permissions.service.js';
 import {
   visibility as queryVisibility,
@@ -116,6 +123,11 @@ export const dashboardService = {
       result.leads = await this.leadMetrics(auth, dateFilter);
       result.leadSources = await this.leadSources(auth, dateFilter);
       result.topDestinations = await this.topDestinations(auth, period, input.limit ?? 10);
+      result.confirmedRevenueByDestination = await this.confirmedRevenueByDestination(
+        auth,
+        period,
+        input.limit ?? 10,
+      );
       result.staffConversions = await this.staffConversions(auth, dateFilter, limit);
     }
     if (caps.canViewQuotations) {
@@ -130,6 +142,105 @@ export const dashboardService = {
       }
     }
     return result;
+  },
+
+  /**
+   * Upcoming travel widgets: leads with a planned travel date inside the
+   * requested forward window, split by current stage. Widget one holds only
+   * leads whose CURRENT persisted stage is BOOKING_CONFIRMED; widget two
+   * holds every other stage. Eligibility never consults stage history,
+   * vouchers, payments or bookings — only the live lead row.
+   *
+   * Travel date is the authoritative `Query.travelStartDate` (a calendar
+   * date, like the operations widgets use); the city is the first itinerary
+   * stop by sequence, mirroring quotation title generation. Leads without a
+   * travel date are excluded from both widgets.
+   */
+  async upcomingTravel(auth: AuthContext, input: UpcomingTravelQuery) {
+    const timezone = await companyTimezone(auth.companyId);
+    const canViewLeads = await has(auth, PERMISSIONS.QUERIES_VIEW);
+    // Calendar-date window in the company timezone. `travelStartDate` is a
+    // `@db.Date` column, so comparing it against local-midnight instants
+    // would let Postgres truncate the bounds to UTC dates and shift the
+    // window by the UTC offset. UTC-midnight calendar boundaries keep the
+    // window exact regardless of timezone — the same convention the leads
+    // list uses for its TRAVEL_DATE filter, which the View More links reuse.
+    const todayParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const parts = Object.fromEntries(todayParts.map((part) => [part.type, part.value]));
+    let from = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+    let to = new Date(from.getTime() + Number(input.days) * 86_400_000);
+    if (input.from || input.to) {
+      if (!input.from || !input.to)
+        throw new ValidationError('A custom range needs both a from and a to date.');
+      if (input.from > input.to)
+        throw new ValidationError('The custom range start must not be after its end.');
+      if (input.to.getTime() - input.from.getTime() > 366 * 86_400_000)
+        throw new ValidationError('A custom range covers at most 366 days.');
+      from = new Date(
+        Date.UTC(input.from.getUTCFullYear(), input.from.getUTCMonth(), input.from.getUTCDate()),
+      );
+      to = new Date(
+        Date.UTC(input.to.getUTCFullYear(), input.to.getUTCMonth(), input.to.getUTCDate() + 1),
+      );
+    }
+    const limit = Math.min(Math.max(input.limit ?? 8, 1), 25);
+    const emptyRange = {
+      range: {
+        from: from.toISOString(),
+        to: to.toISOString(),
+        timezone,
+        days: input.days,
+      },
+      confirmed: { totalCount: 0, items: [] as never[] },
+      others: { totalCount: 0, items: [] as never[] },
+    };
+    // Like the operations endpoint, lead content is withheld without the lead
+    // capability instead of failing the whole request.
+    if (!canViewLeads) return emptyRange;
+    const base = await queryVisibleWhere(auth, {
+      travelStartDate: { gte: from, lt: to },
+    });
+    const select = {
+      id: true,
+      customerName: true,
+      travelStartDate: true,
+      leadStage: true,
+      itinerary: { select: { destination: true }, orderBy: { sequence: 'asc' as const }, take: 1 },
+    } as const;
+    const orderBy = { travelStartDate: 'asc' as const };
+    const [confirmedRows, confirmedTotal, otherRows, otherTotal] = await prisma.$transaction([
+      prisma.query.findMany({
+        where: { ...base, leadStage: 'BOOKING_CONFIRMED' },
+        select,
+        orderBy,
+        take: limit,
+      }),
+      prisma.query.count({ where: { ...base, leadStage: 'BOOKING_CONFIRMED' } }),
+      prisma.query.findMany({
+        where: { ...base, leadStage: { not: 'BOOKING_CONFIRMED' } },
+        select,
+        orderBy,
+        take: limit,
+      }),
+      prisma.query.count({ where: { ...base, leadStage: { not: 'BOOKING_CONFIRMED' } } }),
+    ]);
+    const present = (row: (typeof confirmedRows)[number]) => ({
+      id: row.id,
+      customerName: row.customerName,
+      travelDate: (row.travelStartDate as Date).toISOString(),
+      city: row.itinerary[0]?.destination.trim() || '—',
+      leadStage: row.leadStage,
+    });
+    return {
+      range: { from: from.toISOString(), to: to.toISOString(), timezone, days: input.days },
+      confirmed: { totalCount: confirmedTotal, items: confirmedRows.map(present) },
+      others: { totalCount: otherTotal, items: otherRows.map(present) },
+    };
   },
 
   async leadMetrics(auth: AuthContext, dateFilter: CreatedFilter) {
@@ -200,6 +311,88 @@ export const dashboardService = {
       else merged.set(key, { destination: trimmed, enquiryCount: countAll(row._count) });
     }
     return [...merged.values()].sort((a, b) => b.enquiryCount - a.enquiryCount).slice(0, bounded);
+  },
+
+  /**
+   * Confirmed revenue by destination: the trip amount of every lead whose
+   * CURRENT stage is BOOKING_CONFIRMED, attributed across its itinerary stops.
+   *
+   * Amount rule (mirrors the Leads list Amount column): the latest
+   * quotation's latest version `finalAmount`, but only when that version has
+   * real net cost (`netAmount > 0`); otherwise the lead's `expectedAmount`.
+   * Leads with no positive amount from either source contribute nothing.
+   * Attribution rule (the schema stores no per-stop amounts): each lead's
+   * amount is split across its non-blank destinations pro-rata by nights, or
+   * equally when the itinerary has zero total nights — so a lead's amount is
+   * never counted twice. Destinations merge case-insensitively keeping the
+   * first-seen display form, mirroring topDestinations.
+   */
+  async confirmedRevenueByDestination(auth: AuthContext, period: ResolvedPeriod, limit: number) {
+    const bounded = Math.min(Math.max(limit, 1), 25);
+    // Same scoping as topDestinations: parent query visibility + period on
+    // Query.createdAt. Eligibility reads the CURRENT persisted stage only —
+    // no history, no booking join. (BOOKING_CONFIRMED is a system stage set
+    // together with booking creation, so confirmed leads carry bookings, but
+    // the chart deliberately does not join them.)
+    const queryWhere = await queryVisibleWhere(
+      auth,
+      period.from && period.to ? { createdAt: { gte: period.from, lt: period.to } } : {},
+    );
+    const leads = await prisma.query.findMany({
+      where: { ...queryWhere, leadStage: 'BOOKING_CONFIRMED' },
+      select: {
+        expectedAmount: true,
+        itinerary: { select: { destination: true, nights: true }, orderBy: { sequence: 'asc' } },
+        quotations: {
+          select: {
+            versions: {
+              select: { finalAmount: true, netAmount: true },
+              orderBy: { versionNumber: 'desc' },
+              take: 1,
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    const merged = new Map<string, { destination: string; total: Prisma.Decimal }>();
+    for (const lead of leads) {
+      // Latest quotation's latest version, exactly like quotationSummary.
+      const latest = lead.quotations[0]?.versions[0];
+      const quoted =
+        latest && Number(latest.finalAmount) > 0 && Number(latest.netAmount) > 0
+          ? new Prisma.Decimal(latest.finalAmount)
+          : null;
+      const expected =
+        lead.expectedAmount !== null && Number(lead.expectedAmount) > 0
+          ? new Prisma.Decimal(lead.expectedAmount)
+          : null;
+      const amount = quoted ?? expected;
+      if (amount === null) continue;
+      const stops = (lead.itinerary ?? [])
+        .map((row) => ({ destination: row.destination.trim(), nights: row.nights }))
+        .filter((row) => row.destination.length > 0);
+      if (stops.length === 0) continue;
+      const totalNights = stops.reduce((sum, row) => sum + row.nights, 0);
+      for (const row of stops) {
+        const share =
+          totalNights > 0
+            ? amount.times(row.nights).dividedBy(totalNights)
+            : amount.dividedBy(stops.length);
+        const key = row.destination.toLowerCase();
+        const existing = merged.get(key);
+        if (existing) existing.total = existing.total.plus(share);
+        else merged.set(key, { destination: row.destination, total: share });
+      }
+    }
+    return [...merged.values()]
+      .map((row) => ({
+        destination: row.destination,
+        totalAmount: row.total.toDecimalPlaces(2).toFixed(2),
+      }))
+      .sort((a, b) => Number(b.totalAmount) - Number(a.totalAmount))
+      .slice(0, bounded);
   },
 
   async staffConversions(auth: AuthContext, dateFilter: CreatedFilter, limit: number) {

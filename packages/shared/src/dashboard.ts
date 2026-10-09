@@ -51,3 +51,21 @@ export const dashboardQuerySchema = z.object({
 });
 
 export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
+
+/**
+ * Query schema for the Upcoming Travel widgets. Unlike the analytics period
+ * (which filters lead creation dates), these ranges filter the lead's
+ * planned travel date: `days` counts forward from the start of today in the
+ * company timezone, or `from`/`to` give an explicit calendar range.
+ */
+export const upcomingTravelRanges = ['7', '30', '90'] as const;
+export type UpcomingTravelRange = (typeof upcomingTravelRanges)[number];
+
+export const upcomingTravelQuerySchema = z.object({
+  days: z.enum(upcomingTravelRanges).default('30'),
+  from: optionalDate,
+  to: optionalDate,
+  limit: z.coerce.number().int().min(1).max(25).optional(),
+});
+
+export type UpcomingTravelQuery = z.infer<typeof upcomingTravelQuerySchema>;

@@ -16,11 +16,13 @@ import {
   KeyRound,
   Landmark,
   LayoutDashboard,
+  Mail,
   MapPin,
   MessageSquare,
   NotebookText,
   PackagePlus,
   Plane,
+  ReceiptText,
   Search,
   Settings,
   Settings2,
@@ -51,6 +53,12 @@ export const SHOW_BOOKINGS_NAVIGATION = false;
 export const SHOW_ACTIVITY_LOGS_NAVIGATION = false;
 export const SHOW_REPORTS_NAVIGATION = false;
 
+// The "Reminders" workspace group (My Reminders, Booking Reminders,
+// Notifications, Notification Settings) is a dead product area, hidden from
+// the sidebar following the same pattern as Bookings. Set back to true to
+// restore it; routes, pages, permissions, APIs and data are untouched.
+export const SHOW_REMINDERS_NAVIGATION = false;
+
 /**
  * Sister product: WhatsApp Max. Surfaced as a cross-app launcher
  * pinned to the bottom of the sidebar (the Zomato → Blinkit pattern) and opened
@@ -66,6 +74,7 @@ export const NAV_SECTION = {
   GENERAL: 'GENERAL',
   WORKSPACE: 'WORKSPACE',
   SALES: 'SALES',
+  VOUCHERS: 'VOUCHERS',
   OPERATIONS: 'OPERATIONS',
   MASTERS: 'MASTERS',
   ADMINISTRATION: 'ADMINISTRATION',
@@ -77,6 +86,7 @@ export const NAV_SECTION_ORDER: readonly NavSection[] = [
   NAV_SECTION.GENERAL,
   NAV_SECTION.WORKSPACE,
   NAV_SECTION.SALES,
+  NAV_SECTION.VOUCHERS,
   NAV_SECTION.OPERATIONS,
   NAV_SECTION.MASTERS,
   NAV_SECTION.ADMINISTRATION,
@@ -86,6 +96,7 @@ export const NAV_SECTION_LABELS: Record<NavSection, string> = {
   [NAV_SECTION.GENERAL]: 'General',
   [NAV_SECTION.WORKSPACE]: 'Workspace',
   [NAV_SECTION.SALES]: 'Sales',
+  [NAV_SECTION.VOUCHERS]: 'Vouchers',
   [NAV_SECTION.OPERATIONS]: 'Operations',
   [NAV_SECTION.MASTERS]: 'Masters',
   [NAV_SECTION.ADMINISTRATION]: 'Administration',
@@ -146,48 +157,52 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // -------------------------------------------------------------------------
   // Workspace
   // -------------------------------------------------------------------------
-  {
-    label: 'Reminders',
-    to: '/reminders',
-    icon: Clock,
-    available: true,
-    permission: PERMISSIONS.REMINDERS_VIEW,
-    section: NAV_SECTION.WORKSPACE,
-    children: [
-      {
-        label: 'My Reminders',
-        to: '/reminders',
-        icon: BellRing,
-        available: true,
-        permission: PERMISSIONS.REMINDERS_VIEW,
-        section: NAV_SECTION.WORKSPACE,
-      },
-      {
-        label: 'Booking Reminders',
-        to: '/reminders/bookings',
-        icon: CalendarClock,
-        available: true,
-        permission: PERMISSIONS.BOOKING_REMINDERS_VIEW,
-        section: NAV_SECTION.WORKSPACE,
-      },
-      {
-        label: 'Notifications',
-        to: '/reminders/notifications',
-        icon: Bell,
-        available: true,
-        permission: PERMISSIONS.NOTIFICATIONS_VIEW,
-        section: NAV_SECTION.WORKSPACE,
-      },
-      {
-        label: 'Notification Settings',
-        to: '/reminders/settings',
-        icon: Settings2,
-        available: true,
-        permission: PERMISSIONS.NOTIFICATIONS_SETTINGS,
-        section: NAV_SECTION.WORKSPACE,
-      },
-    ],
-  },
+  ...(SHOW_REMINDERS_NAVIGATION
+    ? [
+        {
+          label: 'Reminders',
+          to: '/reminders',
+          icon: Clock,
+          available: true,
+          permission: PERMISSIONS.REMINDERS_VIEW,
+          section: NAV_SECTION.WORKSPACE,
+          children: [
+            {
+              label: 'My Reminders',
+              to: '/reminders',
+              icon: BellRing,
+              available: true,
+              permission: PERMISSIONS.REMINDERS_VIEW,
+              section: NAV_SECTION.WORKSPACE,
+            },
+            {
+              label: 'Booking Reminders',
+              to: '/reminders/bookings',
+              icon: CalendarClock,
+              available: true,
+              permission: PERMISSIONS.BOOKING_REMINDERS_VIEW,
+              section: NAV_SECTION.WORKSPACE,
+            },
+            {
+              label: 'Notifications',
+              to: '/reminders/notifications',
+              icon: Bell,
+              available: true,
+              permission: PERMISSIONS.NOTIFICATIONS_VIEW,
+              section: NAV_SECTION.WORKSPACE,
+            },
+            {
+              label: 'Notification Settings',
+              to: '/reminders/settings',
+              icon: Settings2,
+              available: true,
+              permission: PERMISSIONS.NOTIFICATIONS_SETTINGS,
+              section: NAV_SECTION.WORKSPACE,
+            },
+          ],
+        },
+      ]
+    : []),
   {
     label: 'Live Search',
     to: '/travel-search',
@@ -227,6 +242,34 @@ export const NAV_ITEMS: readonly NavItem[] = [
     available: true,
     permission: PERMISSIONS.QUOTATIONS_VIEW,
     section: NAV_SECTION.SALES,
+  },
+  {
+    label: 'Payments',
+    to: '/payments',
+    icon: Landmark,
+    available: true,
+    permission: PERMISSIONS.PAYMENTS_VIEW,
+    section: NAV_SECTION.SALES,
+  },
+  {
+    label: 'Email',
+    to: '/emails',
+    icon: Mail,
+    available: true,
+    permission: PERMISSIONS.EMAILS_VIEW,
+    section: NAV_SECTION.SALES,
+  },
+
+  // -------------------------------------------------------------------------
+  // Vouchers (extensible group: Hotel today, Flight/Transfer/Activity later)
+  // -------------------------------------------------------------------------
+  {
+    label: 'Hotel',
+    to: '/hotel-vouchers',
+    icon: ReceiptText,
+    available: true,
+    permission: PERMISSIONS.HOTEL_VOUCHERS_VIEW,
+    section: NAV_SECTION.VOUCHERS,
   },
 
   // -------------------------------------------------------------------------

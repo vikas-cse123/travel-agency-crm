@@ -13,4 +13,6 @@ export const dashboardController = {
     sendSuccess(res, await dashboardService.analytics(auth(req), req.query as never)),
   operations: async (req: Request, res: Response) =>
     sendSuccess(res, await dashboardService.operations(auth(req), req.query as never)),
+  upcomingTravel: async (req: Request, res: Response) =>
+    sendSuccess(res, await dashboardService.upcomingTravel(auth(req), req.query as never)),
 };

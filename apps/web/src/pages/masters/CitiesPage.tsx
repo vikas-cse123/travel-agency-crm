@@ -17,7 +17,6 @@ import {
   HIDE_GLOBAL_CONFIRM,
   MasterHeader,
   Pagination,
-  StatusBadge,
 } from './MasterUi';
 
 export function CitiesPage() {
@@ -70,13 +69,13 @@ export function CitiesPage() {
       />
       <ExcelImportDialog open={importOpen} onClose={() => setImportOpen(false)} initialMasterType="CITY" onSuccess={() => cities.refetch()} />
       <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
-        <div className="grid gap-3 border-b p-4 md:grid-cols-[minmax(0,1fr)_240px_180px]">
+        <div className="grid gap-3 border-b p-4 md:grid-cols-[minmax(0,1fr)_240px]">
           <label className="relative">
             <span className="sr-only">Search cities</span>
             <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
             <input
               aria-label="Search cities"
-              placeholder="Search city, airport code or country…"
+              placeholder="Search city or country…"
               className="w-full rounded-lg border py-2.5 pl-9 pr-3 text-sm"
               value={params.get('search') ?? ''}
               onChange={(e) => update('search', e.target.value)}
@@ -95,20 +94,6 @@ export function CitiesPage() {
               </option>
             ))}
           </select>
-          {canUpdate ? (
-            <select
-              aria-label="City status"
-              className="rounded-lg border px-3 py-2.5 text-sm"
-              value={params.get('status') ?? ''}
-              onChange={(e) => update('status', e.target.value)}
-            >
-              <option value="">Current statuses</option>
-              <option>ACTIVE</option>
-              <option>INACTIVE</option>
-            </select>
-          ) : (
-            <div />
-          )}
         </div>
         {cities.isPending ? (
           <div className="h-72 animate-pulse bg-slate-100" />
@@ -128,13 +113,11 @@ export function CitiesPage() {
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-muted text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   <tr>
-                    {['Country', 'City name', 'Airport code', 'Status', 'Created', 'Actions'].map(
-                      (h) => (
-                        <th key={h} className="px-4 py-3">
-                          {h}
-                        </th>
-                      ),
-                    )}
+                    {['Country', 'City name', 'Created', 'Actions'].map((h) => (
+                      <th key={h} className="px-4 py-3">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -144,14 +127,6 @@ export function CitiesPage() {
                       <td className="px-4 py-3 font-semibold text-slate-900">
                         {city.name}
                         {city.isGlobal && <GlobalBadge />}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="rounded bg-blue-50 px-2 py-1 font-mono text-blue-700">
-                          {city.airportCode ?? '—'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge value={city.status} />
                       </td>
                       <td className="px-4 py-3 text-slate-500">
                         {formatMasterDate(city.createdAt)}
@@ -210,11 +185,8 @@ export function CitiesPage() {
                         {city.name}
                         {city.isGlobal && <GlobalBadge />}
                       </h2>
-                      <p className="text-sm text-slate-500">
-                        {city.countryName} · {city.airportCode ?? 'No airport code'}
-                      </p>
+                      <p className="text-sm text-slate-500">{city.countryName}</p>
                     </div>
-                    <StatusBadge value={city.status} />
                   </div>
                   <div className="flex gap-2">
                     <Link to={`/masters/cities/${city.id}`}>

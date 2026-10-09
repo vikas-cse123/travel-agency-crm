@@ -36,6 +36,8 @@ import { MetricInfoTooltip } from '@/components/ui/Tooltip';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { ChartLegend } from '@/components/charts/ChartLegend';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
+import { VerticalBarChart } from '@/components/charts/VerticalBarChart';
+import { UpcomingTravelCard } from './UpcomingTravelCard';
 import { MetricBar } from '@/components/charts/MetricBar';
 import {
   useDashboardAnalytics,
@@ -557,6 +559,32 @@ export function DashboardPage() {
               </section>
             )}
           </div>
+
+          {caps?.canViewLeads && (
+            <section className="overflow-hidden rounded-lg border bg-card shadow-card">
+              <SectionHeader
+                icon={IndianRupee}
+                title="Booking Confirmed Amount (Destination Wise)"
+                className="bg-teal-600 text-white"
+              />
+              <div className="p-4">
+                <VerticalBarChart
+                  data={(data?.confirmedRevenueByDestination ?? []).map((row) => ({
+                    label: row.destination,
+                    value: Number(row.totalAmount),
+                  }))}
+                  formatValue={(value) => money(String(value))}
+                />
+              </div>
+            </section>
+          )}
+
+          {caps?.canViewLeads && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <UpcomingTravelCard kind="confirmed" />
+              <UpcomingTravelCard kind="others" />
+            </div>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             {caps?.canViewLeads && (

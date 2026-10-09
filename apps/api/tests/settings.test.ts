@@ -230,6 +230,54 @@ describe('Phase 18 company settings', () => {
     );
   });
 
+  it('saves, clears, and isolates the hotel voucher colour per tenant', async () => {
+    const client = await owner();
+    // Unset by default: legacy companies render the built-in purple theme.
+    expect(
+      (await client.get('/api/settings')).body.data.branding.hotelVoucherPrimaryColor,
+    ).toBeNull();
+    const saved = await client.patch('/api/settings/branding', {
+      hotelVoucherPrimaryColor: '#2563EB',
+    });
+    expect(saved.status).toBe(200);
+    // Case is preserved as sent; the renderer normalizes it.
+    expect((await client.get('/api/settings')).body.data.branding.hotelVoucherPrimaryColor).toBe(
+      '#2563EB',
+    );
+    // Omitting the key leaves the saved value untouched.
+    await client.patch('/api/settings/branding', { primaryColor: '#ff8800' });
+    expect((await client.get('/api/settings')).body.data.branding.hotelVoucherPrimaryColor).toBe(
+      '#2563EB',
+    );
+    // Invalid values are rejected, never stored.
+    expect(
+      (await client.patch('/api/settings/branding', { hotelVoucherPrimaryColor: 'blue' })).status,
+    ).toBe(400);
+    expect(
+      (await client.patch('/api/settings/branding', { hotelVoucherPrimaryColor: '#fff' })).status,
+    ).toBe(400);
+    // Null clears back to the default theme.
+    const cleared = await client.patch('/api/settings/branding', {
+      hotelVoucherPrimaryColor: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      (await client.get('/api/settings')).body.data.branding.hotelVoucherPrimaryColor,
+    ).toBeNull();
+    // Tenant isolation: another company neither sees nor disturbs it.
+    await client.patch('/api/settings/branding', { hotelVoucherPrimaryColor: '#15803D' });
+    const beta = await owner('beta@settings.test', 'Beta Settings Travel');
+    expect(
+      (await beta.get('/api/settings')).body.data.branding.hotelVoucherPrimaryColor,
+    ).toBeNull();
+    expect(
+      (await beta.patch('/api/settings/branding', { hotelVoucherPrimaryColor: '#DC2626' })).status,
+    ).toBe(200);
+    expect(
+      (await client.get('/api/settings')).body.data.branding.hotelVoucherPrimaryColor,
+    ).toBe('#15803D');
+  });
+
   it('updates timezone and default currency and rejects invalid values', async () => {
     const client = await owner();
     const ok = await client.patch('/api/settings/preferences', {

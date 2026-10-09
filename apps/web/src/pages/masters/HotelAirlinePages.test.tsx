@@ -281,8 +281,87 @@ describe('Phase 13B master pages', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: 'Baku' })).toBeInTheDocument());
   });
 
-  it('renders hotel detail and gates costing by permission', async () => {
+  it('creates a hotel with phone and email and blocks a malformed email', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (init?.method === 'POST' && url.endsWith('/masters/hotels'))
+        return response({ ...hotel, id: hotelId });
+      if (url.includes(`/masters/destinations/${destinationId}`)) return response(destination);
+      if (url.includes('/masters/destinations')) return response(page([destination]));
+      if (url.includes('/masters/hotels')) return response(page([]));
+      return response(page([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/masters/hotels/new" element={<HotelFormPage />} />
+      </Routes>,
+      { route: '/masters/hotels/new' },
+    );
+    await screen.findByRole('heading', { name: 'Create Hotel' });
+    expect(screen.getByPlaceholderText('e.g. +91 14100 00000')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('e.g. stay@example.com')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'Azerbaijan' })).toBeInTheDocument(),
+    );
+    const destinationSelect = screen.getByText('Destination *').querySelector('select')!;
+    await userEvent.selectOptions(destinationSelect, destinationId);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Baku' })).toBeInTheDocument());
+    const citySelect = screen.getByText('City *').querySelector('select')!;
+    await userEvent.selectOptions(citySelect, cityId);
+    await userEvent.type(screen.getByPlaceholderText('Enter hotel name'), 'Seaside Resort');
+    await userEvent.type(screen.getByPlaceholderText('e.g. +91 14100 00000'), '+91 09876543210');
+    // Malformed email is blocked client-side with no POST.
+    await userEvent.type(screen.getByPlaceholderText('e.g. stay@example.com'), 'not-an-email');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Hotel' }));
+    expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) => String(url).endsWith('/masters/hotels') && options?.method === 'POST',
+      ),
+    ).toBe(false);
+    await userEvent.clear(screen.getByPlaceholderText('e.g. stay@example.com'));
+    await userEvent.type(screen.getByPlaceholderText('e.g. stay@example.com'), 'stay@seaside.test');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Hotel' }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith('/masters/hotels') && options?.method === 'POST',
+      );
+      expect(post).toBeDefined();
+    });
+    const post = fetchMock.mock.calls.find(
+      ([url, options]) => String(url).endsWith('/masters/hotels') && options?.method === 'POST',
+    );
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+      phone: '+91 09876543210',
+      email: 'stay@seaside.test',
+    });
+  });
+
+  it('hydrates hotel phone and email on edit', async () => {
+    const withContact = { ...hotel, phone: '+91 14100 00000', email: 'stay@shahpalace.test' };
     vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes(`/masters/destinations/${destinationId}`)) return response(destination);
+        if (url.includes('/masters/destinations')) return response(page([destination]));
+        if (url.includes('/masters/hotels/') && !url.includes('?')) return response(withContact);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        return response(withContact);
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/masters/hotels/:hotelId/edit" element={<HotelFormPage />} />
+      </Routes>,
+      { route: `/masters/hotels/${hotelId}/edit` },
+    );
+    expect(await screen.findByDisplayValue('+91 14100 00000')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('stay@shahpalace.test')).toBeInTheDocument();
+  });
+
+  it('renders hotel detail and gates costing by permission', async () => {    vi.stubGlobal(
       'fetch',
       vi.fn(async () => response(hotel)),
     );

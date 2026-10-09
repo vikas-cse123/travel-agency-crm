@@ -35,6 +35,25 @@ import {
 const input = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
 const card = 'rounded-xl border bg-card p-5 shadow-sm space-y-4';
 
+/** Built-in hotel-voucher PDF theme (used when no custom color is saved). */
+const VOUCHER_DEFAULT_PRIMARY = '#3d2352';
+
+const isValidHex = (value: string): boolean => /^#[0-9a-fA-F]{6}$/.test(value.trim());
+
+/** Readable text for a primary-color surface (mirrors the PDF renderer). */
+function voucherPreviewText(hex: string): string {
+  const channel = (part: string): number => {
+    const srgb = Number.parseInt(part, 16) / 255;
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  const clean = hex.trim();
+  const luminance =
+    0.2126 * channel(clean.slice(1, 3)) +
+    0.7152 * channel(clean.slice(3, 5)) +
+    0.0722 * channel(clean.slice(5, 7));
+  return luminance > 0.4 ? '#1f2a5c' : '#ffffff';
+}
+
 /**
  * UI-only visibility flags. These hide user-facing controls without touching
  * the underlying data/API (reversible later by flipping back to true).
@@ -219,11 +238,22 @@ function BrandingTab({ data, canUpdate }: { data: CompanySettings; canUpdate: bo
   const [color, setColor] = useState(data.branding.primaryColor);
   const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => setColor(data.branding.primaryColor), [data.branding.primaryColor]);
+  const [voucherColor, setVoucherColor] = useState(
+    data.branding.hotelVoucherPrimaryColor ?? VOUCHER_DEFAULT_PRIMARY,
+  );
+  useEffect(
+    () => setVoucherColor(data.branding.hotelVoucherPrimaryColor ?? VOUCHER_DEFAULT_PRIMARY),
+    [data.branding.hotelVoucherPrimaryColor],
+  );
+  const voucherColorValid = isValidHex(voucherColor);
+  const voucherPreviewColor = voucherColorValid
+    ? voucherColor.trim().toLowerCase()
+    : VOUCHER_DEFAULT_PRIMARY;
+  const isVoucherCustomized = data.branding.hotelVoucherPrimaryColor != null;
   return (
     <section className={card}>
       <h2 className="font-semibold">Branding</h2>
-      {SHOW_PRIMARY_COLOUR_SETTING && (
-        <>
+      {SHOW_PRIMARY_COLOUR_SETTING && (        <>
           <Field label="Primary colour">
             <div className="flex items-center gap-2">
               <input
@@ -254,6 +284,70 @@ function BrandingTab({ data, canUpdate }: { data: CompanySettings; canUpdate: bo
       )}
 
       <div className={SHOW_PRIMARY_COLOUR_SETTING ? 'border-t pt-4' : ''}>
+        <p className="text-sm font-medium text-slate-700">Hotel voucher PDF</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Primary color for hotel voucher section headers and accents. Leave the default purple
+          unless this company needs its own theme.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            aria-label="Hotel voucher primary colour picker"
+            type="color"
+            value={voucherPreviewColor}
+            onChange={(e) => setVoucherColor(e.target.value)}
+            className="h-9 w-12 rounded border"
+          />
+          <input
+            aria-label="Hotel voucher primary colour hex"
+            className={`${input} max-w-40`}
+            value={voucherColor}
+            onChange={(e) => setVoucherColor(e.target.value)}
+            placeholder="#3d2352"
+          />
+          {canUpdate && (
+            <>
+              <Button
+                isLoading={branding.isPending}
+                disabled={!voucherColorValid}
+                onClick={() =>
+                  branding.mutate({ hotelVoucherPrimaryColor: voucherColor.trim().toLowerCase() })
+                }
+              >
+                Save voucher colour
+              </Button>
+              {isVoucherCustomized && (
+                <Button
+                  variant="secondary"
+                  isLoading={branding.isPending}
+                  onClick={() => branding.mutate({ hotelVoucherPrimaryColor: null })}
+                >
+                  Reset to default
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+        {!voucherColorValid && (
+          <p role="alert" className="mt-1 text-xs text-red-600">
+            Enter a valid #RRGGBB colour.
+          </p>
+        )}
+        <div
+          aria-label="Hotel voucher colour preview"
+          className="mt-3 overflow-hidden rounded-lg"
+          style={{ backgroundColor: voucherPreviewColor }}
+        >
+          <p
+            className="px-3 py-2 text-sm font-bold tracking-wide"
+            style={{ color: voucherPreviewText(voucherPreviewColor) }}
+          >
+            HOTEL DETAILS
+          </p>
+        </div>
+        <Feedback error={branding.error?.message} success={branding.isSuccess} />
+      </div>
+
+      <div className="border-t pt-4">
         <p className="text-sm font-medium text-slate-700">Company logo</p>
         <div className="mt-2 flex h-24 w-40 items-center justify-center overflow-hidden rounded-lg border bg-slate-50">
           {data.branding.hasLogo && data.branding.logoUrl ? (

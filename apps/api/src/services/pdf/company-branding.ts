@@ -18,6 +18,12 @@ export interface CompanyBranding {
   website: string | null;
   address: string | null;
   primaryColor: string;
+  /**
+   * Hotel-voucher PDF theme override (NULL/undefined = built-in purple).
+   * Carried here so the voucher renderer never touches quotation/booking
+   * theme settings. Optional so existing fixtures keep compiling.
+   */
+  hotelVoucherPrimaryColor?: string | null;
   taxRegistrationNumber: string | null;
   logo: Buffer | null;
   bank: {
@@ -42,6 +48,7 @@ export async function loadCompanyBranding(
       website: true,
       address: true,
       primaryColor: true,
+      hotelVoucherPrimaryColor: true,
       taxRegistrationNumber: true,
       logoObjectKey: true,
       logoConfirmedAt: true,
@@ -77,6 +84,7 @@ export async function loadCompanyBranding(
     website: company.website,
     address: company.address,
     primaryColor: company.primaryColor,
+    hotelVoucherPrimaryColor: company.hotelVoucherPrimaryColor,
     taxRegistrationNumber: company.taxRegistrationNumber,
     logo,
     bank:

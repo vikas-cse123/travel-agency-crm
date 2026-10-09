@@ -16,7 +16,6 @@ export function CityDetailsPage() {
   const details: Array<[string, string]> = [
     ['Country', value.countryName],
     ['City Name', value.name],
-    ['Airport Code', value.airportCode ?? 'Not provided'],
     ['Status', value.status],
     ['Used by destinations', String(value._count.destinationLinks)],
     ['Created At', formatMasterDate(value.createdAt)],

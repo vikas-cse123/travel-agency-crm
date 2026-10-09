@@ -221,20 +221,22 @@ describe('Phase 13A master pages', () => {
     await screen.findByRole('heading', { name: 'Create City' });
     await screen.findByRole('option', { name: 'India' });
     expect(screen.getByRole('combobox', { name: /country/i })).toHaveValue('IN');
+    expect(screen.queryByPlaceholderText('e.g. DEL')).not.toBeInTheDocument();
+    expect(screen.queryByText(/airport code/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Create City' }));
     expect(await screen.findByText('Enter a city name.')).toBeInTheDocument();
     await userEvent.type(screen.getByPlaceholderText('Enter city name'), 'Jaipur');
-    await userEvent.type(screen.getByPlaceholderText('e.g. DEL'), 'jai');
     await userEvent.click(screen.getByRole('button', { name: 'Create City' }));
     await screen.findByText('Saved city');
     const createCall = fetchMock.mock.calls.find(
       ([url, init]) => String(url).endsWith('/api/masters/cities') && init?.method === 'POST',
     );
-    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+    const createBody = JSON.parse(String(createCall?.[1]?.body));
+    expect(createBody).toMatchObject({
       countryCode: 'IN',
       name: 'Jaipur',
-      airportCode: 'JAI',
     });
+    expect(createBody).not.toHaveProperty('airportCode');
   });
 
   it('hides create, edit, delete, and status controls from a read-only role', async () => {

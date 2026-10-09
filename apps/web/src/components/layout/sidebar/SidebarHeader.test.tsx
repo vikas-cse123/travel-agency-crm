@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { APP_NAME } from '@interscale/shared';
 import { SidebarHeader } from './SidebarHeader';
@@ -49,7 +49,7 @@ describe('SidebarHeader custom-domain branding', () => {
       company: { name: 'Easy Tour and Travels', customDomain: { hostname: 'crm.easytour.com' } },
     };
     renderWithProviders(<SidebarHeader collapsed={false} {...props} />);
-    const logo = document.querySelector('img[src="/logo-Full.png"]');
+    const logo = document.querySelector('img[src="/new-logo.png"]');
     expect(logo).not.toBeNull();
     expect(logo).toHaveAttribute('alt', 'Travel Agency CRM');
     expect(screen.queryByText(APP_NAME)).not.toBeInTheDocument();
@@ -108,7 +108,7 @@ describe('SidebarHeader custom-domain branding', () => {
     auth.user = null;
     renderWithProviders(<SidebarHeader collapsed {...props} />);
     expect(document.querySelector('img[src="/logo.png"]')).not.toBeNull();
-    expect(document.querySelector('img[src="/logo-Full.png"]')).toBeNull();
+    expect(document.querySelector('img[src="/new-logo.png"]')).toBeNull();
     expect(screen.queryByText(APP_NAME)).not.toBeInTheDocument();
   });
 
@@ -123,7 +123,7 @@ describe('SidebarHeader custom-domain branding', () => {
     expect(row.className).toContain('h-14');
     // Full logo: block-level, fills the available header width at a readable
     // height, aspect preserved, left-anchored, no wrapper box.
-    const logo = container.querySelector('img[src="/logo-Full.png"]') as HTMLElement;
+    const logo = container.querySelector('img[src="/new-logo.png"]') as HTMLElement;
     expect(logo).not.toBeNull();
     expect(logo.className).toContain('block');
     expect(logo.className).toContain('w-full');
@@ -131,5 +131,25 @@ describe('SidebarHeader custom-domain branding', () => {
     expect(logo.className).toContain('h-12');
     expect(logo.className).toContain('object-contain');
     expect(logo.className).toContain('object-left');
+  });
+
+  it('floats the collapse toggle on the sidebar edge, clear of the logo', () => {
+    setHost('app.travelagencycrm.in');
+    auth.user = null;
+    const { container } = renderWithProviders(<SidebarHeader collapsed={false} {...props} />);
+    // Header is the positioning context; toggle is absolutely positioned
+    // (out of flow, cannot squeeze the logo).
+    const row = container.firstElementChild as HTMLElement;
+    expect(row.className).toContain('relative');
+    const toggle = screen.getByRole('button', { name: 'Collapse sidebar' });
+    expect(toggle.className).toContain('absolute');
+    expect(toggle.className).toContain('right-0');
+    // Still wired: same control, same labels in both states.
+    expect(toggle).toHaveAttribute('title', 'Collapse sidebar');
+    cleanup();
+    renderWithProviders(<SidebarHeader collapsed {...props} />);
+    expect(screen.getByRole('button', { name: 'Expand sidebar' }).className).toContain(
+      'absolute',
+    );
   });
 });

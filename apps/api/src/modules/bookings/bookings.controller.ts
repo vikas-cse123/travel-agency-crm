@@ -232,6 +232,8 @@ export const bookingsController = {
     ),
   payments: async (req: Request, res: Response) =>
     sendSuccess(res, await bookingsService.payments(auth(req), id(req))),
+  paymentsLedger: async (req: Request, res: Response) =>
+    sendSuccess(res, await bookingsService.paymentsLedger(auth(req), req.query)),
   createPayment: async (req: Request, res: Response) =>
     sendSuccess(
       res,
@@ -262,6 +264,27 @@ export const bookingsController = {
         context(req),
       ),
       'Payment reversed.',
+    ),
+  paymentReceipt: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await bookingsService.paymentReceipt(auth(req), id(req), req.params.paymentId!),
+    ),
+  generatePaymentReceipt: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await bookingsService.generatePaymentReceipt(
+        auth(req),
+        id(req),
+        req.params.paymentId!,
+        context(req),
+      ),
+      'Payment receipt ready.',
+    ),
+  paymentReceiptDownloadUrl: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await bookingsService.paymentReceiptDownloadUrl(auth(req), id(req), req.params.paymentId!),
     ),
   costs: async (req: Request, res: Response) =>
     sendSuccess(res, await bookingsService.costs(auth(req), id(req))),

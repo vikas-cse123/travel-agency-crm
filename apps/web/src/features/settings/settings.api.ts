@@ -24,6 +24,7 @@ export interface CompanySettings {
   };
   branding: {
     primaryColor: string;
+    hotelVoucherPrimaryColor: string | null;
     hasLogo: boolean;
     logoUrl?: string;
     logoMimeType: string | null;

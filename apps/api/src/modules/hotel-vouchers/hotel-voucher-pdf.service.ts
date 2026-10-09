@@ -1,0 +1,949 @@
+import PDFDocument from 'pdfkit';
+import { htmlToLines } from '../quotations/pdf.service.js';
+import { drawHeaderLogo, type CompanyBranding } from '../../services/pdf/company-branding.js';
+
+/**
+ * Hotel Voucher PDF — premium branded document matching the approved mockup
+ * (A4 portrait; deep purple / dark navy / muted gold / pale lavender).
+ *
+ * Content-driven pagination: sections flow across as many pages as they need
+ * (tables and lists break row by row; overflow pages carry the compact agency
+ * header), and content may run to 30pt above the page edge, so no page ever
+ * leaves more than 30 units of bottom whitespace.
+ *
+ * Rendered exclusively from the voucher's stored snapshot; live Hotel Master
+ * rows are never read here so issued vouchers stay historically accurate.
+ * Company identity (logo, name, address, phone, email, website) always comes
+ * from the passed company branding — never hardcoded. The confirmation card
+ * shows the voucher's own confirmation number; the system voucher number,
+ * status, and issue date are never rendered. Special Requests, Remarks, hotel
+ * stars and weekday names are never rendered.
+ */
+
+export interface HotelVoucherPdfPricingRow {
+  roomType: string;
+  unit: number;
+  quantity: number;
+  gst: number | null;
+  amount: number | null;
+  taxablePay: number | null;
+  gstService: number | null;
+}
+
+export interface HotelVoucherPdfGuestRow {
+  guestName: string;
+  age: number | null;
+  sex: string;
+  paxType: string;
+}
+
+export interface HotelVoucherPdfVoucher {
+  guestName: string;
+  guestPhone: string | null;
+  guestEmail: string | null;
+  adults: number;
+  children: number;
+  hotelName: string;
+  hotelAddress: string | null;
+  hotelCity: string | null;
+  hotelPhone: string | null;
+  hotelEmail: string | null;
+  confirmationNumber: string | null;
+  /** Optional external booking reference (free text; never a Booking link). */
+  bookingId: string | null;
+  /** Optional staff-customized labels; blank falls back to the defaults. */
+  confirmationNumberLabel: string | null;
+  bookingIdLabel: string | null;
+  checkIn: Date;
+  checkOut: Date;
+  roomTypeName: string | null;
+  rooms: number;
+  mealPlanName: string | null;
+  pricing: HotelVoucherPdfPricingRow[];
+  guests: HotelVoucherPdfGuestRow[];
+  termsSnapshot: string | null;
+  /**
+   * Package-includes items. There is currently no voucher-owned source field
+   * for these, so the service passes null (section omitted) until such a
+   * field is approved; the renderer already lays the section out correctly.
+   */
+  packageIncludes: string[] | null;
+}
+
+// Mockup design system (the primary purple is the default theme; a company
+// may override it via Settings → Branding → Hotel voucher PDF).
+const DEFAULT_PRIMARY = '#3d2352';
+const NAVY = '#1f2a5c';
+const GOLD = '#bd9436';
+const GOLD_LIGHT = '#d9b96a';
+const MUTED = '#5b6478';
+const LAVENDER = '#efe9f7';
+const LAVENDER_DEEP = '#e2d7f0';
+const ZEBRA = '#f7f3fc';
+const BEIGE = '#f6efdc';
+const BEIGE_BORDER = '#e3d3ac';
+const CARD_BORDER = '#d9cfee';
+const TABLE_GRID = '#cfc2e8';
+const WHITE = '#ffffff';
+
+const PAGE_W = 595.28;
+const PAGE_H = 841.89;
+const MARGIN = 40;
+const CONTENT_W = PAGE_W - MARGIN * 2;
+// Content may run to 30pt above the page edge; the footer furniture
+// (accent rules, band, page number) lives entirely inside that bottom
+// 30pt zone, so a full page never leaves more than 30 units of whitespace.
+const BOTTOM_LIMIT = PAGE_H - 30;
+const PAD = 6;
+
+const MONTHS = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+];
+
+export function isValidHexColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+/** Company override or the built-in purple default (never throws). */
+export function resolveVoucherPrimary(value: unknown): string {
+  return isValidHexColor(value) ? value.toLowerCase() : DEFAULT_PRIMARY;
+}
+
+/**
+ * Readable foreground for primary-color surfaces: white on dark themes,
+ * dark navy on light themes (e.g. pastel yellow) so section headings never
+ * go invisible.
+ */
+export function voucherPrimaryForeground(primary: string): string {
+  const channel = (hex: string): number => {
+    const srgb = Number.parseInt(hex, 16) / 255;
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * channel(primary.slice(1, 3)) +
+    0.7152 * channel(primary.slice(3, 5)) +
+    0.0722 * channel(primary.slice(5, 7));
+  return luminance > 0.4 ? NAVY : WHITE;
+}
+
+export interface VoucherTheme {
+  primary: string;
+  onPrimary: string;
+}
+
+/** Full theme for a voucher render from the company's saved setting. */
+export function resolveVoucherTheme(value: unknown): VoucherTheme {
+  const primary = resolveVoucherPrimary(value);
+  return { primary, onPrimary: voucherPrimaryForeground(primary) };
+}
+
+function fmtDate(value: Date): string {
+  const month = MONTHS[value.getUTCMonth()] ?? '';
+  return `${String(value.getUTCDate()).padStart(2, '0')} ${month} ${value.getUTCFullYear()}`;
+}
+
+function fmtMoney(value: number): string {
+  return value.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+function fmtGst(value: number | null): string {
+  return value === null ? '—' : `${Number(value)}%`;
+}
+
+function fmtAmount(value: number | null): string {
+  return value === null ? '—' : fmtMoney(value);
+}
+
+/**
+ * Terms lines for the PDF. Editor HTML is flattened to plain lines;
+ * legacy plain text keeps its exact newline structure (htmlToLines would
+ * collapse newlines, so it is only used when markup is present).
+ */
+function voucherTextLines(value: string): string[] {
+  if (!value.includes('<')) {
+    return value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+  return htmlToLines(value);
+}
+
+/** One package item per row: editor HTML flattens to a single line. */
+function voucherPackageLine(value: string): string {
+  if (!value.includes('<')) return value;
+  return htmlToLines(value).join(' ');
+}
+
+export async function renderHotelVoucherPdf(input: {
+  company: CompanyBranding;
+  voucher: HotelVoucherPdfVoucher;
+}): Promise<Buffer> {
+  const { company, voucher } = input;
+  // Theme: company override or the built-in purple default. PURPLE intentionally
+  // keeps its name so every branded surface follows the setting with no layout
+  // change; ON_PRIMARY keeps text/icons readable on light themes.
+  const theme = resolveVoucherTheme(company.hotelVoucherPrimaryColor);
+  const PURPLE = theme.primary;
+  const ON_PRIMARY = theme.onPrimary;
+  const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+  const done = new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+
+  let y = MARGIN;
+
+  /** Start a fresh page when the next block would cross the bottom limit. */
+  const ensure = (height: number) => {
+    if (y + height > BOTTOM_LIMIT) {
+      nextPage();
+    }
+  };
+
+  /**
+   * Fresh continuation page with the compact agency header, so overflow
+   * pages stay branded exactly like the previous design's page two.
+   * Must be called only when more content follows on the new page.
+   */
+  const nextPage = () => {
+    doc.addPage();
+    y = MARGIN;
+    agencyHeader(true);
+  };
+
+  const measure = (text: string, width: number, font: string, size: number): number => {
+    doc.font(font).fontSize(size);
+    return doc.heightOfString(text, { width });
+  };
+
+  /** White card with a light lavender border. */
+  const card = (top: number, height: number) => {
+    doc
+      .save()
+      .fillColor(WHITE)
+      .strokeColor(CARD_BORDER)
+      .lineWidth(0.9)
+      .roundedRect(MARGIN, top, CONTENT_W, height, 7)
+      .fillAndStroke()
+      .restore();
+  };
+
+  /** Small gold diamond bullet used in front of contact lines. */
+  const diamond = (cx: number, cy: number, r = 2.4) => {
+    doc.save().translate(cx, cy).rotate(Math.PI / 4).rect(-r, -r, r * 2, r * 2).fillColor(GOLD).fill().restore();
+  };
+
+  /** Purple + gold divider rule; returns the y below it. */
+  const divider = (top: number): number => {
+    doc.save().fillColor(PURPLE).rect(MARGIN, top, CONTENT_W, 2.2).fill().restore();
+    doc.save().fillColor(GOLD).rect(MARGIN, top + 4, CONTENT_W, 1).fill().restore();
+    return top + 9;
+  };
+
+  // -- Tiny vector icons (outline style, single color) --------------------
+  const iconBuilding = (x: number, cy: number, s: number, color: string) => {
+    const top = cy - s / 2;
+    doc.save().strokeColor(color).lineWidth(1.4);
+    doc.rect(x, top, s, s).stroke();
+    doc.fillColor(color);
+    const w = s / 5;
+    for (const [wx, wy] of [[1, 1], [3, 1], [1, 3], [3, 3]] as const) {
+      doc.rect(x + wx * w - w / 3, top + wy * w - w / 3, (w * 2) / 3, (w * 2) / 3).fill();
+    }
+    doc.restore();
+  };
+  const iconPerson = (x: number, cy: number, s: number, color: string) => {
+    doc.save().strokeColor(color).fillColor(color).lineWidth(1.4);
+    doc.circle(x + s / 2, cy - s * 0.22, s * 0.18).stroke();
+    doc
+      .moveTo(x + s * 0.12, cy + s * 0.42)
+      .quadraticCurveTo(x + s * 0.12, cy + s * 0.02, x + s / 2, cy + s * 0.02)
+      .quadraticCurveTo(x + s * 0.88, cy + s * 0.02, x + s * 0.88, cy + s * 0.42)
+      .closePath()
+      .fill();
+    doc.restore();
+  };
+  const iconPersons = (x: number, cy: number, s: number, color: string) => {
+    iconPerson(x, cy, s * 0.72, color);
+    iconPerson(x + s * 0.34, cy + s * 0.1, s * 0.56, color);
+  };
+  const iconCalendar = (x: number, cy: number, s: number, color: string) => {
+    const top = cy - s / 2;
+    doc.save().strokeColor(color).lineWidth(1.4);
+    doc.roundedRect(x, top, s, s, 2).stroke();
+    doc.moveTo(x, top + s * 0.32).lineTo(x + s, top + s * 0.32).stroke();
+    doc.moveTo(x + s * 0.3, top - 1).lineTo(x + s * 0.3, top + 3).stroke();
+    doc.moveTo(x + s * 0.7, top - 1).lineTo(x + s * 0.7, top + 3).stroke();
+    doc.restore();
+  };
+  const iconMoon = (x: number, cy: number, s: number, color: string) => {
+    doc.save();
+    doc.fillColor(color).circle(x + s / 2, cy, s * 0.36).fill();
+    // Cut-out in the card color to form a crescent.
+    doc.fillColor(WHITE).circle(x + s * 0.66, cy - s * 0.1, s * 0.3).fill();
+    doc.restore();
+  };
+  const iconCoins = (x: number, cy: number, s: number, color: string) => {
+    doc.save().strokeColor(color).lineWidth(1.3);
+    for (let i = 0; i < 3; i += 1) {
+      doc.ellipse(x + s / 2, cy - s * 0.22 + i * s * 0.22, s * 0.42, s * 0.16).stroke();
+    }
+    doc.restore();
+  };
+  const iconDoc = (x: number, cy: number, s: number, color: string) => {
+    const top = cy - s / 2;
+    doc.save().strokeColor(color).lineWidth(1.4);
+    doc.rect(x, top, s * 0.78, s).stroke();
+    doc
+      .moveTo(x + s * 0.78, top + s * 0.3)
+      .lineTo(x + s * 0.48, top + s * 0.3)
+      .lineTo(x + s * 0.48, top)
+      .stroke();
+    doc.fillColor(color);
+    for (let i = 0; i < 3; i += 1) {
+      doc.rect(x + s * 0.14, top + s * (0.44 + i * 0.16), s * 0.5, 1.1).fill();
+    }
+    doc.restore();
+  };
+  const iconList = (x: number, cy: number, s: number, color: string) => {
+    doc.save().fillColor(color).strokeColor(color).lineWidth(1.3);
+    for (let i = 0; i < 3; i += 1) {
+      const ly = cy - s * 0.28 + i * s * 0.28;
+      doc.circle(x + s * 0.1, ly, 1.4).fill();
+      doc.moveTo(x + s * 0.24, ly).lineTo(x + s * 0.92, ly).stroke();
+    }
+    doc.restore();
+  };
+  const iconBed = (x: number, cy: number, s: number, color: string) => {
+    doc.save().strokeColor(color).lineWidth(1.8).lineCap('round');
+    // Headboard + base frame.
+    doc.moveTo(x + s * 0.1, cy - s * 0.34).lineTo(x + s * 0.1, cy + s * 0.34).stroke();
+    doc
+      .moveTo(x + s * 0.1, cy + s * 0.1)
+      .lineTo(x + s * 0.88, cy + s * 0.1)
+      .lineTo(x + s * 0.88, cy + s * 0.34)
+      .stroke();
+    // Pillow + blanket split.
+    doc.moveTo(x + s * 0.3, cy + s * 0.1).lineTo(x + s * 0.3, cy - s * 0.08).stroke();
+    doc.moveTo(x + s * 0.3, cy - s * 0.08).lineTo(x + s * 0.62, cy - s * 0.08).stroke();
+    // Legs.
+    doc.moveTo(x + s * 0.24, cy + s * 0.34).lineTo(x + s * 0.24, cy + s * 0.44).stroke();
+    doc.moveTo(x + s * 0.76, cy + s * 0.34).lineTo(x + s * 0.76, cy + s * 0.44).stroke();
+    doc.restore();
+  };
+  type SectionIcon = 'building' | 'person' | 'calendar' | 'coins' | 'doc' | 'list' | 'bed' | 'moon';
+  const drawIcon = (kind: SectionIcon, x: number, cy: number, s: number, color: string) => {
+    if (kind === 'building') iconBuilding(x, cy, s, color);
+    else if (kind === 'person') iconPersons(x, cy, s, color);
+    else if (kind === 'calendar') iconCalendar(x, cy, s, color);
+    else if (kind === 'coins') iconCoins(x, cy, s, color);
+    else if (kind === 'doc') iconDoc(x, cy, s, color);
+    else if (kind === 'list') iconList(x, cy, s, color);
+    else if (kind === 'moon') iconMoon(x, cy, s, color);
+    else iconBed(x, cy, s, color);
+  };
+
+  /**
+   * Deep-primary section bar with a contrast icon, bold label, and a
+   * restrained gold underline. Fixed height. `keep` reserves room for the
+   * content that must follow the bar so the bar is never stranded alone at
+   * the bottom of a page.
+   */
+  const sectionBar = (title: string, icon: SectionIcon, keep = 0) => {
+    const height = 28;
+    ensure(height + 10 + keep);
+    doc.save().fillColor(PURPLE).roundedRect(MARGIN, y, CONTENT_W, height, 6).fill().restore();
+    drawIcon(icon, MARGIN + 12, y + height / 2, 15, ON_PRIMARY);
+    doc
+      .fillColor(ON_PRIMARY)
+      .font('Helvetica-Bold')
+      .fontSize(11)
+      .text(title, MARGIN + 34, y + 8, { width: CONTENT_W - 46, characterSpacing: 1 });
+    doc
+      .save()
+      .fillColor(GOLD)
+      .roundedRect(MARGIN + 8, y + height - 2.6, CONTENT_W - 16, 2, 1)
+      .fill()
+      .restore();
+    y += height + 10;
+  };
+
+  interface FieldItem {
+    label: string;
+    value: string;
+    boldValue?: boolean;
+  }
+
+  /**
+   * Profile block: bold heading row plus two columns inside one card with a
+   * faint vertical divider. Measures everything first so the card fits.
+   */
+  const profileBlock = (heading: string, left: FieldItem[], right: FieldItem[]) => {
+    const gap = 24;
+    const innerPad = 12;
+    const colW = (CONTENT_W - innerPad * 2 - gap) / 2;
+    const headingH = measure(heading, CONTENT_W - innerPad * 2, 'Helvetica-Bold', 13.5);
+    const blockHeight = (items: FieldItem[]): number =>
+      items.reduce((sum, item) => {
+        const labelH = measure(item.label, colW, 'Helvetica', 9);
+        const valueFont = item.boldValue === false ? 'Helvetica' : 'Helvetica-Bold';
+        const valueH = measure(item.value, colW, valueFont, 10.5);
+        return sum + labelH + 2 + valueH + 9;
+      }, 0);
+    const bodyH = Math.max(blockHeight(left), blockHeight(right), 20);
+    const totalH = headingH + 8 + bodyH + innerPad * 2;
+    ensure(totalH + 4);
+    const top = y;
+    card(top, totalH);
+    let cy = top + innerPad;
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(13.5).text(heading, MARGIN + innerPad, cy, {
+      width: CONTENT_W - innerPad * 2,
+    });
+    cy += headingH + 8;
+    const dividerX = MARGIN + innerPad + colW + gap / 2;
+    if (bodyH > 30) {
+      doc
+        .save()
+        .strokeColor(CARD_BORDER)
+        .lineWidth(0.7)
+        .moveTo(dividerX, cy)
+        .lineTo(dividerX, cy + bodyH)
+        .stroke()
+        .restore();
+    }
+    const renderColumn = (items: FieldItem[], x: number) => {
+      let iy = cy;
+      for (const item of items) {
+        const labelH = measure(item.label, colW, 'Helvetica', 9);
+        doc.fillColor(MUTED).font('Helvetica').fontSize(9).text(item.label, x, iy, { width: colW });
+        const valueFont = item.boldValue === false ? 'Helvetica' : 'Helvetica-Bold';
+        doc
+          .fillColor(NAVY)
+          .font(valueFont)
+          .fontSize(10.5)
+          .text(item.value, x, iy + labelH + 2, { width: colW });
+        iy += labelH + 2 + measure(item.value, colW, valueFont, 10.5) + 9;
+      }
+    };
+    renderColumn(left, MARGIN + innerPad);
+    renderColumn(right, MARGIN + innerPad + colW + gap);
+    y = top + totalH + 4;
+  };
+
+  interface TableColumn {
+    header: string;
+    width: number;
+    align?: 'left' | 'center';
+  }
+
+  /** Branded grid table: purple header, zebra rows, header repeat on breaks. */
+  const table = (columns: TableColumn[], rows: string[][]) => {
+    const headerH = 24;
+    const drawHeader = () => {
+      ensure(headerH);
+      doc.save().fillColor(PURPLE).rect(MARGIN, y, CONTENT_W, headerH).fill().restore();
+      let x = MARGIN;
+      doc.fillColor(ON_PRIMARY).font('Helvetica-Bold').fontSize(9);
+      for (const column of columns) {
+        doc.text(column.header, x + PAD, y + 7, {
+          width: column.width - PAD * 2,
+          align: column.align ?? 'left',
+        });
+        x += column.width;
+      }
+      y += headerH;
+    };
+    const drawRow = (cells: string[], stripe: boolean) => {
+      const font = 'Helvetica';
+      let rowH = 0;
+      cells.forEach((cell, index) => {
+        const column = columns[index];
+        if (!column) return;
+        rowH = Math.max(rowH, measure(cell, column.width - PAD * 2, font, 9.5));
+      });
+      rowH += PAD * 2;
+      if (y + rowH > BOTTOM_LIMIT) {
+        nextPage();
+        drawHeader();
+      }
+      if (stripe) {
+        doc.save().fillColor(ZEBRA).rect(MARGIN, y, CONTENT_W, rowH).fill().restore();
+      }
+      let x = MARGIN;
+      doc.fillColor(NAVY).font(font).fontSize(9.5);
+      cells.forEach((cell, index) => {
+        const column = columns[index];
+        if (!column) return;
+        doc.text(cell, x + PAD, y + PAD, {
+          width: column.width - PAD * 2,
+          align: column.align ?? 'left',
+        });
+        x += column.width;
+      });
+      doc.save().strokeColor(TABLE_GRID).lineWidth(0.5);
+      let gx = MARGIN;
+      for (const column of columns) {
+        doc.rect(gx, y, column.width, rowH).stroke();
+        gx += column.width;
+      }
+      doc.restore();
+      y += rowH;
+    };
+    drawHeader();
+    rows.forEach((cells, index) => drawRow(cells, index % 2 === 1));
+  };
+
+  /**
+   * Numbered list inside card(s); paired mode renders two items per row.
+   * Rows are chunked so a long list flows across pages with a fitting card
+   * per page — content never slides under the footer furniture. When `bar`
+   * is given, the section bar is drawn only once room for the bar plus the
+   * first row exists, so the bar is never stranded alone at a page bottom.
+   */
+  const numberedCard = (
+    items: string[],
+    paired: boolean,
+    bar?: { title: string; icon: SectionIcon },
+  ) => {
+    const innerPad = 12;
+    const gap = 20;
+    const colW = (CONTENT_W - innerPad * 2 - gap) / 2;
+    const fullW = CONTENT_W - innerPad * 2;
+    interface Row {
+      left: string;
+      right: string;
+      height: number;
+    }
+    const rows: Row[] = [];
+    if (paired) {
+      for (let index = 0; index < items.length; index += 2) {
+        const left = `${index + 1}. ${items[index] ?? ''}`;
+        const rightItem = items[index + 1];
+        const right = rightItem === undefined ? '' : `${index + 2}. ${rightItem}`;
+        rows.push({
+          left,
+          right,
+          height:
+            Math.max(measure(left, colW, 'Helvetica', 9.5), measure(right, colW, 'Helvetica', 9.5)) + 7,
+        });
+      }
+    } else {
+      items.forEach((item, index) => {
+        const left = `${index + 1}. ${item}`;
+        rows.push({ left, right: '', height: measure(left, fullW - 16, 'Helvetica', 9.5) + 6 });
+      });
+    }
+    // Chunk rows so each card fits the space left on the page (or a
+    // fresh page) — content never slides under the footer furniture.
+    // Bar lookahead: the bar (28 + 10 gap) plus the first row must fit,
+    // otherwise the whole section starts on the next page — no orphan bars.
+    const pageBody = BOTTOM_LIMIT - MARGIN;
+    if (bar && rows.length > 0) {
+      const firstH = innerPad * 2 + (rows[0]?.height ?? 0);
+      if (firstH > BOTTOM_LIMIT - y - (28 + 10)) nextPage();
+      sectionBar(bar.title, bar.icon);
+    }
+    const chunks: Row[][] = [];
+    let current: Row[] = [];
+    // First chunk is bound by the space left on the current page.
+    let spaceLeft = BOTTOM_LIMIT - y;
+    let currentH = innerPad * 2;
+    for (const row of rows) {
+      if (current.length > 0 && currentH + row.height > spaceLeft) {
+        chunks.push(current);
+        current = [];
+        currentH = innerPad * 2;
+        spaceLeft = pageBody;
+      }
+      current.push(row);
+      currentH += row.height;
+    }
+    if (current.length > 0) chunks.push(current);
+    chunks.forEach((chunk, chunkIndex) => {
+      const chunkH = chunk.reduce((sum, row) => sum + row.height, 0) + innerPad * 2;
+      if (chunkIndex > 0) {
+        nextPage();
+      } else {
+        ensure(chunkH + 4);
+      }
+      const top = y;
+      card(top, chunkH);
+      let cy = top + innerPad;
+      doc.fillColor(NAVY).font('Helvetica').fontSize(9.5);
+      for (const row of chunk) {
+        doc.text(row.left, MARGIN + innerPad + (paired ? 0 : 4), cy, {
+          width: paired ? colW : fullW - 16,
+        });
+        if (paired && row.right) {
+          doc.text(row.right, MARGIN + innerPad + colW + gap, cy, { width: colW });
+          doc
+            .save()
+            .strokeColor(CARD_BORDER)
+            .lineWidth(0.7)
+            .moveTo(MARGIN + innerPad + colW + gap / 2, cy)
+            .lineTo(MARGIN + innerPad + colW + gap / 2, cy + row.height - 4)
+            .stroke()
+            .restore();
+        }
+        cy += row.height;
+      }
+      y = top + chunkH + 4;
+    });
+  };
+
+  /**
+   * Agency header. Full variant (page 1): logo + name + contact lines on the
+   * left, address + phone on the right, then the purple/gold divider.
+   * Compact variant (page 2): smaller logo, name, single contact line.
+   */
+  const agencyHeader = (compact: boolean) => {
+    const logoSize = compact ? 38 : 56;
+    const logoDrawn = drawHeaderLogo(doc, company.logo ?? null, {
+      x: MARGIN,
+      y,
+      width: logoSize,
+      height: logoSize,
+    });
+    const textX = logoDrawn ? MARGIN + logoSize + 12 : MARGIN;
+    if (!compact) {
+      const nameW = CONTENT_W - (textX - MARGIN) - 180;
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(20).text(company.name, textX, y + 2, {
+        width: Math.max(nameW, 100),
+      });
+      // Contact lines start below the wrapped name so long names never
+      // collide with the bullets.
+      const nameH = measure(company.name, Math.max(nameW, 100), 'Helvetica-Bold', 20);
+      const contactLines = [company.email, company.website].filter(
+        (line): line is string => Boolean(line),
+      );
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9);
+      let lineY = y + 4 + nameH + 4;
+      for (const line of contactLines.slice(0, 2)) {
+        diamond(textX + 3, lineY + 4);
+        doc.text(line, textX + 11, lineY, {
+          width: CONTENT_W - (textX - MARGIN) - 190,
+          ellipsis: true,
+        });
+        lineY += 12;
+      }
+      // Right block: address lines then phone, right aligned.
+      const rightW = 168;
+      const rightX = MARGIN + CONTENT_W - rightW;
+      doc.fillColor(MUTED).font('Helvetica').fontSize(8.5);
+      let rightY = y + 2;
+      if (company.address) {
+        const addrH = measure(company.address, rightW, 'Helvetica', 8.5);
+        doc.text(company.address, rightX, rightY, { width: rightW, align: 'right' });
+        rightY += addrH + 4;
+      }
+      if (company.phone) {
+        doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9.5).text(company.phone, rightX, rightY, {
+          width: rightW,
+          align: 'right',
+        });
+        rightY += 13;
+      }
+      y = Math.max(lineY, rightY, y + logoSize) + 6;
+    } else {
+      const nameW = CONTENT_W - (textX - MARGIN);
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(14.5).text(company.name, textX, y + 1, {
+        width: nameW,
+      });
+      const nameH = measure(company.name, nameW, 'Helvetica-Bold', 14.5);
+      const contactLine = [company.email, company.website].filter(
+        (line): line is string => Boolean(line),
+      ).join('   •   ');
+      if (contactLine) {
+        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5).text(contactLine, textX, y + 5 + nameH, {
+          width: nameW,
+          ellipsis: true,
+        });
+      }
+      y = Math.max(y + logoSize, y + 5 + nameH + (contactLine ? 14 : 0)) + 8;
+    }
+    y = divider(y);
+  };
+
+  // ------------------------------------------------------------------
+  // Page 1: agency header, voucher title, Hotel / Guest / Stay details.
+  // ------------------------------------------------------------------
+  agencyHeader(false);
+
+  // Title row: purple bed icon, HOTEL VOUCHER heading, confirmation card.
+  {
+    const cardW = 150;
+    const cardH = 54;
+    const titleW = CONTENT_W - cardW - 16;
+    const sub = 'Please present this voucher at the hotel upon arrival.';
+    const titleH = Math.max(cardH, 46 + measure(sub, titleW, 'Helvetica', 9.5) + 4);
+    ensure(titleH + 6);
+    const top = y;
+    const iconBox = 46;
+    doc.save().fillColor(PURPLE).roundedRect(MARGIN, top, iconBox, iconBox, 9).fill().restore();
+    drawIcon('bed', MARGIN + (iconBox - 26) / 2, top + iconBox / 2, 26, ON_PRIMARY);
+    doc
+      .fillColor(NAVY)
+      .font('Helvetica-Bold')
+      .fontSize(23)
+      .text('HOTEL VOUCHER', MARGIN + iconBox + 10, top + 1, { width: titleW - iconBox - 10 });
+    doc.fillColor(MUTED).font('Helvetica').fontSize(9.5).text(sub, MARGIN + iconBox + 10, top + 30, {
+      width: titleW - iconBox - 10,
+    });
+    // Confirmation card (actual voucher confirmation number only).
+    const cardX = MARGIN + CONTENT_W - cardW;
+    doc
+      .save()
+      .fillColor(BEIGE)
+      .strokeColor(BEIGE_BORDER)
+      .lineWidth(1)
+      .roundedRect(cardX, top, cardW, cardH, 7)
+      .fillAndStroke()
+      .restore();
+    drawIcon('doc', cardX + 10, top + cardH / 2, 16, PURPLE);
+    // Small label stays navy so it reads on the beige card in any theme.
+    // Uses the staff-customized label when set, else the default.
+    doc
+      .fillColor(NAVY)
+      .font('Helvetica')
+      .fontSize(8.5)
+      .text(voucher.confirmationNumberLabel?.trim() || 'Confirmation No.', cardX + 30, top + 10, {
+        width: cardW - 38,
+      });
+    doc
+      .fillColor(NAVY)
+      .font('Helvetica-Bold')
+      .fontSize(16)
+      .text(voucher.confirmationNumber ?? '—', cardX + 30, top + 24, {
+        width: cardW - 38,
+        ellipsis: true,
+      });
+    y = top + titleH + 6;
+  }
+
+  // Hotel Details (first content section; no star rating ever).
+  sectionBar('HOTEL DETAILS', 'building');
+  {
+    const left: FieldItem[] = [];
+    if (voucher.hotelAddress) {
+      left.push({
+        label: 'Address',
+        value: voucher.hotelCity ? `${voucher.hotelAddress}\n${voucher.hotelCity}` : voucher.hotelAddress,
+        boldValue: false,
+      });
+    } else if (voucher.hotelCity) {
+      left.push({ label: 'Address', value: voucher.hotelCity, boldValue: false });
+    }
+    const right: FieldItem[] = [];
+    if (voucher.hotelPhone) right.push({ label: 'Phone', value: voucher.hotelPhone, boldValue: false });
+    if (voucher.hotelEmail) right.push({ label: 'Email', value: voucher.hotelEmail, boldValue: false });
+    // Confirmation No. lives only in the top-right header card — it is
+    // intentionally not repeated here. Booking ID stays in this box.
+    // Omitted entirely when absent — never a placeholder or a guess.
+    if (voucher.bookingId)
+      right.push({ label: voucher.bookingIdLabel?.trim() || 'Booking ID', value: voucher.bookingId });
+    if (left.length > 0 || right.length > 0) {
+      profileBlock(voucher.hotelName, left, right);
+    } else {
+      ensure(30);
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(13.5).text(voucher.hotelName, MARGIN, y, {
+        width: CONTENT_W,
+      });
+      y = doc.y + 8;
+    }
+  }
+
+  // Guest Details (room count lives here, never in Stay Details).
+  sectionBar('GUEST DETAILS', 'person');
+  {
+    const left: FieldItem[] = [];
+    if (voucher.guestPhone) left.push({ label: 'Phone', value: voucher.guestPhone, boldValue: false });
+    if (voucher.guestEmail) left.push({ label: 'Email', value: voucher.guestEmail, boldValue: false });
+    const right: FieldItem[] = [
+      { label: 'Adults', value: String(voucher.adults) },
+      { label: 'Children', value: String(voucher.children) },
+      { label: 'No. of Rooms', value: String(voucher.rooms) },
+    ];
+    profileBlock(voucher.guestName, left, right);
+  }
+
+  // Stay Details: five stat blocks with icons, dates without weekday names.
+  sectionBar('STAY DETAILS', 'calendar');
+  {
+    const nights = Math.max(
+      0,
+      Math.round((voucher.checkOut.getTime() - voucher.checkIn.getTime()) / 86_400_000),
+    );
+    const stats: Array<{ label: string; value: string; icon: SectionIcon }> = [
+      { label: 'Check-in', value: fmtDate(voucher.checkIn), icon: 'calendar' },
+      { label: 'Check-out', value: fmtDate(voucher.checkOut), icon: 'calendar' },
+      { label: 'Nights', value: String(nights), icon: 'moon' },
+      { label: 'Room Type', value: voucher.roomTypeName ?? '—', icon: 'bed' },
+      { label: 'Meal Plan', value: voucher.mealPlanName ?? '—', icon: 'list' },
+    ];
+    const colW = CONTENT_W / stats.length;
+    const height = 66;
+    ensure(height + 4);
+    const top = y;
+    card(top, height);
+    stats.forEach((stat, index) => {
+      const x = MARGIN + index * colW;
+      if (index > 0) {
+        doc
+          .save()
+          .strokeColor(CARD_BORDER)
+          .lineWidth(0.7)
+          .moveTo(x, top + 8)
+          .lineTo(x, top + height - 8)
+          .stroke()
+          .restore();
+      }
+      drawIcon(stat.icon, x + (colW - 8) / 2 - 6, top + 15, 13, PURPLE);
+      doc.fillColor(MUTED).font('Helvetica').fontSize(8.5).text(stat.label, x + 4, top + 26, {
+        width: colW - 8,
+        align: 'center',
+      });
+      // Single line with ellipsis: long room-type/meal-plan names must never
+      // spill out of the card.
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10.5).text(stat.value, x + 4, top + 40, {
+        width: colW - 8,
+        height: 14,
+        ellipsis: true,
+        align: 'center',
+      });
+    });
+    y = top + height + 4;
+  }
+
+  // ------------------------------------------------------------------
+  // Remaining sections flow onto the current page (or the next one when
+  // they genuinely do not fit). Sections keep their fixed order; tables
+  // and lists break across pages row by row. No forced page break: a
+  // near-empty trailing page would violate the bottom-whitespace rule.
+  // ------------------------------------------------------------------
+  {
+    if (voucher.pricing.length > 0) {
+      // Keep the bar together with the table header plus one body row.
+      sectionBar('PRICING', 'coins', 24 + 32);
+      // Column widths sum exactly to CONTENT_W so the purple header, zebra
+      // stripes, and grid share one right edge.
+      const lastW = CONTENT_W - (131 + 40 + 55 + 40 + 62 + 75);
+      const columns = [
+        { header: 'Room Type', width: 131, align: 'left' as const },
+        { header: 'Unit', width: 40, align: 'center' as const },
+        { header: 'Quantity', width: 55, align: 'center' as const },
+        { header: 'GST', width: 40, align: 'center' as const },
+        { header: 'Amount', width: 62, align: 'center' as const },
+        { header: 'Taxable Pay', width: 75, align: 'center' as const },
+        { header: 'GST + Service', width: lastW, align: 'center' as const },
+      ];
+      const rows = voucher.pricing.map((row) => [
+        row.roomType,
+        String(row.unit),
+        String(row.quantity),
+        fmtGst(row.gst),
+        fmtAmount(row.amount),
+        fmtAmount(row.taxablePay),
+        fmtAmount(row.gstService),
+      ]);
+      table(columns, rows);
+      // Beige total row: label right-aligned over the leading columns so it
+      // never wraps, value centred under GST + Service.
+      const total = voucher.pricing.reduce((sum, row) => sum + (row.gstService ?? 0), 0);
+      const totalH = 24;
+      ensure(totalH);
+      doc.save().fillColor(BEIGE).rect(MARGIN, y, CONTENT_W, totalH).fill().restore();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9.5);
+      doc.text('Total Payable Amount', MARGIN + PAD, y + 7, {
+        width: CONTENT_W - lastW - PAD * 2,
+        align: 'right',
+      });
+      doc.text(fmtMoney(total), MARGIN + CONTENT_W - lastW + PAD, y + 7, {
+        width: lastW - PAD * 2,
+        align: 'center',
+      });
+      doc
+        .save()
+        .strokeColor(BEIGE_BORDER)
+        .lineWidth(0.7)
+        .rect(MARGIN, y, CONTENT_W, totalH)
+        .stroke()
+        .restore();
+      y += totalH + 8;
+    }
+
+    if (voucher.guests.length > 0) {
+      // Keep the bar together with the table header plus one body row.
+      sectionBar('GUEST INFORMATION', 'person', 24 + 32);
+      const guestLastW = CONTENT_W - (36 + 200 + 55 + 55);
+      table(
+        [
+          { header: '#', width: 36, align: 'center' as const },
+          { header: 'Guest Name', width: 200, align: 'left' as const },
+          { header: 'Age', width: 55, align: 'center' as const },
+          { header: 'Sex', width: 55, align: 'center' as const },
+          { header: 'No of Pax', width: guestLastW, align: 'center' as const },
+        ],
+        voucher.guests.map((guest, index) => [
+          String(index + 1),
+          guest.guestName,
+          guest.age === null ? '—' : String(guest.age),
+          guest.sex,
+          guest.paxType === 'ADULT' ? 'Adult' : 'Child',
+        ]),
+      );
+      y += 8;
+    }
+
+    if (voucher.packageIncludes !== null && voucher.packageIncludes.length > 0) {
+      numberedCard(
+        voucher.packageIncludes.map(voucherPackageLine).filter((line) => line.length > 0),
+        true,
+        { title: 'PACKAGE INCLUDES', icon: 'list' },
+      );
+      y += 4;
+    }
+
+    const terms = voucherTextLines(voucher.termsSnapshot ?? '');
+    if (terms.length > 0) {
+      numberedCard(terms, false, { title: 'TERMS & CONDITIONS', icon: 'doc' });
+    }
+  }
+
+  // Page furniture: subtle lavender top strip, primary/gold footer accent,
+  // and page numbering on every page. Everything below the content limit
+  // lives inside the bottom 30pt so full pages never breach the whitespace
+  // rule; content can touch (never cross) the accent rule.
+  const pages = doc.bufferedPageRange();
+  for (let page = 0; page < pages.count; page += 1) {
+    doc.switchToPage(page);
+    doc.save().fillColor(LAVENDER).rect(0, 0, PAGE_W, 7).fill().restore();
+    doc.save().fillColor(GOLD_LIGHT).rect(0, 7, PAGE_W, 1.2).fill().restore();
+    doc.save().fillColor(LAVENDER_DEEP).rect(0, PAGE_H - 26, PAGE_W, 26).fill().restore();
+    doc.save().fillColor(PURPLE).rect(0, PAGE_H - 30, PAGE_W - 180, 2).fill().restore();
+    doc.save().fillColor(GOLD).rect(0, PAGE_H - 27.2, PAGE_W - 260, 1).fill().restore();
+    doc
+      .font('Helvetica')
+      .fontSize(8)
+      .fillColor(MUTED)
+      .text(`Page ${page + 1} of ${pages.count}`, MARGIN, PAGE_H - 20, {
+        align: 'right',
+        width: CONTENT_W,
+      });
+  }
+  doc.end();
+  return done;
+}

@@ -22,6 +22,21 @@ export interface DestinationRow {
   destination: string;
   enquiryCount: number;
 }
+export interface DestinationRevenueRow {
+  destination: string;
+  totalAmount: string;
+}
+export interface UpcomingTravelRow {
+  id: string;
+  customerName: string;
+  travelDate: string;
+  city: string;
+  leadStage: string;
+}
+export interface UpcomingTravelSection {
+  totalCount: number;
+  items: UpcomingTravelRow[];
+}
 export interface StaffConversionRow {
   userId: string;
   displayName: string;
@@ -86,6 +101,7 @@ export interface DashboardAnalytics {
   };
   leadSources?: LeadSourceRow[];
   topDestinations?: DestinationRow[];
+  confirmedRevenueByDestination?: DestinationRevenueRow[];
   staffConversions?: StaffConversionRow[];
   staffFinancials?: StaffFinancialRow[];
 }
@@ -135,5 +151,35 @@ export function useDashboardOperations(params: DashboardParams) {
     queryKey: ['dashboard', 'operations', query],
     queryFn: ({ signal }) =>
       apiClient.get<DashboardOperations>(`/dashboard/operations?${query}`, signal),
+  });
+}
+
+export interface UpcomingTravelParams {
+  days?: '7' | '30' | '90';
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export interface UpcomingTravelResponse {
+  range: { from: string; to: string; timezone: string; days: '7' | '30' | '90' };
+  confirmed: UpcomingTravelSection;
+  others: UpcomingTravelSection;
+}
+
+function toTravelQuery(params: UpcomingTravelParams) {
+  const search = new URLSearchParams({ days: params.days ?? '30' });
+  if (params.from) search.set('from', params.from);
+  if (params.to) search.set('to', params.to);
+  if (params.limit) search.set('limit', String(params.limit));
+  return search.toString();
+}
+
+export function useDashboardUpcomingTravel(params: UpcomingTravelParams) {
+  const query = toTravelQuery(params);
+  return useQuery({
+    queryKey: ['dashboard', 'upcoming-travel', query],
+    queryFn: ({ signal }) =>
+      apiClient.get<UpcomingTravelResponse>(`/dashboard/upcoming-travel?${query}`, signal),
   });
 }

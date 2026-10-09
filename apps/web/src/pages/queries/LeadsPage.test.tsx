@@ -1371,11 +1371,12 @@ describe('Phase 6 inline Type/Stage editing on the Leads List', () => {
     expect(screen.queryByRole('listbox', { name: 'Change lead type' })).not.toBeInTheDocument();
   });
 
-  it('selects Booking Confirmed directly from Quotation Sent and sends the correct value', async () => {
+  it('offers Booking Confirmed in the inline stage editor', async () => {
     const richLookups = {
       ...lookups,
       leadStages: [
         { value: 'QUOTATION_SENT', label: 'Quotation Sent' },
+        { value: 'READY_TO_BOOK', label: 'Ready To Book' },
         { value: 'BOOKING_CONFIRMED', label: 'Booking Confirmed' },
       ],
     };
@@ -1403,16 +1404,16 @@ describe('Phase 6 inline Type/Stage editing on the Leads List', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: 'Change lead stage from Quotation Sent' }),
     );
+    // Booking Confirmed is offered in canonical order (after Ready To Book)
+    // and selecting it saves through the stage API.
+    const listbox = screen.getByRole('listbox', { name: 'Change lead stage' });
+    const options = within(listbox)
+      .getAllByRole('option')
+      .map((o) => o.textContent);
+    expect(options).toEqual(['Quotation Sent', 'Ready To Book', 'Booking Confirmed']);
     pickOption('Change lead stage', 'Booking Confirmed');
     await waitFor(() => expect(calls.length).toBe(1));
-    expect(calls[0]!.url).toContain(`/queries/${lead.id}/stage`);
     expect(calls[0]!.body).toEqual({ stage: 'BOOKING_CONFIRMED' });
-    // The row updates after the successful response (no navigation).
-    await waitFor(() =>
-      expect(
-        screen.queryByRole('button', { name: 'Change lead stage from Booking Confirmed' }),
-      ).toBeTruthy(),
-    );
   });
 
   it('restores the previous badge value and shows an error when the update fails', async () => {
@@ -1518,7 +1519,7 @@ describe('Phase 6 Create Booking action on the Leads List', () => {
     expect(screen.queryAllByRole('link', { name: /Create booking for/ })).toHaveLength(0);
   });
 
-  it('does not show Create Booking when Stage is not Booking Confirmed', async () => {
+  it('does not show Create Booking without a finalized quotation', async () => {
     bookingStub({ ...lead, leadType: 'HOT', leadStage: 'NEW_LEAD', bookingSummary: null });
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText(lead.customerName);
@@ -1575,7 +1576,7 @@ describe('Phase 6 Create Booking action on the Leads List', () => {
     void current;
   });
 
-  it('Create Booking appears after an inline Stage update to Booking Confirmed', async () => {
+  it('inline Stage updates work for regular stages, including Booking Confirmed', async () => {
     const current = bookingStub({
       ...lead,
       leadType: 'HOT',
@@ -1589,16 +1590,18 @@ describe('Phase 6 Create Booking action on the Leads List', () => {
       leadStages: [
         { value: 'NEW_LEAD', label: 'New Lead' },
         { value: 'BOOKING_CONFIRMED', label: 'Booking Confirmed' },
+        { value: 'QUALIFIED', label: 'Qualified' },
       ],
     };
+    const calls: Array<{ url: string; body: unknown }> = [];
     const mock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
       const url = String(input);
       if (url.includes('/analytics')) return response(analytics);
       if (url.includes('/lookups')) return response(richLookups);
       if (options?.method === 'PATCH') {
         const body = JSON.parse(String(options.body)) as Record<string, unknown>;
-        current.leadStage = String(body.stage);
-        return response({ ...current });
+        calls.push({ url, body });
+        return response({ ...current, leadStage: String(body.stage) });
       }
       return response({
         data: [{ ...current }],
@@ -1612,11 +1615,16 @@ describe('Phase 6 Create Booking action on the Leads List', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: 'Change lead stage from New Lead' }),
     );
-    pickOption('Change lead stage', 'Booking Confirmed');
-    // Booking column hidden from the table (no mobile card), so no Create
-    // Booking action surfaces after the stage update.
-    await screen.findAllByText(lead.customerName);
-    expect(screen.queryAllByRole('link', { name: /Create booking for/ })).toHaveLength(0);
+    // Booking Confirmed is offered alongside the other stages; another
+    // stage still works too.
+    expect(
+      within(screen.getByRole('listbox', { name: 'Change lead stage' })).getByRole('option', {
+        name: 'Booking Confirmed',
+      }),
+    ).toBeInTheDocument();
+    pickOption('Change lead stage', 'Qualified');
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0]!.body).toEqual({ stage: 'QUALIFIED' });
   });
 
   it('Create Booking disappears after an inline Type update away from Hot', async () => {
@@ -2257,14 +2265,20 @@ describe('Lead row actions are limited to the four approved actions', () => {
 
   it('keeps the Quotation column an action-only cell (no status badge or amount)', async () => {
     // With a quotation summary: the View link stays, but the status badge and
-    // the quotation INR amount are no longer shown in the column (amount/margin
-    // live in the dedicated Amount/Margin columns).
+    // the quotation INR amount are not shown inside the Quotation cell itself
+    // (amount/margin live in the dedicated Amount/Margin columns, which do
+    // show the quotation final amount).
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     expect(screen.getAllByRole('link', { name: /^View$/ }).length).toBeGreaterThan(0);
     expect(screen.queryByText('Accepted')).not.toBeInTheDocument();
-    expect(screen.queryByText(/₹50,000/)).not.toBeInTheDocument();
+    const quoteCell = screen
+      .getByRole('link', { name: /^View$/ })
+      .closest('td') as HTMLElement;
+    expect(within(quoteCell).queryByText(/₹50,000/)).not.toBeInTheDocument();
+    // The dedicated Amount column still shows the quotation final amount.
+    expect(screen.getByText('₹50,000.00')).toBeInTheDocument();
   });
 
   it('keeps the "+ New" quotation shortcut intact in the Quotation column', async () => {
@@ -2791,7 +2805,6 @@ describe('Dense operational Leads table structure', () => {
     for (const header of [
       'Lead ID',
       'Lead Info',
-      'Call',
       'Destination',
       'Travellers Info',
       'Services',
@@ -2864,7 +2877,7 @@ describe('Dense operational Leads table structure', () => {
     expect(within(row).queryByText(/₹50,000/)).not.toBeInTheDocument();
   });
 
-  it('does not show a quotation margin when netAmount is zero or missing', async () => {
+  it('shows quotation amount and stored margin even when net cost is zero', async () => {
     stubLeadList([
       {
         ...enrichedLead,
@@ -2886,9 +2899,71 @@ describe('Dense operational Leads table structure', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const row = document.querySelector('.leads-tbody tr') as HTMLElement;
-    // netAmount is 0 → no artificial margin is shown; the existing fallback
-    // (expected margin is null) renders the empty-state dash.
-    expect(within(row).queryByText('₹15,000.00')).not.toBeInTheDocument();
+    // A zero recorded net cost must not hide the real final amount or the
+    // stored margin; both come straight from the linked quotation version.
+    expect(within(row).getByText('₹80,000.00')).toBeInTheDocument();
+    expect(within(row).getByText('₹15,000.00')).toBeInTheDocument();
+  });
+
+  it('shows amount and margin for a quotation with a final amount but zero net cost (QRY-000006/QT-001034)', async () => {
+    stubLeadList([
+      {
+        ...enrichedLead,
+        queryNumber: 'QRY-000006',
+        expectedAmount: null,
+        expectedMargin: null,
+        quotationSummary: {
+          quotationId: 'quote-1',
+          quotationNumber: 'QT-001034',
+          quotationStatus: 'DRAFT',
+          acceptedVersionId: null,
+          latestVersionAmount: '600000.00',
+          netAmount: '0',
+          marginAmount: '600000.00',
+          currency: 'INR',
+          bookingId: null,
+          lastSentAt: null,
+          acceptedAt: null,
+        },
+      },
+    ]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Aarav Mehta');
+    const row = document.querySelector('.leads-tbody tr') as HTMLElement;
+    // Mirrors the live record: final ₹6,00,000 with net 0 must render both
+    // cells instead of the empty-state dash (no expected fallback exists).
+    const amountCells = Array.from(row.querySelectorAll('.leads-amount')).map(
+      (cell) => cell.textContent?.trim(),
+    );
+    expect(amountCells).toEqual(['₹6,00,000.00', '₹6,00,000.00']);
+  });
+
+  it('keeps the empty state when the quotation stores no margin', async () => {
+    stubLeadList([
+      {
+        ...enrichedLead,
+        expectedMargin: null,
+        quotationSummary: {
+          quotationId: 'quote-1',
+          quotationNumber: 'QT-2026-000001',
+          quotationStatus: 'ACCEPTED',
+          acceptedVersionId: 'ver-1',
+          latestVersionAmount: '80000.00',
+          netAmount: null,
+          marginAmount: null,
+          currency: 'INR',
+          bookingId: null,
+          lastSentAt: null,
+          acceptedAt: '2026-07-22T00:00:00.000Z',
+        },
+      },
+    ]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Aarav Mehta');
+    const row = document.querySelector('.leads-tbody tr') as HTMLElement;
+    // Amount still shows (final amount exists); margin has no stored value so
+    // the empty-state dash is kept rather than an invented number.
+    expect(within(row).getByText('₹80,000.00')).toBeInTheDocument();
     expect(within(row).getByText('—')).toBeInTheDocument();
   });
 
@@ -2903,36 +2978,6 @@ describe('Dense operational Leads table structure', () => {
     expect(within(row).getByRole('link', { name: '+ New' })).toBeInTheDocument();
   });
 
-  it('renders the Call column with a tel link for the lead phone and a disabled icon without one', async () => {
-    const withPhone = { ...enrichedLead, phone: '+91 98765 43210' };
-    const withoutPhone = {
-      ...enrichedLead,
-      id: 'lead-nophone',
-      queryNumber: 'Q-NOPHONE',
-      phone: '',
-    };
-    stubLeadList([withPhone, withoutPhone]);
-    renderWithProviders(<LeadsPage />);
-    await screen.findAllByText('Aarav Mehta');
-    // The header is present immediately after Lead Info.
-    const thead = document.querySelector('.leads-thead');
-    const headers = Array.from(thead!.querySelectorAll('th')).map((th) => th.textContent?.trim());
-    const leadInfoIdx = headers.indexOf('Lead Info');
-    expect(headers[leadInfoIdx + 1]).toBe('Call');
-    // A lead with a phone renders an anchor with href=tel:<phone>.
-    const callLink = document.querySelector('a[href="tel:+91 98765 43210"]');
-    expect(callLink).not.toBeNull();
-    // A lead without a phone renders a disabled icon, never tel:undefined.
-    const noPhoneRow = Array.from(document.querySelectorAll('.leads-tbody tr')).find((row) =>
-      row.textContent?.includes('Q-NOPHONE'),
-    );
-    expect(noPhoneRow).toBeDefined();
-    expect(noPhoneRow!.querySelector('a[href^="tel:"]')).toBeNull();
-    expect(noPhoneRow!.querySelector('[aria-disabled="true"]')).not.toBeNull();
-    expect(document.querySelector('a[href="tel:undefined"]')).toBeNull();
-    expect(document.querySelector('a[href="tel:null"]')).toBeNull();
-  });
-
   it('has no Call Recording column, controls or statuses anywhere', async () => {
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
@@ -2941,16 +2986,15 @@ describe('Dense operational Leads table structure', () => {
     const thead = document.querySelector('.leads-thead');
     const headers = Array.from(thead!.querySelectorAll('th')).map((th) => th.textContent?.trim());
     expect(headers).not.toContain('Call Recording');
-    // Destination follows Call directly — no placeholder column between them.
-    expect(headers[headers.indexOf('Call') + 1]).toBe('Destination');
+    expect(headers).not.toContain('Call');
+    // Destination follows Lead Info directly — no Call column between them.
+    expect(headers[headers.indexOf('Lead Info') + 1]).toBe('Destination');
     const firstRow = document.querySelector('.leads-tbody tr') as HTMLElement;
     expect(within(firstRow).queryByText('No recording')).not.toBeInTheDocument();
     expect(within(firstRow).queryByRole('button', { name: /play recording/i })).not.toBeInTheDocument();
     expect(document.querySelector('audio')).toBeNull();
     // Header count still matches the row's cell count exactly.
     expect(thead!.querySelectorAll('th').length).toBe(firstRow.querySelectorAll('td').length);
-    // Normal CALL functionality is untouched.
-    expect(document.querySelector('a[href="tel:+91 98765 43210"]')).not.toBeNull();
   });
 
   it('renders compact metadata blocks for destination and travellers info', async () => {

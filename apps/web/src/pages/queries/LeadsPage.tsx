@@ -60,33 +60,34 @@ const formatCurrency = (value: string | number, currency: string) => {
 };
 
 /**
- * Quotation amount for the Amount column: the latest quotation's final amount,
- * shown only when the quotation has a real net cost (netAmount > 0). Returns ''
- * otherwise so the cell falls back to the lead's expected amount.
+ * Quotation amount for the Amount column: the latest quotation's final amount.
+ * Shown whenever a positive final amount exists, independent of the recorded
+ * net cost (a quotation can carry a selling price with zero recorded cost).
+ * Returns '' otherwise so the cell falls back to the lead's expected amount.
  */
 const quotationAmountFor = (lead: Lead): string => {
   const summary = lead.quotationSummary;
   const amount = summary?.latestVersionAmount;
-  const net = summary?.netAmount;
   const currency = summary?.currency ?? lead.currency;
-  if (!summary || !amount || !net) return '';
-  if (Number(amount) <= 0 || Number(net) <= 0) return '';
+  if (!summary || !amount) return '';
+  if (Number(amount) <= 0) return '';
   return formatCurrency(amount, currency);
 };
 
 /**
- * Quotation margin for the Margin column: the latest quotation's computed
- * margin, shown only when the quotation has a real net cost (netAmount > 0).
- * Returns '' otherwise so the cell uses the existing empty-state behavior.
+ * Quotation margin for the Margin column: the latest quotation's stored
+ * margin, shown whenever a margin value exists (including when the recorded
+ * net cost is zero — margin is then final minus zero, per the authoritative
+ * pricing calculation). Returns '' only when no margin is stored, so the cell
+ * uses the existing empty-state behavior instead of an invented value.
  */
 const quotationMarginFor = (lead: Lead): string => {
   const summary = lead.quotationSummary;
   const margin = summary?.marginAmount;
-  const net = summary?.netAmount;
   const currency = summary?.currency ?? lead.currency;
-  if (!summary || !margin || !net) return '';
-  if (Number(margin) <= 0 || Number(net) <= 0) return '';
-  return formatCurrency(margin, currency);
+  if (!summary || margin === null || margin === undefined || margin === '') return '';
+  const formatted = formatCurrency(margin, currency);
+  return formatted === '' ? '' : formatted;
 };
 
 const leadDate = (value: string | null) =>
@@ -172,32 +173,6 @@ function LeadInfoCell({ lead }: { lead: Lead }) {
   );
 }
 
-/** Icon-only tel: link for the lead's phone. Disabled when no phone exists. */
-function CallCell({ lead }: { lead: Lead }) {
-  const phone = lead.phone?.trim();
-  if (!phone) {
-    return (
-      <span
-        className="inline-flex h-8 w-8 items-center justify-center text-slate-300"
-        aria-disabled="true"
-        title="No phone number"
-      >
-        <Phone className="h-4 w-4" aria-hidden="true" />
-      </span>
-    );
-  }
-  return (
-    <a
-      href={`tel:${phone}`}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-brand-600"
-      aria-label={`Call ${lead.customerName}`}
-      title={`Call ${phone}`}
-    >
-      <Phone className="h-4 w-4" aria-hidden="true" />
-    </a>
-  );
-}
-
 function DestinationCell({ lead }: { lead: Lead }) {
   const totalNights = lead.itinerary.reduce((sum, item) => sum + item.nights, 0);
   if (!lead.itinerary.length) return <span className="leads-cell-muted">—</span>;
@@ -278,13 +253,14 @@ function BookingCell({ lead, canCreateBooking }: { lead: Lead; canCreateBooking:
   const summary = lead.bookingSummary;
   if (lead.bookingSummary === undefined) return <span className="leads-cell-muted">—</span>;
   if (!summary) {
-    // Hot + Booking Confirmed + no booking + a finalized quotation → offer the
-    // lead-based booking flow. The backend re-validates eligibility.
+    // Hot + a finalized quotation + no booking → offer the lead-based booking
+    // flow. Booking creation confirms the lead itself, so no particular stage
+    // is required; terminal leads are excluded. The backend re-validates.
     const quotationId = lead.quotationSummary?.quotationId;
     if (
       canCreateBooking &&
       lead.leadType === 'HOT' &&
-      lead.leadStage === 'BOOKING_CONFIRMED' &&
+      !['LOST', 'CANCELLED', 'INVALID'].includes(lead.leadStage) &&
       quotationId
     ) {
       return (
@@ -948,7 +924,6 @@ export function LeadsPage() {
   const headers: Array<[string, string?]> = [
     ['Lead ID', 'queryNumber'],
     ['Lead Info', 'customerName'],
-    ['Call'],
     ['Destination'],
     ['Travellers Info'],
     ['Services'],
@@ -1356,9 +1331,6 @@ export function LeadsPage() {
                       <td>
                         <LeadInfoCell lead={lead} />
                       </td>
-                      <td className="text-center">
-                        <CallCell lead={lead} />
-                      </td>
                       <td>
                         <DestinationCell lead={lead} />
                       </td>
@@ -1499,7 +1471,7 @@ export function LeadsPage() {
                   onChange={(e) => setBulkStageValue(e.target.value)}
                 >
                   <option value="">Select a stage</option>
-                  {lookups?.leadStages.map((s) => (
+                  {(lookups?.leadStages ?? []).map((s) => (
                     <option key={s.value} value={s.value}>
                       {s.label}
                     </option>

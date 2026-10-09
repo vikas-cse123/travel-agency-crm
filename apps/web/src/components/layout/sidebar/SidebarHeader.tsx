@@ -18,8 +18,11 @@ function isOnCustomDomain(hostname: string | null | undefined): boolean {
 
 /**
  * Brand area: the full product logo in the expanded state, the compact mark
- * on the collapsed rail, the collapse/expand control (desktop) and the drawer
- * close control (mobile).
+ * on the collapsed rail, and the drawer close control (mobile).
+ *
+ * The logo always owns the full header width — no toggle sits beside it.
+ * The desktop collapse/expand control floats on the sidebar's outer right
+ * edge, anchored to the positioned sidebar shell, clear of the logo.
  *
  * When the CRM is accessed through the Company's ACTIVE custom domain, the
  * top-left branding shows that Company's logo + name from Company Settings;
@@ -49,7 +52,7 @@ export function SidebarHeader({ collapsed, onToggleCollapse, onCloseMobile }: Si
   );
 
   return (
-    <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3">
+    <div className="relative flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3">
       {collapsed ? (
         <div
           className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg lg:mx-0"
@@ -74,7 +77,7 @@ export function SidebarHeader({ collapsed, onToggleCollapse, onCloseMobile }: Si
         </>
       ) : (
         <img
-          src="/logo-Full.png"
+          src="/new-logo.png"
           alt="Travel Agency CRM"
           className="block h-12 w-full min-w-0 flex-1 object-contain object-left"
         />
@@ -85,7 +88,7 @@ export function SidebarHeader({ collapsed, onToggleCollapse, onCloseMobile }: Si
         onClick={onToggleCollapse}
         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        className="ml-auto hidden rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground lg:block"
+        className="absolute right-0 top-1/2 hidden -translate-y-1/2 translate-x-1/2 rounded-full border border-sidebar-border bg-sidebar p-1.5 text-muted-foreground shadow-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground lg:block"
       >
         {collapsed ? (
           <PanelLeftOpen className="h-[19px] w-[19px]" aria-hidden="true" />

@@ -3,13 +3,13 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import {
   Banknote,
   BarChart3,
-  Edit3,
   Eye,
   IndianRupee,
   Mail,
   MessageCircle,
   MessageSquarePlus,
   Phone,
+  Pencil,
   Plane,
   Plus,
   Upload,
@@ -215,7 +215,7 @@ export function CustomerWorkspacePage() {
                 <div className="grid grid-cols-2 gap-3 p-5">
                   <Link to={`/customers/${customerId}/edit`}>
                     <Button fullWidth className="rounded-md bg-blue-600 hover:bg-blue-700">
-                      <Edit3 className="h-4 w-4" /> Edit
+                      <Pencil className="h-4 w-4" /> Edit
                     </Button>
                   </Link>
                   <Button

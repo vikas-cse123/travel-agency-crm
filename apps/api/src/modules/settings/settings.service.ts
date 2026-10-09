@@ -99,6 +99,7 @@ export const settingsService = {
       },
       branding: {
         primaryColor: company.primaryColor,
+        hotelVoucherPrimaryColor: company.hotelVoucherPrimaryColor,
         hasLogo: Boolean(company.logoObjectKey && company.logoConfirmedAt),
         logoUrl: await logoUrl(company),
         logoMimeType: company.logoConfirmedAt ? company.logoMimeType : null,
@@ -160,7 +161,12 @@ export const settingsService = {
     await prisma.$transaction([
       prisma.company.update({
         where: { id: auth.companyId },
-        data: { primaryColor: input.primaryColor },
+        data: {
+          ...(input.primaryColor !== undefined ? { primaryColor: input.primaryColor } : {}),
+          ...(input.hotelVoucherPrimaryColor !== undefined
+            ? { hotelVoucherPrimaryColor: input.hotelVoucherPrimaryColor }
+            : {}),
+        },
       }),
       prisma.activityLog.create({ data: audit(auth, 'COMPANY_BRANDING_UPDATED', context) }),
     ]);

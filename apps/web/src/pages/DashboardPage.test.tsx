@@ -308,4 +308,53 @@ describe('Phase 16 dashboard page', () => {
     await screen.findByText('Total Leads');
     expect(screen.getByText('No staff activity in this period.')).toBeInTheDocument();
   });
+
+  it('renders confirmed revenue by destination sorted with INR amounts', async () => {
+    stub(
+      analytics({
+        confirmedRevenueByDestination: [
+          { destination: 'Goa', totalAmount: '150000.00' },
+          { destination: 'Dubai', totalAmount: '80000.00' },
+        ],
+      }),
+      operations(),
+    );
+    renderDashboard();
+    expect(await screen.findByText('Booking Confirmed Amount (Destination Wise)')).toBeInTheDocument();
+    // Amounts use Indian currency formatting above each bar.
+    expect(screen.getAllByText('₹1,50,000.00').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('₹80,000.00').length).toBeGreaterThanOrEqual(1);
+    // Accessible summary lists every bar in descending order.
+    expect(
+      screen.getByRole('img', { name: 'Goa: ₹1,50,000.00, Dubai: ₹80,000.00' }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the revenue chart empty state when nothing qualifies', async () => {
+    stub(analytics({ confirmedRevenueByDestination: [] }), operations());
+    renderDashboard();
+    await screen.findByText('Booking Confirmed Amount (Destination Wise)');
+    expect(screen.getByText('No data')).toBeInTheDocument();
+    // Existing KPIs and charts are unaffected.
+    expect(screen.getByText('Total Leads')).toBeInTheDocument();
+    expect(screen.getByText('Lead Sources')).toBeInTheDocument();
+  });
+
+  it('refreshes the revenue chart when the period is applied', async () => {
+    const mock = stub(
+      analytics({
+        confirmedRevenueByDestination: [{ destination: 'Goa', totalAmount: '150000.00' }],
+      }),
+      operations(),
+    );
+    renderDashboard();
+    await screen.findByText('Booking Confirmed Amount (Destination Wise)');
+    await userEvent.selectOptions(screen.getByLabelText('Dashboard period'), 'THIS_MONTH');
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() =>
+      expect(
+        mock.mock.calls.some(([url]) => String(url).includes('period=THIS_MONTH')),
+      ).toBe(true),
+    );
+  });
 });

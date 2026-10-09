@@ -4,7 +4,7 @@ import {
   Bold,
   Copy,
   Download,
-  Edit3,
+  Pencil,
   ExternalLink,
   FileText,
   Heading1,
@@ -512,7 +512,7 @@ export function QuotationDetailsPage() {
           {current?.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) && (
             <Link to={`/quotations/${q.id}/versions/${current.id}/edit`}>
               <Button variant="secondary">
-                <Edit3 className="h-4 w-4" />
+                <Pencil className="h-4 w-4" />
                 Edit quotation
               </Button>
             </Link>

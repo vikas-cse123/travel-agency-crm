@@ -337,6 +337,32 @@ enum DocumentStatus {
   FAILED
 }
 
+/// Sending account for standalone company email (Phase 1: SMTP for every
+/// provider; no OAuth). One row per company.
+enum EmailProvider {
+  CUSTOM_SMTP
+  GMAIL_SMTP
+  MICROSOFT_365_SMTP
+  AMAZON_SES_SMTP
+  OTHER_SMTP
+}
+
+/// SMTP transport security for a company email configuration.
+enum EmailSecurity {
+  NONE
+  SSL_TLS
+  STARTTLS
+}
+
+/// Lifecycle of a standalone sent email. Sends are synchronous in Phase 1,
+/// so rows normally land directly in SENT or FAILED.
+enum EmailStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+}
+
 enum EmailDeliveryStatus {
   PENDING
   SENT
@@ -777,6 +803,13 @@ enum ActivityAction {
   BOOKING_INVOICE_GENERATED
   BOOKING_TAX_INVOICE_GENERATED
   BOOKING_VOUCHER_GENERATED
+  BOOKING_PAYMENT_RECEIPT_GENERATED
+  CUSTOMER_PAYMENT_RECORDED
+  CUSTOMER_PAYMENT_REVERSED
+  CUSTOMER_PAYMENT_RECEIPT_GENERATED
+  EMAIL_SENT
+  EMAIL_SEND_FAILED
+  EMAIL_SETTINGS_UPDATED
   BOOKING_SERVICE_CANCELLATION_UPDATED
   BOOKING_SUPPLIER_PAYABLE_CREATED
   CUSTOMER_CREATED
@@ -857,6 +890,12 @@ enum ActivityAction {
   HOTEL_IMAGE_UPLOADED
   HOTEL_IMAGE_REPLACED
   HOTEL_IMAGE_DELETED
+  HOTEL_VOUCHER_CREATED
+  HOTEL_VOUCHER_UPDATED
+  HOTEL_VOUCHER_ISSUED
+  HOTEL_VOUCHER_CANCELLED
+  HOTEL_VOUCHER_DELETED
+  HOTEL_VOUCHER_PDF_GENERATED
   HOTEL_ROOM_TYPE_CREATED
   HOTEL_ROOM_TYPE_UPDATED
   HOTEL_ROOM_TYPE_ARCHIVED
@@ -955,6 +994,11 @@ model Company {
   /// Optional; legacy rows keep null (row hidden).
   googleMapsUrl         String?          @db.VarChar(2000)
   primaryColor          String           @default("#2563eb") @db.VarChar(7)
+  /// Optional hotel-voucher PDF theme override (Settings → Branding).
+  /// NULL (and any invalid value) falls back to the built-in purple theme,
+  /// so legacy companies render exactly as before. Never affects quotation,
+  /// booking, or other document themes.
+  hotelVoucherPrimaryColor String?        @db.VarChar(7)
   // Confirmed company logo (Phase 18). Metadata columns mirror the master-image
   // pattern; pendingLogoObjectKey holds an unconfirmed upload so replacing a
   // logo never loses the current one until the new upload is confirmed.
@@ -993,6 +1037,9 @@ model Company {
   updatedAt DateTime @updatedAt
 
   bankAccount CompanyBankAccount?
+
+  emailConfiguration CompanyEmailConfiguration?
+  emailLogs          EmailLog[]
 
   hiddenMasters CompanyHiddenMaster[]
 
@@ -1037,12 +1084,23 @@ model Company {
   bookingItineraries           BookingItineraryDay[]
   bookingPaymentSchedules      BookingPaymentSchedule[]
   bookingPayments              BookingPayment[]
+  bookingPaymentReceipts       BookingPaymentReceipt[]
   bookingCosts                 BookingCost[]
   bookingDocuments             BookingDocument[]
   bookingNotes                 BookingNote[]
   bookingStatusHistory         BookingStatusHistory[]
   bookingAssignmentHistory     BookingAssignmentHistory[]
   bookingEmailLogs             BookingEmailLog[]
+  hotelVoucherCounters         HotelVoucherCounter[]
+  hotelVouchers                HotelVoucher[]
+  hotelVoucherDocuments        HotelVoucherDocument[]
+  hotelVoucherPricing          HotelVoucherPricing[]
+  hotelVoucherGuests           HotelVoucherGuest[]
+  hotelVoucherPackageIncludes  HotelVoucherPackageInclude[]
+  paymentCounters              PaymentCounter[]
+  paymentCases                 PaymentCase[]
+  customerPayments             CustomerPayment[]
+  paymentReceipts              PaymentReceipt[]
   customerCounters             CustomerCounter[]
   customers                    Customer[]
   customerAddresses            CustomerAddress[]
@@ -1315,6 +1373,10 @@ model User {
   bookingRefundsReversed      BookingRefund[]            @relation("BookingRefundReversedBy")
   bookingCostsRecorded        BookingCost[]              @relation("BookingCostRecordedBy")
   bookingDocumentsUploaded    BookingDocument[]          @relation("BookingDocumentUploadedBy")
+  bookingPaymentReceiptsUploaded BookingPaymentReceipt[] @relation("BookingPaymentReceiptUploadedBy")
+  customerPaymentsRecorded    CustomerPayment[]        @relation("CustomerPaymentRecordedBy")
+  customerPaymentsReversed    CustomerPayment[]        @relation("CustomerPaymentReversedBy")
+  paymentReceiptsUploaded     PaymentReceipt[]         @relation("PaymentReceiptUploadedBy")
   bookingNotesAuthored        BookingNote[]              @relation("BookingNoteAuthor")
   bookingStatusesChanged      BookingStatusHistory[]     @relation("BookingStatusChangedBy")
   bookingAssignmentsMade      BookingAssignmentHistory[] @relation("BookingAssignedBy")
@@ -1353,6 +1415,14 @@ model User {
   testimonialsUpdated         Testimonial[]              @relation("TestimonialUpdatedBy")
   faqsCreated                 Faq[]                      @relation("FaqCreatedBy")
   faqsUpdated                 Faq[]                      @relation("FaqUpdatedBy")
+  hotelVouchersCreated        HotelVoucher[]             @relation("HotelVoucherCreatedBy")
+  hotelVouchersUpdated        HotelVoucher[]             @relation("HotelVoucherUpdatedBy")
+  paymentCasesCreated         PaymentCase[]              @relation("PaymentCaseCreatedBy")
+  paymentCasesUpdated         PaymentCase[]              @relation("PaymentCaseUpdatedBy")
+  emailConfigurationsCreated  CompanyEmailConfiguration[] @relation("CompanyEmailConfigurationCreatedBy")
+  emailConfigurationsUpdated  CompanyEmailConfiguration[] @relation("CompanyEmailConfigurationUpdatedBy")
+  emailsSent                  EmailLog[]                 @relation("EmailLogCreatedBy")
+  hotelVoucherDocumentsUploaded HotelVoucherDocument[]    @relation("HotelVoucherDocumentUploadedBy")
 
   hiddenMasterRows         CompanyHiddenMaster[]
   liveSearchBookmarks      LiveSearchBookmark[]
@@ -1689,6 +1759,7 @@ model Hotel {
   quotationTemplateOptions QuotationTemplateHotelOption[]
   quotationVersionOptions  QuotationVersionHotelOption[]
   bookingServices          BookingService[]
+  hotelVouchers            HotelVoucher[]
 
   @@index([companyId, cityId, normalizedName])
   @@index([companyId, destinationId])
@@ -2709,6 +2780,8 @@ model Customer {
   mergeHistoryInto CustomerMergeHistory[]  @relation("CustomerMergeTargetHistory")
   reminders        QueryFollowUp[]
   calls            Call[]
+  hotelVouchers    HotelVoucher[]
+  paymentCases     PaymentCase[]
 
   @@unique([companyId, customerNumber])
   @@index([companyId, normalizedPhone, deletedAt])
@@ -2954,6 +3027,8 @@ model Query {
   itinerary                QueryItinerary[]
   quotations               Quotation[]
   bookings                 Booking[]
+  hotelVouchers            HotelVoucher[]
+  paymentCases             PaymentCase[]
   customerCommunications   CustomerCommunication[]
   calls                    Call[]
   wacrmLeadLinks           WacrmLeadLink[]
@@ -4345,6 +4420,7 @@ model BookingCounter {
   bookingValue Int     @default(0)
   paymentValue Int     @default(0)
   refundValue  Int     @default(0)
+  receiptValue Int     @default(0)
   company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@id([companyId, year])
@@ -4422,6 +4498,7 @@ model Booking {
   paymentSchedules       BookingPaymentSchedule[]
   payments               BookingPayment[]
   refunds                BookingRefund[]
+  paymentReceipts        BookingPaymentReceipt[]
   costs                  BookingCost[]
   documents              BookingDocument[]
   notes                  BookingNote[]
@@ -4671,6 +4748,7 @@ model BookingPayment {
   reversedBy      User?                   @relation("BookingPaymentReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
   documents       BookingDocument[]
   refunds         BookingRefund[]
+  receipt         BookingPaymentReceipt?
 
   @@unique([companyId, paymentNumber])
   @@index([companyId, bookingId, createdAt])
@@ -4708,6 +4786,221 @@ model BookingRefund {
   @@index([companyId, bookingId, createdAt])
   @@index([companyId, status])
   @@map("booking_refunds")
+}
+
+/// Generated payment receipt document for a single BookingPayment. A receipt
+/// is a document, not a financial transaction: amounts, method and balances
+/// always come from the linked BookingPayment/Booking rows at render time.
+/// At most one receipt row exists per payment (paymentId is unique); the
+/// receiptNumber is a stable company-scoped RCP sequence. If the payment is
+/// edited, the PDF bytes are regenerated under the same receipt number; a
+/// reversed (or otherwise non-collected) payment has no valid receipt.
+model BookingPaymentReceipt {
+  id             String           @id @default(uuid()) @db.Uuid
+  companyId      String           @db.Uuid
+  bookingId      String           @db.Uuid
+  paymentId      String           @unique @db.Uuid
+  receiptNumber  String           @db.VarChar(24)
+  fileName       String           @db.VarChar(255)
+  storageProvider StorageProvider
+  bucket         String           @db.VarChar(255)
+  objectKey      String           @db.VarChar(1000)
+  mimeType       String           @db.VarChar(120)
+  fileSize       Int
+  checksum       String?          @db.VarChar(128)
+  uploadStatus   DocumentStatus   @default(PENDING)
+  visibility     DocumentVisibility @default(CUSTOMER_VISIBLE)
+  uploadedById   String           @db.Uuid
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  company    Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  booking    Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payment    BookingPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  uploadedBy User           @relation("BookingPaymentReceiptUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, receiptNumber])
+  @@unique([companyId, objectKey])
+  @@index([companyId, bookingId, createdAt])
+  @@map("booking_payment_receipts")
+}
+
+/// Company-scoped counters for the standalone Payments module (mirrors
+/// BookingCounter). One lifetime sequence per company; `year` is always 0.
+model PaymentCounter {
+  companyId    String  @db.Uuid
+  year         Int
+  paymentValue Int     @default(0)
+  receiptValue Int     @default(0)
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, year])
+  @@map("payment_counters")
+}
+
+/// Standalone collection context: one customer's trip with its own agreed
+/// trip amount. Independent of Booking — payments against a case exist and
+/// balance purely from this row plus its CustomerPayment rows. The customer
+/// master link is preferred; the name snapshot keeps history readable when
+/// the master is absent or later removed. Same for the optional lead link.
+model PaymentCase {
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @db.Uuid
+  customerId    String?  @db.Uuid
+  queryId       String?  @db.Uuid
+  customerName  String   @db.VarChar(160)
+  customerPhone String?  @db.VarChar(32)
+  customerEmail String?  @db.VarChar(255)
+  title         String   @db.VarChar(200)
+  tripAmount    Decimal  @db.Decimal(14, 2)
+  currency      String   @db.VarChar(3)
+  createdById   String   @db.Uuid
+  updatedById   String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer  Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  query     Query?     @relation(fields: [queryId], references: [id], onDelete: SetNull)
+  createdBy User       @relation("PaymentCaseCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy User?      @relation("PaymentCaseUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  payments  CustomerPayment[]
+
+  @@index([companyId, customerId])
+  @@index([companyId, queryId])
+  @@index([companyId, customerName])
+  @@index([companyId, createdAt])
+  /// One payment case per lead per company. Nullable queryId rows are
+  /// unaffected: PostgreSQL treats NULLs as distinct in unique constraints,
+  /// so standalone (lead-less) cases can still repeat.
+  @@unique([companyId, queryId])
+  @@map("payment_cases")
+}
+
+/// Standalone customer payment against a PaymentCase. The ONLY financial
+/// source of truth for the Payments module: no Booking, no bookingId, no
+/// duplicated balances. Reversed/failed rows are excluded from collection
+/// math by every aggregation (see payments.service).
+model CustomerPayment {
+  id                String              @id @default(uuid()) @db.Uuid
+  companyId         String              @db.Uuid
+  caseId            String              @db.Uuid
+  paymentNumber     String              @db.VarChar(24)
+  amount            Decimal             @db.Decimal(14, 2)
+  currency          String              @db.VarChar(3)
+  paymentMethod     PaymentMethod
+  paymentStatus     PaymentRecordStatus @default(RECEIVED)
+  receivedAt        DateTime
+  referenceNumber   String?             @db.VarChar(255)
+  bankName          String?             @db.VarChar(200)
+  notes             String?             @db.VarChar(2000)
+  recordedById      String              @db.Uuid
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  reversedAt        DateTime?
+  reversedById      String?             @db.Uuid
+  reversalReason    String?             @db.VarChar(2000)
+
+  company    Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  paymentCase PaymentCase     @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  recordedBy User             @relation("CustomerPaymentRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  reversedBy User?            @relation("CustomerPaymentReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
+  receipt    PaymentReceipt?
+
+  @@unique([companyId, paymentNumber])
+  @@index([companyId, caseId, createdAt])
+  @@index([companyId, receivedAt])
+  @@map("customer_payments")
+}
+
+/// Generated payment voucher document for a single CustomerPayment. A
+/// document, not a transaction: at most one row per payment (paymentId is
+/// unique) and the receiptNumber is a stable company-scoped RCP sequence
+/// from PaymentCounter — never the Booking counters.
+model PaymentReceipt {
+  id              String             @id @default(uuid()) @db.Uuid
+  companyId       String             @db.Uuid
+  paymentId       String             @unique @db.Uuid
+  receiptNumber   String             @db.VarChar(24)
+  fileName        String             @db.VarChar(255)
+  storageProvider StorageProvider
+  bucket          String             @db.VarChar(255)
+  objectKey       String             @db.VarChar(1000)
+  mimeType        String             @db.VarChar(120)
+  fileSize        Int
+  checksum        String?            @db.VarChar(128)
+  uploadStatus    DocumentStatus     @default(PENDING)
+  visibility      DocumentVisibility @default(CUSTOMER_VISIBLE)
+  uploadedById    String             @db.Uuid
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  payment    CustomerPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  uploadedBy User            @relation("PaymentReceiptUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, receiptNumber])
+  @@unique([companyId, objectKey])
+  @@index([companyId, createdAt])
+  @@map("payment_receipts")
+}
+
+/// Company-level sending account for standalone email. The SMTP password is
+/// stored only as an AES-256-GCM envelope (see CompanyBankAccount for the
+/// same pattern) and is never returned by any read API.
+model CompanyEmailConfiguration {
+  id                    String        @id @default(uuid()) @db.Uuid
+  companyId             String        @unique @db.Uuid
+  provider              EmailProvider @default(CUSTOM_SMTP)
+  smtpHost              String        @db.VarChar(255)
+  smtpPort              Int           @default(587)
+  security              EmailSecurity @default(STARTTLS)
+  smtpUsername          String        @db.VarChar(255)
+  smtpPasswordEncrypted String        @db.Text
+  passwordKeyVersion    String?       @db.VarChar(16)
+  passwordSetAt         DateTime?
+  fromName              String        @db.VarChar(160)
+  fromEmail             String        @db.VarChar(255)
+  replyTo               String?       @db.VarChar(255)
+  createdById           String        @db.Uuid
+  updatedById           String?       @db.Uuid
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("CompanyEmailConfigurationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy User?   @relation("CompanyEmailConfigurationUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("company_email_configurations")
+}
+
+/// Standalone sent-email log. Intentionally free of CRM foreign keys
+/// (no booking/payment/lead/customer links in Phase 1): an email records
+/// only who it went to, what it said, and whether the SMTP send succeeded.
+model EmailLog {
+  id           String      @id @default(uuid()) @db.Uuid
+  companyId    String      @db.Uuid
+  fromName     String?     @db.VarChar(160)
+  fromEmail    String      @db.VarChar(255)
+  to           String[]
+  cc           String[]    @default([])
+  bcc          String[]    @default([])
+  subject      String      @db.VarChar(500)
+  bodyHtml     String      @db.Text
+  bodyText     String      @db.Text
+  status       EmailStatus @default(SENDING)
+  errorMessage String?     @db.Text
+  sentAt       DateTime?
+  createdById  String      @db.Uuid
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("EmailLogCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([companyId, createdAt])
+  @@index([companyId, status])
+  @@map("email_logs")
 }
 
 model BookingCost {
@@ -5007,4 +5300,201 @@ model WacrmLeadLink {
   @@unique([companyId, wacrmAccountId, flowRunId])
   @@index([companyId, status])
   @@map("wacrm_lead_links")
+}
+
+/// Lifecycle of a standalone Hotel Voucher (independent of Booking).
+enum HotelVoucherStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+}
+
+/// Sex marker for Hotel Voucher guest rows. Voucher-scoped literals
+/// (M/F), distinct from the MALE/FEMALE UserGender user-profile enum.
+enum HotelVoucherGuestSex {
+  M
+  F
+}
+
+/// Guest category for Hotel Voucher guest rows.
+enum HotelVoucherGuestPaxType {
+  ADULT
+  CHILD
+}
+
+/// Per-company lifetime counter for voucher numbers (mirrors
+/// QuotationCounter). `year` is always 0 — one compact sequence.
+model HotelVoucherCounter {
+  companyId String  @db.Uuid
+  year      Int
+  value     Int     @default(0)
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, year])
+  @@map("hotel_voucher_counters")
+}
+
+/// Standalone hotel service-confirmation voucher. All guest/hotel/stay
+/// content is snapshotted at write time: later Hotel Master, Customer or
+/// Lead changes must never rewrite an issued voucher. Optional
+/// customerId/queryId/hotelId are selection conveniences only (SetNull).
+model HotelVoucher {
+  id                 String            @id @default(uuid()) @db.Uuid
+  companyId          String            @db.Uuid
+  voucherNumber      String            @db.VarChar(24)
+  status             HotelVoucherStatus @default(DRAFT)
+  issueDate          DateTime?         @db.Date
+  customerId         String?           @db.Uuid
+  queryId            String?           @db.Uuid
+  hotelId            String?           @db.Uuid
+  guestName          String            @db.VarChar(160)
+  guestPhone         String?           @db.VarChar(32)
+  guestEmail         String?           @db.VarChar(255)
+  adults             Int               @default(1)
+  children           Int               @default(0)
+  hotelName          String            @db.VarChar(200)
+  hotelAddress       String?           @db.VarChar(1000)
+  hotelCity          String?           @db.VarChar(100)
+  hotelPhone         String?           @db.VarChar(40)
+  hotelEmail         String?           @db.VarChar(255)
+  hotelStarRating    String?           @db.VarChar(20)
+  checkIn            DateTime          @db.Date
+  checkOut           DateTime          @db.Date
+  roomTypeName       String?           @db.VarChar(160)
+  rooms              Int               @default(1)
+  mealPlanName       String?           @db.VarChar(160)
+  confirmationNumber String?           @db.VarChar(80)
+  /// Optional external booking reference typed by staff (e.g. an OTA or
+  /// supplier booking id). Free text only — never a relation to Booking and
+  /// never confused with confirmationNumber.
+  bookingId          String?           @db.VarChar(80)
+  /// Optional staff-customized display labels for the two reference fields
+  /// above. NULL/blank means the built-in defaults ("Confirmation Number",
+  /// "Booking ID"). Labels never alter the stored reference values.
+  confirmationNumberLabel String?      @db.VarChar(80)
+  bookingIdLabel     String?           @db.VarChar(80)
+  specialRequests    String?           @db.VarChar(2000)
+  remarks            String?           @db.VarChar(2000)
+  termsSnapshot      String?           @db.Text
+  createdById        String            @db.Uuid
+  updatedById        String?           @db.Uuid
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  cancelledAt        DateTime?
+  deletedAt          DateTime?
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer  Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  query     Query?     @relation(fields: [queryId], references: [id], onDelete: SetNull)
+  hotel     Hotel?     @relation(fields: [hotelId], references: [id], onDelete: SetNull)
+  createdBy User       @relation("HotelVoucherCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy User?      @relation("HotelVoucherUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  documents HotelVoucherDocument[]
+  pricing   HotelVoucherPricing[]
+  guests    HotelVoucherGuest[]
+  packageIncludes HotelVoucherPackageInclude[]
+
+  @@unique([companyId, voucherNumber])
+  @@index([companyId, status, deletedAt])
+  @@index([companyId, guestName])
+  @@index([companyId, hotelName])
+  @@index([companyId, checkIn])
+  @@index([createdById])
+  @@map("hotel_vouchers")
+}
+
+/// Optional pricing rows owned by a Hotel Voucher. All values are manually
+/// entered snapshots (no calculation engine); sequence preserves row order.
+/// Replaced wholesale on update; cascade-deleted with the voucher.
+model HotelVoucherPricing {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @db.Uuid
+  voucherId  String   @db.Uuid
+  sequence   Int      @default(0)
+  roomType   String   @db.VarChar(160)
+  unit       Int      @default(1)
+  quantity   Int      @default(1)
+  gst        Decimal? @db.Decimal(5, 2)
+  amount     Decimal? @db.Decimal(14, 2)
+  taxablePay Decimal? @db.Decimal(14, 2)
+  gstService Decimal? @db.Decimal(14, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  voucher HotelVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, voucherId, sequence])
+  @@map("hotel_voucher_pricing")
+}
+
+/// Optional guest rows owned by a Hotel Voucher. Snapshot data, independent
+/// of Customer/Lead masters. Replaced wholesale on update; cascade-deleted
+/// with the voucher.
+model HotelVoucherGuest {
+  id        String                @id @default(uuid()) @db.Uuid
+  companyId String                @db.Uuid
+  voucherId String                @db.Uuid
+  sequence  Int                   @default(0)
+  guestName String                @db.VarChar(160)
+  age       Int?
+  sex       HotelVoucherGuestSex
+  paxType   HotelVoucherGuestPaxType @default(ADULT)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  voucher HotelVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, voucherId, sequence])
+  @@map("hotel_voucher_guests")
+}
+
+/// Optional package-includes items owned by a Hotel Voucher. Plain snapshot
+/// strings (e.g. "Breakfast"); sequence preserves item order. Replaced
+/// wholesale on update; cascade-deleted with the voucher.
+model HotelVoucherPackageInclude {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @db.Uuid
+  voucherId String   @db.Uuid
+  sequence  Int      @default(0)
+  item      String   @db.VarChar(200)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  voucher HotelVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, voucherId, sequence])
+  @@map("hotel_voucher_package_includes")
+}
+
+/// Stored generated PDFs for a voucher (mirrors the BookingDocument
+/// generated-document subset). One reusable row per file name.
+model HotelVoucherDocument {
+  id              String             @id @default(uuid()) @db.Uuid
+  companyId       String             @db.Uuid
+  voucherId       String             @db.Uuid
+  documentType    String             @default("VOUCHER") @db.VarChar(40)
+  storageProvider StorageProvider
+  bucket          String             @db.VarChar(255)
+  objectKey       String             @db.VarChar(1000)
+  fileName        String             @db.VarChar(255)
+  mimeType        String             @db.VarChar(120)
+  fileSize        Int
+  checksum        String?            @db.VarChar(128)
+  uploadStatus    DocumentStatus     @default(PENDING)
+  visibility      DocumentVisibility @default(INTERNAL)
+  uploadedById    String             @db.Uuid
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  deletedAt       DateTime?
+
+  company    Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  voucher    HotelVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  uploadedBy User         @relation("HotelVoucherDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, objectKey])
+  @@index([companyId, voucherId, deletedAt])
+  @@map("hotel_voucher_documents")
 }

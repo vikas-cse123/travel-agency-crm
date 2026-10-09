@@ -11,6 +11,7 @@ import {
 } from './sidebar-state';
 import { isNavPathActive } from '../navigation';
 import { SHOW_BOOKINGS_NAVIGATION, SHOW_QUOTATION_TEMPLATES_NAVIGATION } from '../navigation';
+import { SHOW_REMINDERS_NAVIGATION } from '../navigation';
 
 const auth = vi.hoisted(() => ({
   permissions: new Set<string>(),
@@ -129,15 +130,31 @@ describe('Temporarily hidden sidebar modules', () => {
     expect(screen.getByText('Operations')).toBeInTheDocument();
   });
 
-  it('does not hide the unrelated Booking Reminders entry', () => {
+  it('hides the dead Reminders group, including Booking Reminders', () => {
     renderSidebar();
-    fireEvent.click(screen.getByRole('button', { name: 'Reminders' }));
-    expect(screen.getByRole('link', { name: 'Booking Reminders' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reminders' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'My Reminders' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Booking Reminders' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Notifications' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Notification Settings' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Reminders')).not.toBeInTheDocument();
+    expect(screen.queryByText('Booking Reminders')).not.toBeInTheDocument();
+    expect(screen.queryByText('Notifications')).not.toBeInTheDocument();
+    expect(screen.queryByText('Notification Settings')).not.toBeInTheDocument();
+  });
+
+  it('keeps the dead Reminders group out of the collapsed rail and the mobile drawer', () => {
+    renderSidebar({ collapsed: true, mobileOpen: true });
+    expect(screen.queryByRole('button', { name: 'Reminders' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Booking Reminders')).not.toBeInTheDocument();
+    expect(screen.queryByText('Notifications')).not.toBeInTheDocument();
+    expect(screen.queryByText('Notification Settings')).not.toBeInTheDocument();
   });
 
   it('hides the modules through explicit, reversible visibility flags', () => {
     expect(SHOW_QUOTATION_TEMPLATES_NAVIGATION).toBe(false);
     expect(SHOW_BOOKINGS_NAVIGATION).toBe(false);
+    expect(SHOW_REMINDERS_NAVIGATION).toBe(false);
   });
 });
 
@@ -382,10 +399,13 @@ describe('Removed Call Recordings module', () => {
     expect(screen.queryByText(/call recording/i)).not.toBeInTheDocument();
   });
 
-  it('goes directly from Notes to Reminders under GENERAL', () => {
+  it('no longer leads from Notes into a Reminders entry', () => {
     renderSidebar();
     expect(screen.getByRole('link', { name: 'Notes' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reminders' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reminders' })).not.toBeInTheDocument();
+    // The remaining Workspace entries stay reachable.
+    expect(screen.getByRole('link', { name: 'Live Search' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Bookmarks' })).toBeInTheDocument();
   });
 });
 

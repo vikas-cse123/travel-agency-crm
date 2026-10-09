@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   HOTEL_IMAGE_MIME_TYPES,
@@ -31,7 +31,7 @@ import {
   useHotels,
   useUpdateHotel,
 } from '@/features/masters/masters.api';
-import { fieldClass, MasterHeader, RichTextEditor } from './MasterUi';
+import { fieldClass, MasterHeader } from './MasterUi';
 import { HotelPlansEditor } from './HotelPlansEditor';
 import { emptyPlanDraft, HotelPlanDraftPanel, type PlanDraft } from './HotelPlanDraftPanel';
 import { MasterImageGalleryField, useMasterImageGallery } from './MasterImageGallery';
@@ -53,8 +53,8 @@ interface FormValues {
   starRating: string;
   reviewLink: string;
   address: string;
-  description: string;
-  amenities: string;
+  phone: string;
+  email: string;
   currency: string;
   isDefaultForCity: boolean;
 }
@@ -67,8 +67,8 @@ const empty: FormValues = {
   starRating: '',
   reviewLink: '',
   address: '',
-  description: '',
-  amenities: '',
+  phone: '',
+  email: '',
   currency: 'INR',
   isDefaultForCity: false,
 };
@@ -181,8 +181,8 @@ export function HotelFormPage() {
       starRating: value.starRating != null ? String(value.starRating) : '',
       reviewLink: value.reviewLink ?? '',
       address: value.address ?? '',
-      description: value.description ?? '',
-      amenities: value.amenities ?? '',
+      phone: value.phone ?? '',
+      email: value.email ?? '',
       currency: value.currency ?? 'INR',
       isDefaultForCity: value.isDefaultForCity,
     });
@@ -293,6 +293,11 @@ export function HotelFormPage() {
       form.setError('starRating', { message: 'Enter a rating from 0 to 5.' });
       return;
     }
+    const email = values.email.trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      form.setError('email', { message: 'Enter a valid email address.' });
+      return;
+    }
     if (values.isDefaultForCity && defaultLimitReached) {
       form.setError('isDefaultForCity', {
         message: `This destination already has ${MAX_DEFAULT_HOTELS_PER_DESTINATION} default hotels. Unmark an existing default hotel first.`,
@@ -310,8 +315,10 @@ export function HotelFormPage() {
       starRating,
       reviewLink: textOrNull(values.reviewLink),
       address: textOrNull(values.address),
-      description: textOrNull(values.description),
-      amenities: textOrNull(values.amenities),
+      phone: textOrNull(values.phone),
+      email: textOrNull(values.email),
+      // description/amenities intentionally omitted: the backend keeps existing
+      // stored values when keys are absent, so edits never overwrite them.
       currency: values.currency || 'INR',
       isDefaultForCity: values.isDefaultForCity,
     };
@@ -475,23 +482,24 @@ export function HotelFormPage() {
                     {...form.register('address')}
                   />
                 </Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Phone" error={errors.phone?.message}>
+                    <input
+                      className={fieldClass}
+                      placeholder="e.g. +91 14100 00000"
+                      {...form.register('phone')}
+                    />
+                  </Field>
+                  <Field label="Email" error={errors.email?.message}>
+                    <input
+                      className={fieldClass}
+                      placeholder="e.g. stay@example.com"
+                      {...form.register('email')}
+                    />
+                  </Field>
+                </div>
               </div>
             </div>
-
-            <Controller
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <RichTextEditor label="Description" value={field.value} onChange={field.onChange} />
-              )}
-            />
-            <Controller
-              control={form.control}
-              name="amenities"
-              render={({ field }) => (
-                <RichTextEditor label="Amenities" value={field.value} onChange={field.onChange} />
-              )}
-            />
           </SectionCard>
 
           <div className="space-y-5">

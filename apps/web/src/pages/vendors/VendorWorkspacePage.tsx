@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Building2, Edit3, Mail, MapPin, Phone, Star } from 'lucide-react';
+import { Building2, Mail, MapPin, Pencil, Phone, Star } from 'lucide-react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import {
   labelForLookup,
@@ -172,7 +172,7 @@ export function VendorWorkspacePage() {
               {hasPermission(PERMISSIONS.VENDORS_UPDATE) && (
                 <Link to={`/vendors/${vendorId}/edit`}>
                   <Button variant="secondary">
-                    <Edit3 className="h-4 w-4" /> Edit
+                    <Pencil className="h-4 w-4" /> Edit
                   </Button>
                 </Link>
               )}

@@ -3,12 +3,15 @@ import {
   Prisma,
   type BookingCostStatus,
   type BookingStatus,
+  type PaymentMethod,
+  type PaymentRecordStatus,
   type ServiceConfirmationStatus,
 } from '@prisma/client';
 import {
   PERMISSIONS,
   ROLE_NAME,
   classifyServiceBucket,
+  labelForLookup,
   type BookingCostInput,
   type BookingDocumentUpload,
   type BookingEmailInput,
@@ -59,6 +62,7 @@ import {
 } from '../../services/storage/storage.service.js';
 import { emailService } from '../../services/email/email.service.js';
 import { renderBookingConfirmationPdf } from './booking-pdf.service.js';
+import { renderPaymentReceiptPdf } from './booking-receipt-pdf.service.js';
 import { loadCompanyBranding } from '../../services/pdf/company-branding.js';
 import {
   renderBookingInvoicePdf,
@@ -73,7 +77,7 @@ import {
 } from './booking.utils.js';
 import { resolveBookingDuration } from './booking-duration.js';
 import { validateServiceMasterRefs } from './booking-master-refs.service.js';
-import { localDayBounds } from '../../utils/timezone.js';
+import { localDayBounds, zonedTimeToUtc } from '../../utils/timezone.js';
 import { createPayableForBooking, recalculateVendor } from '../vendors/vendors.service.js';
 import { reminderProcessor } from '../reminders/reminder-processor.service.js';
 import {
@@ -408,6 +412,44 @@ async function assertOperationallyMutable(booking: { bookingStatus: BookingStatu
     throw new ConflictError(
       'Terminal bookings cannot be edited. Use the controlled status workflow.',
     );
+}
+
+/**
+ * Only collected payments have a valid receipt. Anything else — pending,
+ * failed, refunded or reversed — is refused so a receipt can never present
+ * a non-collected payment as collected.
+ */
+function assertReceiptEligible(payment: { reversedAt: Date | null; paymentStatus: string }) {
+  if (
+    payment.reversedAt ||
+    payment.paymentStatus === 'REVERSED' ||
+    !['RECEIVED', 'CLEARED'].includes(payment.paymentStatus)
+  )
+    throw new ConflictError('A receipt can only be generated for a received or cleared payment.');
+}
+
+/** Receipt metadata for API responses: storage internals never leave the server. */
+function presentPaymentReceipt(receipt: Record<string, unknown>) {
+  const {
+    companyId: _companyId,
+    bookingId: _bookingId,
+    paymentId: _paymentId,
+    objectKey: _objectKey,
+    bucket: _bucket,
+    storageProvider: _storageProvider,
+    checksum: _checksum,
+    uploadedById: _uploadedById,
+    ...safe
+  } = receipt;
+  void _companyId;
+  void _bookingId;
+  void _paymentId;
+  void _objectKey;
+  void _bucket;
+  void _storageProvider;
+  void _checksum;
+  void _uploadedById;
+  return safe;
 }
 
 const statusTransitions: Record<BookingStatus, readonly BookingStatus[]> = {
@@ -1103,8 +1145,9 @@ export const bookingsService = {
     const lead = await getVisibleLead(auth, leadId);
     if (lead.leadType !== 'HOT')
       throw new ValidationError('Lead type must be Hot before creating a booking.');
-    if (lead.leadStage !== 'BOOKING_CONFIRMED')
-      throw new ValidationError('Lead stage must be Booking Confirmed before creating a booking.');
+    // No stage prerequisite: BOOKING_CONFIRMED is a system stage set by
+    // booking creation itself (see createFromLead), so requiring it up front
+    // would force leads through a confirmed-without-booking state.
     if (['LOST', 'CANCELLED', 'INVALID'].includes(lead.leadStage))
       throw new ConflictError('This lead cannot be booked because it is terminal.');
     const quotation = await prisma.quotation.findFirst({
@@ -1313,6 +1356,25 @@ export const bookingsService = {
         where: { id: quotation.id },
         data: { customerId: customerMatch.customerId },
       });
+      // Booking creation confirms the lead: BOOKING_CONFIRMED is a system
+      // stage, so it is set here (with history) rather than beforehand. Leads
+      // that arrived already confirmed keep their stage and history intact.
+      if (lead.leadStage !== 'BOOKING_CONFIRMED') {
+        await tx.query.update({
+          where: { id: lead.id },
+          data: { leadStage: 'BOOKING_CONFIRMED', convertedAt: new Date() },
+        });
+        await tx.queryStageHistory.create({
+          data: {
+            companyId: auth.companyId,
+            queryId: lead.id,
+            previousStage: lead.leadStage,
+            newStage: 'BOOKING_CONFIRMED',
+            changedById: auth.userId,
+            reason: `Created booking ${bookingNumber}`,
+          },
+        });
+      }
 
       // Import finalized quotation services as stable booking snapshots.
       const services: Array<Prisma.BookingServiceCreateManyInput> = [];
@@ -2407,6 +2469,183 @@ export const bookingsService = {
     return presentBooking(booking, true).payments;
   },
 
+  /**
+   * Cross-booking payments ledger for the Payments page. Read-only view over
+   * the existing BookingPayment rows — no new table, no duplicated totals.
+   * Scoped to the caller's company and visible bookings; requires the same
+   * financial access as the per-booking payments list.
+   */
+  async paymentsLedger(auth: AuthContext, query: Record<string, unknown>) {
+    if (!(await financialAccess(auth))) throw new ForbiddenError();
+    const page = resolvePagination({
+      page: Number(query.page) || undefined,
+      pageSize: Number(query.pageSize) || undefined,
+    });
+    const search = typeof query.search === 'string' ? query.search.trim() : '';
+    const bookingScope = await visibleWhere(auth);
+    const bookingFilter: Prisma.BookingPaymentWhereInput['booking'] = {
+      is: {
+        ...bookingScope,
+        ...(typeof query.bookingId === 'string' && query.bookingId ? { id: query.bookingId } : {}),
+      },
+    };
+    const where: Prisma.BookingPaymentWhereInput = {
+      companyId: auth.companyId,
+      ...(typeof query.paymentMethod === 'string'
+        ? { paymentMethod: query.paymentMethod as PaymentMethod }
+        : {}),
+      ...(typeof query.paymentStatus === 'string'
+        ? { paymentStatus: query.paymentStatus as PaymentRecordStatus }
+        : {}),
+      ...(query.dateFrom || query.dateTo
+        ? {
+            receivedAt: {
+              ...(query.dateFrom ? { gte: new Date(String(query.dateFrom)) } : {}),
+              ...(query.dateTo ? { lte: new Date(String(query.dateTo)) } : {}),
+            },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { paymentNumber: { contains: search, mode: 'insensitive' } },
+              { referenceNumber: { contains: search, mode: 'insensitive' } },
+              { bankName: { contains: search, mode: 'insensitive' } },
+              {
+                booking: {
+                  is: {
+                    ...bookingScope,
+                    OR: [
+                      { bookingNumber: { contains: search, mode: 'insensitive' } },
+                      { customerName: { contains: search, mode: 'insensitive' } },
+                      { customerPhone: { contains: search } },
+                      { customerEmail: { contains: search, mode: 'insensitive' } },
+                      { destinationSummary: { contains: search, mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+      booking: bookingFilter,
+    };
+    const include = {
+      recordedBy: { select: userSelect },
+      reversedBy: { select: userSelect },
+      paymentSchedule: {
+        select: {
+          id: true,
+          installmentNumber: true,
+          label: true,
+          amount: true,
+          dueDate: true,
+          status: true,
+        },
+      },
+      receipt: { select: { id: true, receiptNumber: true, uploadStatus: true } },
+      booking: {
+        select: {
+          id: true,
+          bookingNumber: true,
+          customerId: true,
+          customerName: true,
+          destinationSummary: true,
+          currency: true,
+          totalPayable: true,
+          totalCustomerPaid: true,
+          totalCustomerOutstanding: true,
+          paymentStatus: true,
+          bookingStatus: true,
+          travelStartDate: true,
+          travelEndDate: true,
+        },
+      },
+    } as const;
+    const presentLedgerRow = (
+      row: Prisma.BookingPaymentGetPayload<{ include: typeof include }>,
+    ) => {
+      const { companyId: _companyId, ...safe } = row;
+      void _companyId;
+      return {
+        ...safe,
+        amount: decimal(row.amount),
+        paymentSchedule: row.paymentSchedule
+          ? { ...row.paymentSchedule, amount: decimal(row.paymentSchedule.amount) }
+          : null,
+        booking: {
+          ...row.booking,
+          totalPayable: decimal(row.booking.totalPayable),
+          totalCustomerPaid: decimal(row.booking.totalCustomerPaid),
+          totalCustomerOutstanding: decimal(row.booking.totalCustomerOutstanding),
+        },
+      };
+    };
+    const activeOnly = {
+      paymentStatus: { in: ['RECEIVED', 'CLEARED'] as PaymentRecordStatus[] },
+      reversedAt: null,
+    } as const;
+    const company = await prisma.company.findUniqueOrThrow({
+      where: { id: auth.companyId },
+      select: { timezone: true },
+    });
+    const { start: dayStart } = localDayBounds(company.timezone);
+    const monthParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: company.timezone,
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(new Date());
+    const monthValue = Object.fromEntries(monthParts.map((part) => [part.type, part.value])) as {
+      year?: string;
+      month?: string;
+    };
+    const monthStart = zonedTimeToUtc(
+      company.timezone,
+      Number(monthValue.year),
+      Number(monthValue.month),
+      1,
+    );
+    const collectedWhere = (extra: Prisma.BookingPaymentWhereInput = {}) => ({
+      companyId: auth.companyId,
+      booking: { is: bookingScope },
+      ...activeOnly,
+      ...extra,
+    });
+    const [rows, total, filteredSum, todaySum, monthSum] = await Promise.all([
+      prisma.bookingPayment.findMany({
+        where,
+        include,
+        orderBy: [{ receivedAt: 'desc' }, { createdAt: 'desc' }],
+        skip: (page.page - 1) * page.pageSize,
+        take: page.pageSize,
+      }),
+      prisma.bookingPayment.count({ where }),
+      prisma.bookingPayment.aggregate({
+        where: { ...where, ...activeOnly },
+        _sum: { amount: true },
+      }),
+      prisma.bookingPayment.aggregate({
+        where: collectedWhere({ receivedAt: { gte: dayStart } }),
+        _sum: { amount: true },
+      }),
+      prisma.bookingPayment.aggregate({
+        where: collectedWhere({ receivedAt: { gte: monthStart } }),
+        _sum: { amount: true },
+      }),
+    ]);
+    const money = (value: Prisma.Decimal | null) => value?.toFixed(2) ?? '0.00';
+    return {
+      data: rows.map(presentLedgerRow),
+      pagination: { ...page, total, totalPages: total ? Math.ceil(total / page.pageSize) : 0 },
+      summary: {
+        totalCollected: money(filteredSum._sum.amount),
+        paymentCount: total,
+        receivedToday: money(todaySum._sum.amount),
+        receivedThisMonth: money(monthSum._sum.amount),
+      },
+    };
+  },
+
   async createPayment(
     auth: AuthContext,
     bookingId: string,
@@ -2523,6 +2762,197 @@ export const bookingsService = {
       return row;
     });
     return { ...updated, amount: decimal(updated.amount) };
+  },
+
+  /**
+   * Payment receipt metadata for one BookingPayment. Returns the stored
+   * receipt row (without storage internals), or 404 when no receipt has been
+   * generated yet. Never renders or leaks bytes — see downloadUrl below.
+   */
+  async paymentReceipt(auth: AuthContext, bookingId: string, paymentId: string) {
+    if (!(await financialAccess(auth))) throw new ForbiddenError();
+    const booking = await getBooking(auth, bookingId);
+    if (!booking.payments.some((row) => row.id === paymentId))
+      throw new NotFoundError('Payment not found.');
+    const receipt = await prisma.bookingPaymentReceipt.findUnique({ where: { paymentId } });
+    if (!receipt || receipt.companyId !== auth.companyId || receipt.bookingId !== booking.id)
+      throw new NotFoundError('Payment receipt has not been generated yet.');
+    return presentPaymentReceipt(receipt);
+  },
+
+  /**
+   * Generate (or reuse) the payment receipt PDF for one BookingPayment.
+   *
+   * A receipt is a document, not a transaction: at most one row exists per
+   * payment (paymentId is unique) and the receiptNumber is a stable
+   * company-scoped RCP sequence. A fresh render reuses the existing row when
+   * its bytes are current (created after the payment's last change and still
+   * in storage); otherwise the PDF is re-rendered under the SAME receipt
+   * number so reprints never fork RCP identities. Concurrent first-time
+   * generates for one payment collapse onto the winner via the unique
+   * paymentId constraint. Only collected payments (RECEIVED/CLEARED, not
+   * reversed) have a valid receipt — anything else is refused, so a reversed
+   * payment can never present as collected.
+   */
+  async generatePaymentReceipt(
+    auth: AuthContext,
+    bookingId: string,
+    paymentId: string,
+    context: RequestContext,
+  ) {
+    if (!(await financialAccess(auth))) throw new ForbiddenError();
+    const booking = await getBooking(auth, bookingId);
+    const payment = booking.payments.find((row) => row.id === paymentId);
+    if (!payment) throw new NotFoundError('Payment not found.');
+    assertReceiptEligible(payment);
+    const existing = await prisma.bookingPaymentReceipt.findUnique({ where: { paymentId } });
+    if (existing && (existing.companyId !== auth.companyId || existing.bookingId !== booking.id))
+      throw new NotFoundError('Payment not found.');
+    if (
+      existing &&
+      existing.uploadStatus === 'AVAILABLE' &&
+      existing.createdAt >= payment.updatedAt &&
+      (await storageService.headObject(existing.objectKey))
+    ) {
+      return { ...presentPaymentReceipt(existing), reused: true };
+    }
+    const receiptNumber =
+      existing?.receiptNumber ??
+      (await prisma.$transaction((tx) => nextBookingNumber(tx, auth.companyId, 'receipt')));
+    const currency = booking.currency;
+    const money = (value: Prisma.Decimal | null | undefined) =>
+      value === null || value === undefined
+        ? '—'
+        : new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(Number(value));
+    const pdf = await renderPaymentReceiptPdf({
+      company: await loadCompanyBranding(auth.companyId),
+      receipt: {
+        receiptNumber,
+        paymentNumber: payment.paymentNumber,
+        receivedAt: new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(
+          payment.receivedAt,
+        ),
+        customerName: booking.customerName,
+        bookingNumber: booking.bookingNumber,
+        tripSummary: booking.destinationSummary,
+        amount: money(payment.amount),
+        paymentMethod:
+          payment.paymentMethod === 'UPI' ? 'UPI' : labelForLookup(payment.paymentMethod),
+        referenceNumber: payment.referenceNumber,
+        bankName: payment.bankName,
+        notes: payment.notes,
+        totalPayable: money(booking.totalPayable),
+        previouslyPaid: money(booking.totalCustomerPaid.minus(payment.amount)),
+        totalPaid: money(booking.totalCustomerPaid),
+        outstanding: money(booking.totalCustomerOutstanding),
+        paymentStatus: labelForLookup(booking.paymentStatus),
+      },
+    });
+    const fileName = `receipt-${receiptNumber}.pdf`;
+    const documentId = existing?.id ?? randomUUID();
+    const objectKey = bookingObjectKey({
+      companyId: auth.companyId,
+      bookingId: booking.id,
+      paymentId: payment.id,
+      documentId,
+      fileName,
+    });
+    const checksum = createHash('sha256').update(pdf).digest('hex');
+    await storageService.putObject({
+      key: objectKey,
+      body: pdf,
+      contentType: 'application/pdf',
+      checksum,
+    });
+    try {
+      const saved = await prisma.$transaction(async (tx) => {
+        const row = existing
+          ? await tx.bookingPaymentReceipt.update({
+              where: { id: existing.id },
+              data: {
+                fileName,
+                storageProvider: storageService.provider,
+                bucket: storageService.bucket,
+                objectKey,
+                mimeType: 'application/pdf',
+                fileSize: pdf.length,
+                checksum,
+                uploadStatus: 'AVAILABLE',
+                uploadedById: auth.userId,
+              },
+            })
+          : await tx.bookingPaymentReceipt.create({
+              data: {
+                id: documentId,
+                companyId: auth.companyId,
+                bookingId: booking.id,
+                paymentId: payment.id,
+                receiptNumber,
+                fileName,
+                storageProvider: storageService.provider,
+                bucket: storageService.bucket,
+                objectKey,
+                mimeType: 'application/pdf',
+                fileSize: pdf.length,
+                checksum,
+                uploadStatus: 'AVAILABLE',
+                uploadedById: auth.userId,
+              },
+            });
+        await tx.activityLog.create({
+          data: bookingAudit(
+            auth,
+            'BOOKING_PAYMENT_RECEIPT_GENERATED',
+            'BookingPaymentReceipt',
+            row.id,
+            context,
+            { bookingId: booking.id, paymentId: payment.id, receiptNumber },
+          ),
+        });
+        return row;
+      });
+      return { ...presentPaymentReceipt(saved), reused: false };
+    } catch (error) {
+      // A concurrent first-time generate for the same payment won the race;
+      // collapse onto the winner instead of forking receipt numbers.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const winner = await prisma.bookingPaymentReceipt.findUnique({ where: { paymentId } });
+        if (winner && winner.companyId === auth.companyId)
+          return { ...presentPaymentReceipt(winner), reused: true };
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * Signed download URL for a payment receipt. Serves only AVAILABLE receipts
+   * of still-collected payments: a reversed payment's stale bytes are never
+   * handed out, so downloads always agree with the ledger.
+   */
+  async paymentReceiptDownloadUrl(auth: AuthContext, bookingId: string, paymentId: string) {
+    if (!(await financialAccess(auth))) throw new ForbiddenError();
+    const booking = await getBooking(auth, bookingId);
+    const payment = booking.payments.find((row) => row.id === paymentId);
+    if (!payment) throw new NotFoundError('Payment not found.');
+    assertReceiptEligible(payment);
+    const receipt = await prisma.bookingPaymentReceipt.findUnique({ where: { paymentId } });
+    if (
+      !receipt ||
+      receipt.companyId !== auth.companyId ||
+      receipt.bookingId !== booking.id ||
+      receipt.uploadStatus !== 'AVAILABLE'
+    )
+      throw new NotFoundError('Payment receipt has not been generated yet.');
+    return {
+      url: await storageService.createDownloadUrl(
+        receipt.objectKey,
+        receipt.fileName,
+        env.BOOKING_PRESIGNED_URL_EXPIRY_SECONDS,
+        'attachment',
+      ),
+      fileName: receipt.fileName,
+      expiresInSeconds: env.BOOKING_PRESIGNED_URL_EXPIRY_SECONDS,
+    };
   },
 
   async costs(auth: AuthContext, bookingId: string) {

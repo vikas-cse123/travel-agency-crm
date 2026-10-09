@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Bell, ChevronDown, LogOut, Menu } from 'lucide-react';
-import { PERMISSIONS } from '@interscale/shared';
+import { useNavigate } from 'react-router-dom';
+import { ChevronDown, LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useLogout } from '@/features/auth/auth.api';
 import { initialsOf } from './navigation';
-import { useNotificationAnalytics } from '@/features/reminders/reminders.api';
 
 interface TopbarProps {
   onOpenMobile: () => void;
@@ -14,9 +12,7 @@ interface TopbarProps {
 
 export function Topbar({ onOpenMobile, breadcrumbs }: TopbarProps) {
   const navigate = useNavigate();
-  const { user, hasPermission } = useAuth();
-  const canViewNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW);
-  const notifications = useNotificationAnalytics(canViewNotifications);
+  const { user } = useAuth();
   const logout = useLogout();
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -85,20 +81,6 @@ export function Topbar({ onOpenMobile, breadcrumbs }: TopbarProps) {
       </nav>
 
       <div className="ml-auto flex items-center gap-2">
-        {canViewNotifications && (
-          <Link
-            to="/reminders/notifications"
-            aria-label={`${notifications.data?.unread ?? 0} unread notifications`}
-            className="relative rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <Bell className="h-5 w-5" />
-            {Boolean(notifications.data?.unread) && (
-              <span className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-semibold text-destructive-foreground">
-                {Math.min(notifications.data?.unread ?? 0, 99)}
-              </span>
-            )}
-          </Link>
-        )}
         <div className="relative" ref={menuRef}>
           <button
             type="button"

@@ -16,15 +16,10 @@ import { fieldClass, MasterHeader } from './MasterUi';
 const schema = z.object({
   countryCode: z.string().length(2, 'Select a country.'),
   name: z.string().trim().min(2, 'Enter a city name.').max(160),
-  airportCode: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .refine((value) => !value || /^[A-Z]{3}$/.test(value), 'Use a three-letter airport code.'),
   status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
 });
 type Values = z.infer<typeof schema>;
-const initial: Values = { countryCode: 'IN', name: '', airportCode: '', status: 'ACTIVE' };
+const initial: Values = { countryCode: 'IN', name: '', status: 'ACTIVE' };
 
 export function CityFormPage() {
   const { cityId } = useParams();
@@ -49,7 +44,6 @@ export function CityFormPage() {
       form.reset({
         countryCode: city.data.countryCode,
         name: city.data.name,
-        airportCode: city.data.airportCode ?? '',
         status: city.data.status as Values['status'],
       });
   }, [city.data, form]);
@@ -70,10 +64,12 @@ export function CityFormPage() {
     }, 0);
   };
   const submit = (values: Values) => {
+    // airportCode is intentionally excluded from the payload so existing
+    // database values (e.g. Mumbai -> BOM) are preserved on edit and never
+    // overwritten with null/empty string.
     const payload: CityInput = {
       countryCode: values.countryCode,
       name: values.name,
-      airportCode: values.airportCode || null,
       status: values.status,
     };
     if (cityId)
@@ -144,21 +140,6 @@ export function CityFormPage() {
             />
             {form.formState.errors.name && (
               <span className="text-xs text-red-600">{form.formState.errors.name.message}</span>
-            )}
-          </label>
-          <label className="block text-sm font-medium">
-            Airport Code
-            <input
-              className={`${fieldClass} uppercase`}
-              aria-invalid={Boolean(form.formState.errors.airportCode)}
-              maxLength={3}
-              placeholder="e.g. DEL"
-              {...form.register('airportCode')}
-            />
-            {form.formState.errors.airportCode && (
-              <span className="text-xs text-red-600">
-                {form.formState.errors.airportCode.message}
-              </span>
             )}
           </label>
           {cityId && (

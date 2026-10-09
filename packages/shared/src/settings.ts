@@ -273,7 +273,12 @@ export const settingsProfileSchema = z.object({
 });
 
 export const settingsBrandingSchema = z.object({
-  primaryColor: hexColor,
+  primaryColor: hexColor.optional(),
+  /**
+   * Hotel-voucher PDF theme override. Null clears back to the built-in
+   * purple theme; omitting the key leaves the saved value untouched.
+   */
+  hotelVoucherPrimaryColor: hexColor.nullable().optional(),
 });
 
 export const settingsTaxSchema = z.object({

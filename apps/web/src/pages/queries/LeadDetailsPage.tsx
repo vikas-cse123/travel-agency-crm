@@ -6,11 +6,12 @@ import {
   CalendarPlus,
   CheckCircle2,
   CircleAlert,
-  Edit3,
   FileText,
+  Landmark,
   Mail,
   MessageSquarePlus,
   Phone,
+  Pencil,
   StickyNote,
   Trash2,
   UserRound,
@@ -19,6 +20,7 @@ import {
 import {
   CONTACT_METHODS,
   FOLLOW_UP_OUTCOMES,
+  PERMISSIONS,
   labelForLookup,
   type ContactMethodValue,
 } from '@interscale/shared';
@@ -36,6 +38,7 @@ import {
   useTimeline,
 } from '@/features/queries/queries.api';
 import { formatTravelMonthYear, leadTravelDatesLabel } from '@/features/quotations/travel-dates';
+import { LeadPaymentsCard, RecordLeadPaymentDialog } from './LeadPayments';
 
 const displayTravellerSummary = (summary: string | null | undefined): string => {
   if (!summary) return '';
@@ -120,6 +123,8 @@ export function LeadDetailsPage() {
   const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
   const [editingFollowUpAt, setEditingFollowUpAt] = useState('');
   const [editingFollowUpNotes, setEditingFollowUpNotes] = useState('');
+  const [payOpen, setPayOpen] = useState(false);
+  const canRecordPayment = hasPermission(PERMISSIONS.PAYMENTS_CREATE);
   if (workspace.isLoading) return <div className="h-96 animate-pulse rounded-xl bg-card" />;
   if (workspace.isError || !workspace.data)
     return (
@@ -198,10 +203,16 @@ export function LeadDetailsPage() {
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2 sm:pl-11 lg:pl-0">
+          {canRecordPayment && (
+            <Button onClick={() => setPayOpen(true)}>
+              <Landmark className="h-4 w-4" />
+              Record Payment
+            </Button>
+          )}
           {allowed.canEdit && (
             <Link to={`/queries/${q.id}/edit`}>
               <Button variant="secondary">
-                <Edit3 className="h-4 w-4" />
+                <Pencil className="h-4 w-4" />
                 Edit
               </Button>
             </Link>
@@ -378,11 +389,11 @@ export function LeadDetailsPage() {
                         onChange={(e) => setStage(e.target.value)}
                       >
                         <option value="">Change stage…</option>
-                        {lookups.data?.leadStages.map((s) => (
-                          <option key={s.value} value={s.value}>
-                            {s.label}
-                          </option>
-                        ))}
+                        {(lookups.data?.leadStages ?? []).map((s) => (
+                            <option key={s.value} value={s.value}>
+                              {s.label}
+                            </option>
+                          ))}
                       </select>
                       {['LOST', 'CANCELLED', 'INVALID'].includes(stage) && (
                         <input
@@ -462,6 +473,9 @@ export function LeadDetailsPage() {
                   )}
                 </div>
               </section>
+              <div className="mt-5">
+                <LeadPaymentsCard queryId={q.id} onRecord={() => setPayOpen(true)} />
+              </div>
             </aside>
           </div>
         </div>
@@ -1029,11 +1043,11 @@ export function LeadDetailsPage() {
                         onChange={(event) => setCompletionNextStage(event.target.value)}
                       >
                         <option value="">Keep lead stage</option>
-                        {lookups.data?.leadStages.map((value) => (
-                          <option key={value.value} value={value.value}>
-                            {value.label}
-                          </option>
-                        ))}
+                        {(lookups.data?.leadStages ?? []).map((value) => (
+                            <option key={value.value} value={value.value}>
+                              {value.label}
+                            </option>
+                          ))}
                       </select>
                       <div className="flex gap-2">
                         <Button
@@ -1155,6 +1169,7 @@ export function LeadDetailsPage() {
           )}
         </section>
       )}
+      {payOpen && <RecordLeadPaymentDialog queryId={q.id} onClose={() => setPayOpen(false)} />}
     </div>
   );
 }
