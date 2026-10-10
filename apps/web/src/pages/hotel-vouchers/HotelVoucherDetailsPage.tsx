@@ -93,7 +93,7 @@ export function HotelVoucherDetailsPage() {
    * synchronously inside the click handler so popup blockers allow it, run
    * the async API work, then navigate the tab to the signed URL).
    */
-  const openPdfInNewTab = async (task: () => Promise<{ url: string; title?: string }>) => {
+  const openPdfInNewTab = async (task: () => Promise<{ url: string; title: string | undefined }>) => {
     setActionError('');
     const tab = window.open('about:blank', '_blank');
     if (!tab) {

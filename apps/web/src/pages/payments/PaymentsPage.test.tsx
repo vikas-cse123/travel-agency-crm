@@ -149,7 +149,7 @@ describe('Payments page (standalone, no booking)', () => {
   });
 
   it('sends search and filters server-side via query params', async () => {
-    const fetchMock = vi.fn(async () => response(ledger([])));
+    const fetchMock = vi.fn(async (_input?: RequestInfo | URL) => response(ledger([])));
     vi.stubGlobal('fetch', fetchMock);
     renderPage();
     await screen.findByText('No payments found');

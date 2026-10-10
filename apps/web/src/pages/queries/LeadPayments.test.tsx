@@ -90,7 +90,7 @@ function stubPayments({
   record?: unknown;
   recordError?: { status: number; message: string };
 } = {}) {
-  const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+  const calls: Array<{ url: string; method: string | undefined; body: unknown }> = [];
   const mock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const url = String(input);
     if (url.includes('/payments/cases/by-lead')) return response(byLead);

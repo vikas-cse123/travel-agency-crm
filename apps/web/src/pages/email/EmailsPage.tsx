@@ -222,7 +222,7 @@ function EmailDetails({ id }: { id: string }) {
         <dt className="text-xs uppercase text-muted-foreground">Message</dt>
         <dd
           className="prose prose-sm mt-1 max-w-none text-sm"
-          dangerouslySetInnerHTML={{ __html: row.bodyHtml }}
+          dangerouslySetInnerHTML={{ __html: row.bodyHtml ?? '' }}
         />
       </div>
       <div>

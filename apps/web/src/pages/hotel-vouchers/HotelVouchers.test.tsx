@@ -231,7 +231,10 @@ describe('Hotel Voucher pages (standalone)', () => {
   });
 
   it('asks for confirmation naming guest and hotel, and skips delete on cancel', async () => {
-    const fetchMock = vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher])));
+    const fetchMock = vi.fn(async (_request: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
+      return response(page([draftVoucher]));
+    });
     vi.stubGlobal('fetch', fetchMock);
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     try {
@@ -609,7 +612,9 @@ describe('Hotel Voucher pages (standalone)', () => {
         await screen.findByRole('button', { name: 'Download voucher for Aarav Mehta' }),
       );
       await waitFor(() => expect(clickSpy).toHaveBeenCalled());
-      expect(capturedAnchor?.download).toBe('Aarav - Shah.pdf');
+      // Read through a cast: the anchor is only assigned inside the
+      // createElement mock, which control-flow analysis treats as never run.
+      expect((capturedAnchor as HTMLAnchorElement | null)?.download).toBe('Aarav - Shah.pdf');
     } finally {
       createSpy.mockRestore();
     }
@@ -1048,7 +1053,8 @@ describe('Hotel Voucher pages (standalone)', () => {
       hotelId: '33333333-3333-4333-8333-333333333333',
       hotelName: 'Shah Palace Hotel',
     };
-    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
       const url = String(request);
       // Archived/absent master: lookups come back empty.
       if (url.includes('/masters/hotels')) return response(page([]));
@@ -1108,7 +1114,8 @@ describe('Hotel Voucher pages (standalone)', () => {
       name: 'Master Hotel Name',
       phone: '+91 14100 00000',
     };
-    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
       const url = String(request);
       if (url.includes('/masters/hotels/') && !url.includes('?')) return response(master);
       if (url.includes('/masters/hotels')) return response(page([hotelMaster]));
@@ -1146,7 +1153,8 @@ describe('Hotel Voucher pages (standalone)', () => {
         { id: 'g-2', guestName: 'Young Guest', age: 8, sex: 'F', paxType: 'CHILD' },
       ],
     };
-    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
       const url = String(request);
       if (url.includes('/masters/hotels')) return response(page([]));
       if (url.includes('/customers')) return response(page([]));
@@ -1774,7 +1782,8 @@ describe('Hotel Voucher pages (standalone)', () => {
       detailsById: Record<string, unknown>,
       listRows: unknown[] = [quotationOne, quotationTwo],
     ) {
-      return vi.fn(async (request: RequestInfo | URL) => {
+      return vi.fn(async (request: RequestInfo | URL, _init?: RequestInit) => {
+        void _init;
         const url = String(request);
         if (url.includes('/masters/hotels/') && !url.includes('?')) return response(hotelMaster);
         if (url.includes('/masters/hotels')) return response(page([]));
@@ -2092,7 +2101,8 @@ describe('Hotel Voucher pages (standalone)', () => {
           { id: 'm-2', sequence: 1, mealPlan: 'Dinner' },
         ],
       };
-      const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const fetchMock = vi.fn(async (request: RequestInfo | URL, _init?: RequestInit) => {
+        void _init;
         const url = String(request);
         if (url.includes('/masters/hotels')) return response(page([]));
         if (url.includes('/customers')) return response(page([]));

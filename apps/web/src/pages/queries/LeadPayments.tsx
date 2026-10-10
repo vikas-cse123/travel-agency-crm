@@ -18,6 +18,7 @@ import {
   useGeneratePaymentVoucher,
   useLeadPaymentCase,
   useRecordStandalonePayment,
+  type LeadPaymentCaseState,
   type PaymentTripDetails,
   type TripPaymentRow,
 } from '@/features/payments/payments.api';

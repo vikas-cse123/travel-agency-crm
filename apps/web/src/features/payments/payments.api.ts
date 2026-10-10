@@ -190,7 +190,12 @@ export function useStandalonePayment(id?: string) {
 export function useRecordStandalonePayment() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: PaymentInput) => apiClient.post('/payments', input),
+    // The server coerces date-only strings, so callers may pass the raw
+    // `<input type="date">` value instead of materialising a Date (which
+    // would shift the instant through the local timezone).
+    mutationFn: (
+      input: Omit<PaymentInput, 'receivedAt'> & { receivedAt: Date | string },
+    ) => apiClient.post('/payments', input),
     onSuccess: () => refresh(client),
   });
 }

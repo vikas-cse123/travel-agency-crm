@@ -556,7 +556,15 @@ export function HotelVoucherFormPage() {
   // Hooks must all run above the early returns below: the redirect paths
   // render nothing, so any hook placed after them breaks hook order.
   const guestRows = useFieldArray({ control, name: 'guests' });
-  const packageRows = useFieldArray({ control, name: 'packageIncludes' });
+  // packageIncludes is a string array, which react-hook-form's field-array
+  // types only model as object arrays. The cast keeps the runtime behavior
+  // identical while describing exactly the surface this form uses.
+  const packageRows = useFieldArray({ control, name: 'packageIncludes' } as never) as unknown as {
+    readonly fields: ReadonlyArray<{ readonly id: string }>;
+    append: (value: string) => void;
+    move: (from: number, to: number) => void;
+    remove: (index: number) => void;
+  };
   const stayRoomRows = useFieldArray({ control, name: 'stayRooms' });
   const stayMealRows = useFieldArray({ control, name: 'stayMeals' });
 
