@@ -315,3 +315,90 @@ suite('masters RichTextEditor (Hotel Description)', (initial: string) =>
   render(<ControlledMasters initial={initial} />),
 { name: /description/i, label: 'Description' },
 );
+
+describe('masters RichTextEditor numbered list (Terms & Conditions)', () => {
+  const renderTerms = (initial: string) => render(<ControlledMasters initial={initial} />);
+  const editorOf = () => screen.getByRole('textbox', { name: /description/i });
+
+  function selectParagraphs(editor: HTMLElement, fromIndex: number, toIndex: number) {
+    const paragraphs = editor.querySelectorAll('p');
+    const range = document.createRange();
+    range.setStart(paragraphs[fromIndex]!, 0);
+    range.setEnd(paragraphs[toIndex]!, paragraphs[toIndex]!.childNodes.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  }
+
+  it('converts selected paragraphs into a sequential ordered list', () => {
+    const ui = renderTerms('<p>Check-in after 2 PM.</p><p>No smoking.</p><p>No pets.</p>');
+    const editor = editorOf();
+    selectParagraphs(editor, 0, 2);
+    fireEvent.click(screen.getByRole('button', { name: /numbered list/i }));
+    const items = editor.querySelectorAll('ol > li');
+    expect(items).toHaveLength(3);
+    expect(Array.from(items).map((li) => li.textContent)).toEqual([
+      'Check-in after 2 PM.',
+      'No smoking.',
+      'No pets.',
+    ]);
+    // Saved HTML is a real ordered list — never numbers baked into text.
+    expect(screen.getByTestId('mirror').textContent).toContain('<ol>');
+    expect(screen.getByTestId('mirror').textContent).not.toContain('1. Check-in');
+    ui.unmount();
+  });
+
+  it('toggles ordered-list formatting off and marks the button pressed while listed', () => {
+    const ui = renderTerms('<p>One</p><p>Two</p>');
+    const editor = editorOf();
+    const toggle = screen.getByRole('button', { name: /numbered list/i });
+    selectParagraphs(editor, 0, 1);
+    fireEvent.click(toggle);
+    expect(editor.querySelectorAll('ol > li')).toHaveLength(2);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    // Select inside the list, toggle off: paragraphs return, no list remains.
+    const range = document.createRange();
+    range.selectNodeContents(editor.querySelector('li')!);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.click(toggle);
+    expect(editor.querySelector('ol')).toBeNull();
+    expect(Array.from(editor.querySelectorAll('p')).map((p) => p.textContent)).toEqual([
+      'One',
+      'Two',
+    ]);
+    ui.unmount();
+  });
+
+  it('preserves numbering across save and reload without doubling', () => {
+    const first = renderTerms('<p>One</p><p>Two</p>');
+    const editor = editorOf();
+    selectParagraphs(editor, 0, 1);
+    fireEvent.click(screen.getByRole('button', { name: /numbered list/i }));
+    const saved = screen.getByTestId('mirror').textContent ?? '';
+    expect(saved).toContain('<ol>');
+    first.unmount();
+    renderTerms(saved);
+    const reloaded = editorOf();
+    expect(reloaded.querySelectorAll('ol > li')).toHaveLength(2);
+    // Saving again without edits keeps the single list intact.
+    fireEvent.input(reloaded);
+    expect(screen.getByTestId('mirror').textContent).toContain('<ol>');
+    expect((screen.getByTestId('mirror').textContent?.match(/<ol>/g) ?? []).length).toBe(1);
+  });
+
+  it('leaves plain unnumbered paragraphs and bullets untouched', () => {
+    const ui = renderTerms('<p>Plain line one.</p><p>Plain line two.</p>');
+    const editor = editorOf();
+    expect(editor.querySelector('ol')).toBeNull();
+    expect(editor.textContent).toContain('Plain line one.');
+    ui.unmount();
+    const bulleted = renderTerms('<ul><li>No smoking</li><li>No pets</li></ul>');
+    const list = editorOf();
+    expect(list.querySelectorAll('ul > li')).toHaveLength(2);
+    expect(list.querySelector('ol')).toBeNull();
+    bulleted.unmount();
+  });
+});

@@ -205,6 +205,69 @@ describe('multi-room / multi-meal hotel options', () => {
     expect(rows).toBe(1);
   });
 
+  it('preserves an explicit rooms total instead of recomputing it', async () => {
+    const { client, quotation, version } = await setup();
+    // Allocations sum to 3 + 2 + 1 = 6, but the staff override of 10 wins —
+    // even when the rooms scalar still echoes the stale saved total.
+    const res = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [{ ...multilineHotel(), rooms: 6, roomsOverride: 10 }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.hotels[0].rooms).toBe(10);
+    expect(res.body.data.hotels[0].roomsOverride).toBe(10);
+    expect(res.body.data.hotels[0].roomLines).toHaveLength(3);
+    // Reload: the custom total survives alongside untouched allocations.
+    const reloaded = (await client.get(`/api/quotations/${quotation.id}`)).body.data.versions.find(
+      (v: { id: string }) => v.id === version.id,
+    );
+    expect(reloaded.hotels[0].rooms).toBe(10);
+    expect(reloaded.hotels[0].roomsOverride).toBe(10);
+    expect(reloaded.hotels[0].roomLines.map((l: { rooms: number }) => l.rooms)).toEqual([3, 2, 1]);
+    // Clearing the override falls back to the live sum, as before.
+    const auto = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [{ ...multilineHotel(), rooms: 6, roomsOverride: null }],
+    });
+    expect(auto.status, JSON.stringify(auto.body)).toBe(200);
+    expect(auto.body.data.hotels[0].rooms).toBe(6);
+    expect(auto.body.data.hotels[0].roomsOverride).toBeNull();
+  });
+
+  it('carries a template rooms override into quotations created from the template', async () => {
+    const client = await owner();
+    const lead = await client.post('/api/queries', leadPayload());
+    const template = await client.post('/api/quotation-templates', {
+      ...templatePayload(),
+      hotels: [
+        {
+          city: 'Calangute',
+          hotelName: 'Coastal Bay Resort',
+          rooms: 2,
+          roomsOverride: 7,
+          nights: 4,
+          selected: true,
+          sequence: 1,
+          roomLines: [
+            { roomType: 'Deluxe', rooms: 2 },
+            { roomType: 'Suite', rooms: 1 },
+          ],
+          mealPlanLines: [],
+        },
+      ],
+    });
+    expect(template.status, JSON.stringify(template.body)).toBe(201);
+    expect(template.body.data.hotels[0].roomsOverride).toBe(7);
+    const quotation = (
+      await client.post('/api/quotations', {
+        queryId: lead.body.data.id,
+        templateId: template.body.data.id,
+      })
+    ).body.data;
+    const hotel = quotation.versions[0].hotels[0];
+    // Allocations sum to 3, but the template override wins on apply.
+    expect(hotel.rooms).toBe(7);
+    expect(hotel.roomsOverride).toBe(7);
+  });
+
   it('loads a legacy single-room quotation and accepts adding more rooms/meals on edit', async () => {
     const { client, quotation, version } = await setup();
     // Legacy save: single scalar roomType/mealPlan, NO line arrays.
@@ -366,6 +429,109 @@ describe('multi-room / multi-meal hotel options', () => {
     expect(saved.imageSnapshotPresent).toBe(true);
     expect(saved.pdfImageUrl).toBe('https://img.example.test/hotel.jpg');
     expect(saved.roomLines).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optional hotel stay dates: check-in/check-out may be blank independently.
+// ---------------------------------------------------------------------------
+
+describe('optional hotel stay dates', () => {
+  const datelessHotel = (overrides: Record<string, unknown> = {}) => ({
+    ...multilineHotel(),
+    checkInDate: null,
+    checkOutDate: null,
+    nights: null,
+    ...overrides,
+  });
+
+  async function reloadHotels(client: Client, quotationId: string, versionId: string) {
+    const reloaded = (await client.get(`/api/quotations/${quotationId}`)).body.data.versions.find(
+      (v: { id: string }) => v.id === versionId,
+    );
+    return reloaded.hotels as Array<Record<string, unknown>>;
+  }
+
+  it('saves a hotel option with both dates blank and reloads the blanks', async () => {
+    const { client, quotation, version } = await setup();
+    const res = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [datelessHotel()],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.hotels[0]).toMatchObject({
+      checkInDate: null,
+      checkOutDate: null,
+      nights: null,
+    });
+
+    // Reload: blanks survive the round trip; the row still stores NULL nights.
+    const hotels = await reloadHotels(client, quotation.id, version.id);
+    expect(hotels[0]).toMatchObject({ checkInDate: null, checkOutDate: null, nights: null });
+    const row = await db.quotationVersionHotelOption.findFirst({
+      where: { quotationVersionId: version.id },
+    });
+    expect(row?.checkInDate).toBeNull();
+    expect(row?.checkOutDate).toBeNull();
+    expect(row?.nights).toBeNull();
+  });
+
+  it('saves an option with only check-in or only check-out populated', async () => {
+    const { client, quotation, version } = await setup();
+    const checkInOnly = await client.patch(
+      `/api/quotations/${quotation.id}/versions/${version.id}`,
+      { hotels: [datelessHotel({ checkInDate: '2026-09-05' })] },
+    );
+    expect(checkInOnly.status, JSON.stringify(checkInOnly.body)).toBe(200);
+    expect(checkInOnly.body.data.hotels[0].checkInDate).toContain('2026-09-05');
+    expect(checkInOnly.body.data.hotels[0].checkOutDate).toBeNull();
+    expect(checkInOnly.body.data.hotels[0].nights).toBeNull();
+
+    const checkOutOnly = await client.patch(
+      `/api/quotations/${quotation.id}/versions/${version.id}`,
+      { hotels: [datelessHotel({ checkOutDate: '2026-09-09' })] },
+    );
+    expect(checkOutOnly.status, JSON.stringify(checkOutOnly.body)).toBe(200);
+    expect(checkOutOnly.body.data.hotels[0].checkInDate).toBeNull();
+    expect(checkOutOnly.body.data.hotels[0].checkOutDate).toContain('2026-09-09');
+    expect(checkOutOnly.body.data.hotels[0].nights).toBeNull();
+  });
+
+  it('rejects malformed stay dates instead of treating them as blank', async () => {
+    const { client, quotation, version } = await setup();
+    const res = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [datelessHotel({ checkInDate: 'not-a-date' })],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('keeps rejecting check-out before check-in', async () => {
+    const { client, quotation, version } = await setup();
+    const res = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [datelessHotel({ checkInDate: '2026-09-09', checkOutDate: '2026-09-05', nights: 4 })],
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toContain('Check-out');
+  });
+
+  it('leaves existing dated stays and their night counts untouched', async () => {
+    const { client, quotation, version } = await setup();
+    const saved = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [multilineHotel()],
+    });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.data.hotels[0].checkInDate).toContain('2026-09-05');
+    expect(saved.body.data.hotels[0].checkOutDate).toContain('2026-09-09');
+    expect(saved.body.data.hotels[0].nights).toBe(4);
+
+    // An unrelated edit round-trips the saved stay without touching its dates.
+    const reloaded = await reloadHotels(client, quotation.id, version.id);
+    const edited = await client.patch(`/api/quotations/${quotation.id}/versions/${version.id}`, {
+      hotels: [{ ...reloaded[0], notes: 'Sea-facing room requested' }],
+    });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect(edited.body.data.hotels[0].checkInDate).toContain('2026-09-05');
+    expect(edited.body.data.hotels[0].checkOutDate).toContain('2026-09-09');
+    expect(edited.body.data.hotels[0].nights).toBe(4);
   });
 });
 

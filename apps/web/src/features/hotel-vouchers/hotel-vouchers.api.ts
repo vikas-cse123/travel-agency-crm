@@ -33,6 +33,22 @@ export interface HotelVoucherGuestRow {
   paxType: 'ADULT' | 'CHILD';
 }
 
+export interface HotelVoucherStayRoomRow {
+  id: string;
+  sequence: number;
+  roomType: string;
+  rooms: number;
+  extraBedQuantity: number | null;
+  childWithoutBedQuantity: number | null;
+  notes: string | null;
+}
+
+export interface HotelVoucherStayMealRow {
+  id: string;
+  sequence: number;
+  mealPlan: string;
+}
+
 export interface HotelVoucherDocument {
   id: string;
   fileName: string;
@@ -75,6 +91,8 @@ export interface HotelVoucher {
   specialRequests: string | null;
   remarks: string | null;
   termsSnapshot: string | null;
+  createdById?: string | null;
+  createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
   updatedAt: string;
   cancelledAt: string | null;
@@ -85,6 +103,8 @@ export interface HotelVoucher {
   pricing: HotelVoucherPricingRow[];
   guests: HotelVoucherGuestRow[];
   packageIncludes: string[];
+  stayRooms: HotelVoucherStayRoomRow[];
+  stayMeals: HotelVoucherStayMealRow[];
 }
 
 export interface HotelVoucherPage {

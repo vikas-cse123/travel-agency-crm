@@ -31,6 +31,7 @@ import {
   getFlightPerTravelerBreakdown,
   cabinLuggageLabel,
   formatItineraryDayTitle,
+  hotelRoomLinesTotalRooms,
   hotelStayNights,
   labelForLookup,
   normalizePricingMode,
@@ -1482,7 +1483,9 @@ const emptyHotel = (
   hotelRoomTypeId: null,
   hotelMealPlanId: null,
   rooms: null,
-  nights: 0,
+  // Stay dates are optional, so an untouched stay starts with unknown nights
+  // (NULL) rather than 0 — 0 would fail validation and invent a duration.
+  nights: null,
   checkInDate: null,
   checkOutDate: null,
   checkInTime: null,
@@ -2295,6 +2298,13 @@ export function QuotationBuilderPage() {
   // Automatic vehicle prefill: for NEW quotations, each selected destination's
   // Manual cruise cabin-rate overrides per service row index (sellingPrice). Set when user types, cleared on room/cruise change.
   const cruisePriceOverridesRef = useRef<Set<number>>(new Set());
+  // Hotel TOTAL ROOMS rows currently being typed into, per stay row id. While
+  // a row is in this set, clearing the field to type a replacement must not
+  // snap the display back to the calculated sum mid-keystroke. Entries are
+  // removed once a real value is typed, on blur with nothing stored, or via
+  // "Reset to calculated total". Persisted truth lives in the row's
+  // `roomsOverride`, never here — row ids (not indices) survive reorder.
+  const hotelRoomsTypingRef = useRef<Set<string>>(new Set());
   // Vehicle description manual override per vehicle index – set when user edits, cleared when vehicle model changes
   const vehicleDescriptionOverriddenRef = useRef<Set<number>>(new Set());
   const vehicleMasters = useVehicles(
@@ -3302,6 +3312,54 @@ export function QuotationBuilderPage() {
   ]);
 
   const watchedHotels = useWatch({ control: form.control, name: 'hotels' });
+
+  /**
+   * TOTAL ROOMS resolution per stay: the explicit `roomsOverride` when one is
+   * stored (typed this session or loaded), otherwise the live allocation sum
+   * (or the saved scalar for legacy rows without allocations).
+   */
+  type HotelRoomsView = {
+    rooms?: number | null | undefined;
+    roomsOverride?: number | null | undefined;
+  } | null | undefined;
+
+  const roomsOverrideOf = (hotel: HotelRoomsView): number | null =>
+    typeof hotel?.roomsOverride === 'number' ? hotel.roomsOverride : null;
+
+  const isRoomsManual = (rowId: string | undefined, hotel: HotelRoomsView): boolean => {
+    if (rowId !== undefined && hotelRoomsTypingRef.current.has(rowId)) return true;
+    return roomsOverrideOf(hotel) !== null;
+  };
+
+  const resolveHotelRooms = (
+    rowId: string | undefined,
+    hotel: HotelRoomsView,
+  ): { value: number | null; manual: boolean } => {
+    const saved = typeof hotel?.rooms === 'number' ? hotel.rooms : null;
+    const calculated = hotelRoomLinesTotalRooms(hotel);
+    if (isRoomsManual(rowId, hotel)) return { value: saved, manual: true };
+    return { value: calculated ?? saved, manual: false };
+  };
+
+  // Keep automatic totals synchronized with room allocations. Rows with a
+  // stored override — or being actively edited — are never touched.
+  useEffect(() => {
+    (watchedHotels ?? []).forEach((hotel, index) => {
+      const rowId = hotels.fields[index]?.id;
+      const calculated = hotelRoomLinesTotalRooms(hotel);
+      if (calculated === null) return;
+      if (resolveHotelRooms(rowId, hotel).manual) return;
+      const current = (hotel as { rooms?: unknown })?.rooms ?? null;
+      if (current !== calculated) {
+        form.setValue(`hotels.${index}.rooms`, calculated, { shouldDirty: false });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    (watchedHotels ?? [])
+      .map((hotel) => JSON.stringify((hotel?.roomLines ?? []).map((line) => line?.rooms ?? null)))
+      .join('|'),
+  ]);
   const watchedServices = useWatch({ control: form.control, name: 'services' });
   const watchedAddOnInclude = useWatch({ control: form.control, name: 'addOnDetails.include' });
   const markupMode = useWatch({ control: form.control, name: 'markupMode' });
@@ -3705,13 +3763,16 @@ export function QuotationBuilderPage() {
   ) => {
     const start = quotation.data?.travelStartDate;
     const end = quotation.data?.travelEndDate;
+    // Derived from the quotation travel window when both edges exist;
+    // otherwise NULL (unknown) — stay dates are optional and a missing window
+    // must not invent a 1-night duration.
     const stayNights =
       start && end
         ? Math.max(
             1,
             Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86_400_000),
           )
-        : 1;
+        : null;
     return emptyHotel(sequence, selected, {
       city: (quotation.data?.destinationSummary ?? '').split(/[•(→>,]/)[0]?.trim() ?? '',
       rooms: Math.max(1, quotation.data?.rooms ?? 1),
@@ -4072,7 +4133,7 @@ export function QuotationBuilderPage() {
             : value.sightseeingDetails,
           itinerary: seq(value.itinerary).map((row, index) => ({ ...row, dayNumber: index + 1 })),
           hotels: seq(value.hotels)
-            .map((hotel) => {
+            .map((hotel, index) => {
               // Untouched default allocations are dropped; partially filled
               // ones are kept so validation reports the exact room number.
               const roomLines = (hotel.roomLines ?? []).filter(roomLineHasData);
@@ -4083,7 +4144,12 @@ export function QuotationBuilderPage() {
                 ...hotel,
                 // Persist the calendar-date-derived nights whenever valid dates
                 // exist, so re-saving repairs historical incorrect night counts.
-                nights: hotelStayNights(hotel.checkInDate, hotel.checkOutDate) ?? hotel.nights,
+                // Stay dates are optional: with either date missing the snapshot
+                // keeps NULL (unknown) — never 0, which fails validation, and
+                // never a stale count from previously cleared dates.
+                nights:
+                  hotelStayNights(hotel.checkInDate, hotel.checkOutDate) ??
+                  (typeof hotel.nights === 'number' && hotel.nights > 0 ? hotel.nights : null),
                 roomLines,
                 mealPlanLines,
                 // Mirror the first allocation onto the legacy scalar columns so
@@ -4094,7 +4160,11 @@ export function QuotationBuilderPage() {
                   ? {
                       hotelRoomTypeId: firstRoom?.hotelRoomTypeId ?? null,
                       roomType: firstRoom?.roomType ?? null,
-                      rooms: roomLines.reduce((sum, line) => sum + (Number(line.rooms) || 1), 0),
+                      // Persist the displayed total: the manual override when
+                      // one exists, otherwise the live allocation sum.
+                      rooms:
+                        resolveHotelRooms(hotels.fields[index]?.id, hotel).value ??
+                        roomLines.reduce((sum, line) => sum + (Number(line.rooms) || 1), 0),
                       extraBedQuantity: firstRoom?.extraBedQuantity ?? null,
                       extraBedPrice: firstRoom?.extraBedPrice ?? null,
                       childWithoutBedQuantity: firstRoom?.childWithoutBedQuantity ?? null,
@@ -4796,17 +4866,22 @@ export function QuotationBuilderPage() {
   const hotelCard = (index: number, rowId: string, allowInsertBefore = false) => {
     const hotel = watchedHotels?.[index];
     // Nights are derived from the hotel's own check-in/check-out calendar dates
-    // and written back to the snapshot whenever either date changes.
+    // and written back to the snapshot whenever either date changes. Stay
+    // dates are optional: when either date is missing the snapshot keeps NULL
+    // (unknown) instead of a stale or invented duration, and the UI shows a
+    // placeholder until both dates are entered.
     const setStayDate = (field: 'checkInDate' | 'checkOutDate', value: Date | null) => {
       form.setValue(`hotels.${index}.${field}`, value, { shouldDirty: true });
       const checkIn = field === 'checkInDate' ? value : (hotel?.checkInDate ?? null);
       const checkOut = field === 'checkOutDate' ? value : (hotel?.checkOutDate ?? null);
-      const computed = hotelStayNights(checkIn, checkOut);
-      if (computed !== null)
-        form.setValue(`hotels.${index}.nights`, computed, { shouldDirty: true });
+      form.setValue(`hotels.${index}.nights`, hotelStayNights(checkIn, checkOut), {
+        shouldDirty: true,
+      });
     };
-    const displayNights =
-      hotelStayNights(hotel?.checkInDate, hotel?.checkOutDate) ?? hotel?.nights ?? '';
+    const stayNightsValue = hotelStayNights(hotel?.checkInDate, hotel?.checkOutDate);
+    const storedNightsValue =
+      typeof hotel?.nights === 'number' && hotel.nights > 0 ? hotel.nights : null;
+    const displayNights: number | string = stayNightsValue ?? storedNightsValue ?? '—';
     return (
       <article
         key={rowId}
@@ -4977,7 +5052,7 @@ export function QuotationBuilderPage() {
                     />
                   </label>
                   <label className="text-sm font-semibold text-slate-800">
-                    Check-In <span className="text-red-500">*</span>
+                    Check-In
                     <input
                       aria-label="Hotel check-in"
                       type="date"
@@ -5008,7 +5083,7 @@ export function QuotationBuilderPage() {
                     />
                   </label>
                   <label className="text-sm font-semibold text-slate-800">
-                    Check-Out <span className="text-red-500">*</span>
+                    Check-Out
                     <input
                       aria-label="Hotel check-out"
                       type="date"
@@ -5052,16 +5127,67 @@ export function QuotationBuilderPage() {
                     <span className={calculatedLabel}>Total Rooms</span>
                     <input
                       aria-label="Hotel total rooms"
-                      readOnly
-                      value={String(
-                        (hotel?.roomLines ?? []).reduce(
-                          (sum, line) => sum + (Number(line?.rooms) || 1),
-                          0,
-                        ) || '',
-                      )}
-                      className={`${fieldMuted} mt-1`}
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={resolveHotelRooms(rowId, hotel).value ?? ''}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        const parsed = Math.floor(Number(raw));
+                        const override =
+                          raw.trim() === '' || !Number.isFinite(parsed) ? null : parsed;
+                        if (rowId !== undefined) {
+                          if (override === null) hotelRoomsTypingRef.current.add(rowId);
+                          else hotelRoomsTypingRef.current.delete(rowId);
+                        }
+                        form.setValue(`hotels.${index}.roomsOverride`, override, {
+                          shouldDirty: true,
+                        });
+                        form.setValue(`hotels.${index}.rooms`, override, {
+                          shouldDirty: true,
+                        });
+                      }}
+                      onBlur={() => {
+                        // Abandoned clear (nothing stored, nothing typed):
+                        // drop the editing session so automatic mode resumes.
+                        if (
+                          rowId !== undefined &&
+                          roomsOverrideOf(hotel) === null &&
+                          typeof hotel?.rooms !== 'number'
+                        ) {
+                          hotelRoomsTypingRef.current.delete(rowId);
+                        }
+                      }}
+                      className={`${field} mt-1`}
                     />
-                    <span className="text-[11px] text-muted-foreground">sum of room allocations</span>
+                    {resolveHotelRooms(rowId, hotel).manual ? (
+                      <span className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>manual override</span>
+                        <button
+                          type="button"
+                          aria-label="Reset total rooms to calculated total"
+                          className="font-medium text-brand-600 underline decoration-brand-300 underline-offset-2 hover:text-brand-700"
+                          onClick={() => {
+                            if (rowId !== undefined) hotelRoomsTypingRef.current.delete(rowId);
+                            form.setValue(`hotels.${index}.roomsOverride`, null, {
+                              shouldDirty: true,
+                            });
+                            form.setValue(
+                              `hotels.${index}.rooms`,
+                              hotelRoomLinesTotalRooms(hotel),
+                              { shouldDirty: true },
+                            );
+                          }}
+                        >
+                          Reset to calculated total
+                          {hotelRoomLinesTotalRooms(hotel) != null
+                            ? ` (${hotelRoomLinesTotalRooms(hotel)})`
+                            : ''}
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">sum of room allocations</span>
+                    )}
                   </label>
                 </div>
 

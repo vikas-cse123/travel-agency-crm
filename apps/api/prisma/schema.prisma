@@ -1097,6 +1097,8 @@ model Company {
   hotelVoucherPricing          HotelVoucherPricing[]
   hotelVoucherGuests           HotelVoucherGuest[]
   hotelVoucherPackageIncludes  HotelVoucherPackageInclude[]
+  hotelVoucherStayRooms        HotelVoucherStayRoom[]
+  hotelVoucherStayMeals        HotelVoucherStayMeal[]
   paymentCounters              PaymentCounter[]
   paymentCases                 PaymentCase[]
   customerPayments             CustomerPayment[]
@@ -3453,7 +3455,10 @@ model QuotationTemplateHotelOption {
   roomType                String?           @db.VarChar(100)
   mealPlan                String?           @db.VarChar(100)
   rooms                   Int?
-  nights                  Int
+  /// Staff-entered TOTAL ROOMS override. NULL means automatic: the total is
+  /// the live sum of the room allocations. Non-null wins over the sum.
+  roomsOverride           Int?
+  nights                  Int?
   checkInDate             DateTime?         @db.Date
   checkOutDate            DateTime?         @db.Date
   checkInTime             String?           @db.VarChar(5)
@@ -3879,17 +3884,20 @@ model QuotationVersionHotelOption {
   city                    String           @db.VarChar(120)
   hotelName               String           @db.VarChar(200)
   category                String?          @db.VarChar(40)
-  roomType                String?          @db.VarChar(100)
-  mealPlan                String?          @db.VarChar(100)
+  roomType                String?           @db.VarChar(100)
+  mealPlan                String?           @db.VarChar(100)
   rooms                   Int?
-  nights                  Int
-  checkInDate             DateTime?        @db.Date
-  checkOutDate            DateTime?        @db.Date
-  checkInTime             String?          @db.VarChar(5)
-  checkOutTime            String?          @db.VarChar(5)
+  /// Staff-entered TOTAL ROOMS override. NULL means automatic: the total is
+  /// the live sum of the room allocations. Non-null wins over the sum.
+  roomsOverride           Int?
+  nights                  Int?
+  checkInDate             DateTime?         @db.Date
+  checkOutDate            DateTime?         @db.Date
+  checkInTime             String?           @db.VarChar(5)
+  checkOutTime            String?           @db.VarChar(5)
   showCheckInTime         Boolean?
   showCheckOutTime        Boolean?
-  internalCost            Decimal          @default(0) @db.Decimal(14, 2)
+  internalCost            Decimal           @default(0) @db.Decimal(14, 2)
   sellingPrice            Decimal          @default(0) @db.Decimal(14, 2)
   // Snapshot of resolved master pricing (per-night, nullable for backward compat).
   baseRoomPrice           Decimal?         @db.Decimal(14, 2)
@@ -5393,6 +5401,8 @@ model HotelVoucher {
   pricing   HotelVoucherPricing[]
   guests    HotelVoucherGuest[]
   packageIncludes HotelVoucherPackageInclude[]
+  stayRooms HotelVoucherStayRoom[]
+  stayMeals HotelVoucherStayMeal[]
 
   @@unique([companyId, voucherNumber])
   @@index([companyId, status, deletedAt])
@@ -5467,6 +5477,52 @@ model HotelVoucherPackageInclude {
 
   @@index([companyId, voucherId, sequence])
   @@map("hotel_voucher_package_includes")
+}
+
+/// Room configurations snapshotted onto a Hotel Voucher from a quotation
+/// hotel option (or entered manually): one row per room allocation with its
+/// own type, quantity, and extras. Sequence preserves the quotation's line
+/// order. Replaced wholesale on update; cascade-deleted with the voucher.
+/// The voucher's scalar `rooms` stays the document's stated total and
+/// `roomTypeName` mirrors the first row for legacy readers.
+model HotelVoucherStayRoom {
+  id                      String  @id @default(uuid()) @db.Uuid
+  companyId               String  @db.Uuid
+  voucherId               String  @db.Uuid
+  sequence                Int     @default(0)
+  roomType                String  @db.VarChar(160)
+  rooms                   Int     @default(1)
+  extraBedQuantity        Int?
+  childWithoutBedQuantity Int?
+  notes                   String? @db.VarChar(2000)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  voucher HotelVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, voucherId, sequence])
+  @@map("hotel_voucher_stay_rooms")
+}
+
+/// Meal-plan selections snapshotted onto a Hotel Voucher. Sequence preserves
+/// the quotation's selection order. Replaced wholesale on update;
+/// cascade-deleted with the voucher. The scalar `mealPlanName` mirrors the
+/// first row for legacy readers.
+model HotelVoucherStayMeal {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @db.Uuid
+  voucherId String   @db.Uuid
+  sequence  Int      @default(0)
+  mealPlan  String   @db.VarChar(160)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  voucher HotelVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, voucherId, sequence])
+  @@map("hotel_voucher_stay_meals")
 }
 
 /// Stored generated PDFs for a voucher (mirrors the BookingDocument

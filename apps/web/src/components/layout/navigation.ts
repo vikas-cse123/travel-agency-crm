@@ -59,6 +59,12 @@ export const SHOW_REPORTS_NAVIGATION = false;
 // restore it; routes, pages, permissions, APIs and data are untouched.
 export const SHOW_REMINDERS_NAVIGATION = false;
 
+// The standalone "Customers" and "Vendors" modules are retired from the
+// user-facing UI. Set these back to true to restore them; their routes,
+// pages, permissions, APIs and data are untouched.
+export const SHOW_CUSTOMERS_NAVIGATION = false;
+export const SHOW_VENDORS_NAVIGATION = false;
+
 /**
  * Sister product: WhatsApp Max. Surfaced as a cross-app launcher
  * pinned to the bottom of the sidebar (the Zomato → Blinkit pattern) and opened
@@ -287,22 +293,30 @@ export const NAV_ITEMS: readonly NavItem[] = [
         },
       ]
     : []),
-  {
-    label: 'Customers',
-    to: '/customers',
-    icon: Users,
-    available: true,
-    permission: PERMISSIONS.CUSTOMERS_VIEW,
-    section: NAV_SECTION.OPERATIONS,
-  },
-  {
-    label: 'Vendors',
-    to: '/vendors',
-    icon: Building2,
-    available: true,
-    permission: PERMISSIONS.VENDORS_VIEW,
-    section: NAV_SECTION.OPERATIONS,
-  },
+  ...(SHOW_CUSTOMERS_NAVIGATION
+    ? [
+        {
+          label: 'Customers',
+          to: '/customers',
+          icon: Users,
+          available: true,
+          permission: PERMISSIONS.CUSTOMERS_VIEW,
+          section: NAV_SECTION.OPERATIONS,
+        },
+      ]
+    : []),
+  ...(SHOW_VENDORS_NAVIGATION
+    ? [
+        {
+          label: 'Vendors',
+          to: '/vendors',
+          icon: Building2,
+          available: true,
+          permission: PERMISSIONS.VENDORS_VIEW,
+          section: NAV_SECTION.OPERATIONS,
+        },
+      ]
+    : []),
 
   // -------------------------------------------------------------------------
   // Masters

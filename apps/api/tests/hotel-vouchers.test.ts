@@ -141,6 +141,38 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     expect(details).not.toHaveProperty('status');
   });
 
+  it('lists up to 20 vouchers per page by default', async () => {
+    const client = await owner();
+    for (let i = 0; i < 21; i += 1) {
+      await createVoucher(client, { guestName: `Guest ${i + 1} Name` });
+    }
+    const first = await client.get('/api/hotel-vouchers');
+    expect(first.body.data.pagination).toMatchObject({ page: 1, pageSize: 20, total: 21 });
+    expect(first.body.data.data).toHaveLength(20);
+    const second = await client.get('/api/hotel-vouchers?page=2');
+    expect(second.body.data.pagination).toMatchObject({ page: 2, pageSize: 20, total: 21 });
+    expect(second.body.data.data).toHaveLength(1);
+  });
+
+  it('returns the original creator in list rows and preserves it on edit', async () => {
+    const client = await owner();
+    const created = await createVoucher(client);
+    const listedBody = (await client.get('/api/hotel-vouchers')).body.data as {
+      data: Array<{ id: string; createdBy: { id: string; fullName: string } | null }>;
+    };
+    const row = listedBody.data.find((entry) => entry.id === created.id);
+    expect(row?.createdBy?.fullName).toBeTruthy();
+    const creatorId = row?.createdBy?.id;
+    expect(creatorId).toBeTruthy();
+    await client.patch(`/api/hotel-vouchers/${created.id}`, { guestName: 'Aarav Updated' });
+    const relistedBody = (await client.get('/api/hotel-vouchers')).body.data as {
+      data: Array<{ id: string; createdBy: { id: string; fullName: string } | null }>;
+    };
+    expect(relistedBody.data.find((entry) => entry.id === created.id)?.createdBy?.id).toBe(
+      creatorId,
+    );
+  });
+
   it('rejects invalid payloads (dates, counts, email, lengths, ids)', async () => {
     const client = await owner();
     expect(
@@ -221,13 +253,16 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     expect(after.hotelName).toBe('Shah Palace Hotel');
   });
 
-  it('snapshots hotel data: later master edits do not rewrite the voucher', async () => {
+  it('resolves linked hotel data live: later master edits are reflected without rewriting the voucher', async () => {
     const client = await owner();
     const { hotel } = await setupHotel(client);
     const created = await createVoucher(client, { hotelId: hotel.id });
     await client.patch(`/api/masters/hotels/${hotel.id}`, { name: 'Renamed Palace' });
     const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
-    expect(details.hotelName).toBe('Shah Palace Hotel');
+    expect(details.hotelName).toBe('Renamed Palace');
+    // The stored snapshot row itself is untouched — only reads resolve live.
+    const stored = await db.hotelVoucher.findUniqueOrThrow({ where: { id: created.id } });
+    expect(stored.hotelName).toBe('Shah Palace Hotel');
   });
   it('edits vouchers of any status and keeps validating the payload', async () => {    const client = await owner();
     const created = await createVoucher(client);
@@ -450,6 +485,274 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     expect(blanked.bookingIdLabel).toBeNull();
   });
 
+  it('regenerates the PDF with edited custom labels instead of serving the stale file', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, { bookingId: 'BK-AGODA-7788' });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const before = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const beforeObject = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(before.objectKey);
+    expect(pdfText(beforeObject ?? Buffer.alloc(0))).toContain('Confirmation No.');
+
+    // Edit labels → save → reload → generate: the PDF must match the form.
+    await client.patch(`/api/hotel-vouchers/${created.id}`, {
+      confirmationNumberLabel: 'confo id',
+      bookingIdLabel: 'secret id',
+    });
+    const reloaded = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(reloaded).toMatchObject({
+      confirmationNumberLabel: 'confo id',
+      bookingIdLabel: 'secret id',
+      confirmationNumber: 'CONF-1',
+      bookingId: 'BK-AGODA-7788',
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const after = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id, deletedAt: null },
+    });
+    const afterObject = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(after.objectKey);
+    const text = pdfText(afterObject ?? Buffer.alloc(0));
+    expect(text).toContain('confo id');
+    expect(text).toContain('secret id');
+    expect(text).not.toContain('Confirmation No.');
+    // Values themselves are unchanged.
+    expect(text).toContain('CONF-1');
+    expect(text).toContain('BK-AGODA-7788');
+  });
+
+  it('resolves linked hotel data live in details, list and PDF', async () => {
+    const client = await owner();
+    const { hotel } = await setupHotel(client);
+    const created = await createVoucher(client, {
+      hotelId: hotel.id,
+      hotelName: 'Stale Snapshot Name',
+      hotelPhone: '+91 00000 00000',
+      hotelCity: 'Stale City',
+      hotelStarRating: '1 Star',
+    });
+    // Stored snapshots stay as saved, but reads overlay the live master.
+    const stored = await db.hotelVoucher.findUniqueOrThrow({ where: { id: created.id } });
+    expect(stored.hotelName).toBe('Stale Snapshot Name');
+
+    await db.hotel.update({
+      where: { id: hotel.id },
+      data: { name: 'Renamed Palace Hotel', phone: '+91 99999 99999' },
+    });
+
+    const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(details.hotelName).toBe('Renamed Palace Hotel');
+    expect(details.hotelPhone).toBe('+91 99999 99999');
+    expect(details.hotelCity).toBe('Jaipur');
+    expect(details.hotelStarRating).toBe('4 Star');
+
+    const listed = (await client.get('/api/hotel-vouchers')).body.data;
+    const row = listed.data.find((entry: { id: string }) => entry.id === created.id);
+    expect(row.hotelName).toBe('Renamed Palace Hotel');
+
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const doc = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id, deletedAt: null },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(doc.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('Renamed Palace Hotel');
+    expect(text).toContain('+91 99999 99999');
+    expect(text).not.toContain('Stale Snapshot Name');
+  });
+
+  it('keeps snapshot values for standalone vouchers and missing masters', async () => {
+    const client = await owner();
+    // No linked master: the voucher's own fields are authoritative.
+    const standalone = await createVoucher(client, {
+      hotelName: 'Independent Stay Inn',
+      hotelPhone: '+91 11111 11111',
+    });
+    const details = (await client.get(`/api/hotel-vouchers/${standalone.id}`)).body.data;
+    expect(details.hotelName).toBe('Independent Stay Inn');
+    expect(details.hotelPhone).toBe('+91 11111 11111');
+
+    // A deleted master nulls the link (SetNull); the stored snapshot keeps
+    // the voucher usable and the PDF still generates.
+    const { hotel } = await setupHotel(client);
+    const linked = await createVoucher(client, {
+      hotelId: hotel.id,
+      hotelName: 'Snapshot Kept Name',
+    });
+    await db.hotel.delete({ where: { id: hotel.id } });
+    const reloaded = await client.get(`/api/hotel-vouchers/${linked.id}`);
+    expect(reloaded.status).toBe(200);
+    expect(reloaded.body.data.hotelName).toBe('Snapshot Kept Name');
+    expect((await client.post(`/api/hotel-vouchers/${linked.id}/generate-pdf`, {})).status).toBe(
+      200,
+    );
+  });
+
+  it('never leaks another tenant hotel through the live overlay', async () => {
+    const client = await owner();
+    const other = await owner('other-overlay@test.com', 'Other Overlay Travel');
+    const { hotel: otherHotel } = await setupHotel(other);
+    await db.hotel.update({ where: { id: otherHotel.id }, data: { name: 'Other Tenant Hotel' } });
+    const created = await createVoucher(client, { hotelName: 'Own Snapshot Name' });
+    // Forced cross-tenant link (bypasses validation, as a hostile write would
+    // have to): reads must fall back to the snapshot, never the foreign name.
+    await db.hotelVoucher.update({ where: { id: created.id }, data: { hotelId: otherHotel.id } });
+    const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(details.hotelName).toBe('Own Snapshot Name');
+    expect(JSON.stringify(details)).not.toContain('Other Tenant Hotel');
+  });
+
+  it('shows edited terms in the PDF after save, with no stale copy retained', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      termsSnapshot: '<p>Original terms line.</p>',
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    // Opening uses the stored PDF; after an edit it must regenerate instead.
+    const editedHtml =
+      '<p>Updated terms with a list:</p><ol><li>First rule</li><li>Second rule</li></ol><ul><li>Note item</li></ul><p>Keep <strong>bold</strong> breaks.</p>';
+    const patched = await client.patch(`/api/hotel-vouchers/${created.id}`, {
+      termsSnapshot: editedHtml,
+    });
+    expect(patched.status).toBe(200);
+    // Identity and numbering survive the edit.
+    expect(patched.body.data.id).toBe(created.id);
+    expect(patched.body.data.voucherNumber).toBe(created.voucherNumber);
+    // Saved HTML round-trips byte-identical through reload.
+    const reloaded = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(reloaded.termsSnapshot).toBe(editedHtml);
+    // The pre-edit stored PDF is retired at save time: details carry no
+    // document, so Open/Download regenerate from the saved edit.
+    expect(reloaded.documents).toEqual([]);
+    expect(
+      await db.hotelVoucherDocument.count({
+        where: { voucherId: created.id, deletedAt: null },
+      }),
+    ).toBe(0);
+
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const live = await db.hotelVoucherDocument.findMany({
+      where: { voucherId: created.id, deletedAt: null },
+    });
+    expect(live).toHaveLength(1);
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(live[0]!.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('Updated terms with a list:');
+    expect(text).toContain('1. First rule');
+    expect(text).toContain('2. Second rule');
+    expect(text).toContain('Note item');
+    expect(text).toContain('Keep bold breaks.');
+    expect(text).not.toContain('Original terms line.');
+  });
+
+  it('deleting a voucher removes its stored PDF bytes as well as its rows', async () => {
+    const client = await owner();
+    const created = await createVoucher(client);
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const doc = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id, deletedAt: null },
+    });
+    const reader = storageService as unknown as {
+      read: (key: string) => Buffer | undefined;
+    };
+    expect(reader.read(doc.objectKey)?.length).toBeGreaterThan(0);
+    expect((await client.delete(`/api/hotel-vouchers/${created.id}`)).status).toBe(200);
+    expect(
+      await db.hotelVoucherDocument.count({
+        where: { voucherId: created.id, deletedAt: null },
+      }),
+    ).toBe(0);
+    expect(reader.read(doc.objectKey)).toBeUndefined();
+  });
+
+  it('edits update the same record and preserve identity and creator', async () => {    const client = await owner();
+    const created = await createVoucher(client);
+    const before = await db.hotelVoucher.findUniqueOrThrow({ where: { id: created.id } });
+    for (const guestName of ['First Edit', 'Second Edit', 'Third Edit']) {
+      const response = await client.patch(`/api/hotel-vouchers/${created.id}`, {
+        guestName,
+      });
+      expect(response.status).toBe(200);
+      expect(response.body.data.id).toBe(created.id);
+      expect(response.body.data.voucherNumber).toBe(created.voucherNumber);
+    }
+    expect(await db.hotelVoucher.count({ where: { id: created.id } })).toBe(1);
+    expect(await db.hotelVoucher.count()).toBe(1);
+    const after = await db.hotelVoucher.findUniqueOrThrow({ where: { id: created.id } });
+    expect(after.voucherNumber).toBe(before.voucherNumber);
+    expect(after.createdById).toBe(before.createdById);
+    expect(after.createdAt.getTime()).toBe(before.createdAt.getTime());
+    expect(after.guestName).toBe('Third Edit');
+  });
+
+  it('repeated PDF generation keeps one live document and one stored object', async () => {
+    const client = await owner();
+    const created = await createVoucher(client);
+    // Legacy version-specific object left by the previous storage scheme.
+    const legacyKey = `companies/x/hotel-vouchers/${created.id}/documents/legacy-doc/hotel-voucher-old.pdf`;
+    await storageService.putObject({
+      key: legacyKey,
+      body: Buffer.from('stale-bytes'),
+      contentType: 'application/pdf',
+    });
+    await db.hotelVoucherDocument.create({
+      data: {
+        companyId: (await db.hotelVoucher.findUniqueOrThrow({ where: { id: created.id } }))
+          .companyId,
+        voucherId: created.id,
+        documentType: 'VOUCHER',
+        storageProvider: 'MEMORY',
+        bucket: 'memory',
+        objectKey: legacyKey,
+        fileName: 'hotel-voucher-old.pdf',
+        mimeType: 'application/pdf',
+        fileSize: 11,
+        uploadStatus: 'AVAILABLE',
+        visibility: 'CUSTOMER_VISIBLE',
+        uploadedById: (
+          await db.hotelVoucher.findUniqueOrThrow({ where: { id: created.id } })
+        ).createdById,
+      },
+    });
+
+    const first = await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    expect(first.status).toBe(200);
+    const second = await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    expect(second.status).toBe(200);
+    expect(second.body.data.id).toBe(first.body.data.id);
+    // One live row; legacy rows and their bytes are gone.
+    expect(
+      await db.hotelVoucherDocument.count({
+        where: { voucherId: created.id, deletedAt: null },
+      }),
+    ).toBe(1);
+    const reader = storageService as unknown as {
+      read: (key: string) => Buffer | undefined;
+    };
+    expect(reader.read(legacyKey)).toBeUndefined();
+    const live = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id, deletedAt: null },
+    });
+    expect(reader.read(live.objectKey)?.length).toBeGreaterThan(0);
+    expect(live.id).toBe(second.body.data.id);
+  });
+
   it('no longer exposes issue or cancel endpoints', async () => {
     const client = await owner();
     const created = await createVoucher(client);
@@ -553,8 +856,9 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
       }
     ).read(stored.objectKey);
     const text = pdfText(object ?? Buffer.alloc(0));
-    // Present (16): branded title block with the voucher's own confirmation
-    // number, all sections, totals, pagination.
+    // Present: branded title block with the voucher's own confirmation
+    // number, all remaining sections, guest rows, pagination. Pricing left
+    // the voucher workflow: stored rows never render (see the banned list).
     for (const expected of [
       'HOTEL VOUCHER',
       'Please present this voucher at the hotel upon arrival.',
@@ -563,21 +867,19 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
       'HOTEL DETAILS',
       'GUEST DETAILS',
       'STAY DETAILS',
-      'PRICING',
       'GUEST INFORMATION',
       'TERMS & CONDITIONS',
       'Dilip Vaid',
       'Shah Palace Hotel',
-      'Total Payable Amount',
-      '32,863',
       'Non-refundable after check-in.',
       'Page 1 of 2',
     ]) {
       expect(text, `missing ${expected}`).toContain(expected);
     }
-    // Absent (12): no voucher-number/status/issue-date metadata, no weekday
-    // names, no stars, no Optional/Special Requests/Remarks content. The
-    // system voucher number stays out even though the hotel confirmation
+    // Absent (16): no voucher-number/status/issue-date metadata, no weekday
+    // names, no stars, no Optional/Special Requests/Remarks content, and no
+    // pricing remnants even though the saved voucher carries pricing rows.
+    // The system voucher number stays out even though the hotel confirmation
     // number is shown.
     for (const banned of [
       'CONFIRMED HOTEL RESERVATION',
@@ -592,6 +894,10 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
       'Honeymoon',
       'Monday',
       '4 Star',
+      'PRICING',
+      'Total Payable Amount',
+      '32,863',
+      '19,883',
     ]) {
       expect(text, `leaked ${banned}`).not.toContain(banned);
     }
@@ -713,6 +1019,267 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
       orderBy: { sequence: 'asc' },
     });
     expect(stored.map((row) => row.sequence)).toEqual([0, 1]);
+  });
+
+  it('renders one guest information row per saved guest entry', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      guests: [
+        { guestName: 'Adult One', age: 40, sex: 'M', paxType: 'ADULT' },
+        { guestName: 'Adult Two', age: 38, sex: 'F', paxType: 'ADULT' },
+        { guestName: 'Child One', age: 9, sex: 'M', paxType: 'CHILD' },
+        { guestName: 'Child Two', age: 6, sex: 'F', paxType: 'CHILD' },
+      ],
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('GUEST INFORMATION');
+    for (const name of ['Adult One', 'Adult Two', 'Child One', 'Child Two']) {
+      expect(text, `missing ${name}`).toContain(name);
+    }
+    // Age and Sex are gone from the Guest Information table entirely.
+    expect(text).not.toContain('Age');
+    expect(text).not.toContain('Sex');
+    expect(text).toContain('No of Pax');
+  });
+
+  it('creates vouchers with multiple stay rooms and meals in order', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      roomTypeName: 'Superior Room',
+      rooms: 6,
+      mealPlanName: 'Breakfast only',
+      checkIn: '2026-11-01',
+      checkOut: '2026-11-07',
+      stayRooms: [
+        {
+          roomType: 'Superior Room',
+          rooms: 2,
+          extraBedQuantity: 1,
+          childWithoutBedQuantity: 0,
+          notes: 'High floor',
+        },
+        {
+          roomType: 'Premier Room',
+          rooms: 4,
+          extraBedQuantity: 0,
+          childWithoutBedQuantity: 1,
+          notes: null,
+        },
+      ],
+      stayMeals: [{ mealPlan: 'Breakfast only' }, { mealPlan: 'Dinner' }],
+    });
+    const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(details.stayRooms.map((row: { roomType: string }) => row.roomType)).toEqual([
+      'Superior Room',
+      'Premier Room',
+    ]);
+    expect(details.stayRooms[0]).toMatchObject({
+      rooms: 2,
+      extraBedQuantity: 1,
+      childWithoutBedQuantity: 0,
+      notes: 'High floor',
+    });
+    expect(details.stayRooms[1]).toMatchObject({
+      rooms: 4,
+      extraBedQuantity: 0,
+      childWithoutBedQuantity: 1,
+      notes: null,
+    });
+    expect(details.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
+      'Breakfast only',
+      'Dinner',
+    ]);
+    // Document total and scalar mirrors stay consistent.
+    expect(details.rooms).toBe(6);
+    expect(details.roomTypeName).toBe('Superior Room');
+    expect(details.mealPlanName).toBe('Breakfast only');
+    expect(details.nights).toBe(6);
+    const storedRooms = await db.hotelVoucherStayRoom.findMany({
+      where: { voucherId: created.id },
+      orderBy: { sequence: 'asc' },
+    });
+    expect(storedRooms.map((row) => row.sequence)).toEqual([0, 1]);
+    const storedMeals = await db.hotelVoucherStayMeal.findMany({
+      where: { voucherId: created.id },
+      orderBy: { sequence: 'asc' },
+    });
+    expect(storedMeals.map((row) => row.mealPlan)).toEqual(['Breakfast only', 'Dinner']);
+  });
+
+  it('mirrors scalar room and meal names when stay rows arrive without them', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      roomTypeName: undefined,
+      mealPlanName: undefined,
+      rooms: 6,
+      stayRooms: [
+        { roomType: 'Superior Room', rooms: 2 },
+        { roomType: 'Premier Room', rooms: 4 },
+      ],
+      stayMeals: [{ mealPlan: 'Breakfast only' }, { mealPlan: 'Dinner' }],
+    });
+    const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(details.roomTypeName).toBe('Superior Room');
+    expect(details.mealPlanName).toBe('Breakfast only');
+    expect(details.rooms).toBe(6);
+  });
+
+  it('updates one stay row without discarding the others', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      rooms: 6,
+      stayRooms: [
+        { roomType: 'Superior Room', rooms: 2 },
+        { roomType: 'Premier Room', rooms: 4 },
+      ],
+      stayMeals: [{ mealPlan: 'Breakfast only' }, { mealPlan: 'Dinner' }],
+    });
+    const updated = await client.patch(`/api/hotel-vouchers/${created.id}`, {
+      stayRooms: [
+        { roomType: 'Superior Room', rooms: 3, notes: 'High floor' },
+        { roomType: 'Premier Room', rooms: 4 },
+      ],
+    });
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    const reloaded = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(reloaded.stayRooms.map((row: { rooms: number }) => row.rooms)).toEqual([3, 4]);
+    expect(reloaded.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', notes: 'High floor' });
+    // Untouched collections survive a partial update.
+    expect(reloaded.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
+      'Breakfast only',
+      'Dinner',
+    ]);
+    expect(reloaded.roomTypeName).toBe('Superior Room');
+    // A follow-up edit without stay keys leaves every row intact.
+    const untouched = await client.patch(`/api/hotel-vouchers/${created.id}`, {
+      remarks: 'Late checkout requested',
+    });
+    expect(untouched.status, JSON.stringify(untouched.body)).toBe(200);
+    const stable = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(stable.stayRooms).toHaveLength(2);
+    expect(stable.stayMeals).toHaveLength(2);
+  });
+
+  it('renders every stay room and meal plan in the generated PDF', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      rooms: 6,
+      checkIn: '2026-11-01',
+      checkOut: '2026-11-07',
+      stayRooms: [
+        { roomType: 'Superior Room', rooms: 2 },
+        { roomType: 'Premier Room', rooms: 4 },
+      ],
+      stayMeals: [{ mealPlan: 'Breakfast only' }, { mealPlan: 'Dinner' }],
+      termsSnapshot: 'Non-refundable after check-in.',
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('ROOM DETAILS');
+    for (const expected of ['Superior Room', 'Premier Room', 'Breakfast only', 'Dinner']) {
+      expect(text, `missing ${expected}`).toContain(expected);
+    }
+    // Stay facts stay consistent with the saved voucher.
+    expect(text).toContain('6 Rooms');
+    expect(text).toContain('2 Plans');
+    expect(text).toContain('01 NOV 2026');
+    expect(text).toContain('07 NOV 2026');
+  });
+
+  it('renders legacy scalar-only vouchers in the PDF without stay rows', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      roomTypeName: 'Deluxe',
+      rooms: 2,
+      mealPlanName: 'Breakfast',
+    });
+    const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(details.stayRooms).toEqual([]);
+    expect(details.stayMeals).toEqual([]);
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('ROOM DETAILS');
+    expect(text).toContain('Deluxe');
+    expect(text).toContain('Breakfast');
+    expect(text).toContain('2 Rooms');
+  });
+
+  it('stores calendar dates exactly as submitted across save, reload, and re-edit', async () => {
+    const client = await owner();
+    // Regression: server-local midnight parsing shifted every date back one
+    // day east of Greenwich (2026-11-01 was stored as 2026-10-31).
+    const created = await client.post(
+      '/api/hotel-vouchers',
+      voucherPayload({ checkIn: '2026-11-01', checkOut: '2026-11-04' }),
+    );
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.data.checkIn).toBe('2026-11-01');
+    expect(created.body.data.checkOut).toBe('2026-11-04');
+    expect(created.body.data.nights).toBe(3);
+    const id = created.body.data.id as string;
+    const stored = await db.hotelVoucher.findUniqueOrThrow({ where: { id } });
+    expect(stored.checkIn.toISOString().slice(0, 10)).toBe('2026-11-01');
+    expect(stored.checkOut.toISOString().slice(0, 10)).toBe('2026-11-04');
+    // Reload echoes the same calendar days.
+    const reloaded = (await client.get(`/api/hotel-vouchers/${id}`)).body.data;
+    expect(reloaded.checkIn).toBe('2026-11-01');
+    expect(reloaded.checkOut).toBe('2026-11-04');
+    expect(reloaded.nights).toBe(3);
+    // Manual edits keep exact days, and re-edits without dates never drift.
+    const updated = await client.patch(`/api/hotel-vouchers/${id}`, {
+      checkIn: '2026-11-05',
+      checkOut: '2026-11-07',
+    });
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    const afterEdit = (await client.get(`/api/hotel-vouchers/${id}`)).body.data;
+    expect(afterEdit.checkIn).toBe('2026-11-05');
+    expect(afterEdit.checkOut).toBe('2026-11-07');
+    expect(afterEdit.nights).toBe(2);
+    const untouched = await client.patch(`/api/hotel-vouchers/${id}`, {
+      remarks: 'Late checkout requested',
+    });
+    expect(untouched.status, JSON.stringify(untouched.body)).toBe(200);
+    const stable = (await client.get(`/api/hotel-vouchers/${id}`)).body.data;
+    expect(stable.checkIn).toBe('2026-11-05');
+    expect(stable.checkOut).toBe('2026-11-07');
+    // The generated PDF renders the saved days.
+    await client.post(`/api/hotel-vouchers/${id}/generate-pdf`, {});
+    const document = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(document.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('05 NOV 2026');
+    expect(text).toContain('07 NOV 2026');
   });
 
   it('edits and removes child rows without leaving stale records', async () => {
@@ -955,6 +1522,102 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     }
   });
 
+  it('renders terms verbatim without automatic numbering', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      termsSnapshot: 'Check-in after 2 PM.\nNo smoking in rooms.',
+    });
+    expect((await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {})).status).toBe(
+      200,
+    );
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('Check-in after 2 PM.');
+    expect(text).toContain('No smoking in rooms.');
+    expect(text).not.toContain('1. Check-in after 2 PM.');
+    expect(text).not.toContain('2. No smoking in rooms.');
+  });
+
+  it('preserves user-typed numbering in terms without doubling it', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      termsSnapshot: '1. Check-in after 2 PM.\n2. No smoking in rooms.',
+    });
+    expect((await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {})).status).toBe(
+      200,
+    );
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('1. Check-in after 2 PM.');
+    expect(text).toContain('2. No smoking in rooms.');
+    expect(text).not.toContain('1. 1.');
+    expect(text).not.toContain('2. 2.');
+  });
+
+  it('renders saved ordered lists with sequential numbers and no doubling', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      termsSnapshot:
+        '<p>House rules:</p><ol><li>Check-in after 2 PM.</li><li>No smoking in rooms.</li></ol>',
+    });
+    expect((await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {})).status).toBe(
+      200,
+    );
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('House rules:');
+    expect(text).toContain('1. Check-in after 2 PM.');
+    expect(text).toContain('2. No smoking in rooms.');
+    expect(text).not.toContain('1. 1.');
+    for (const banned of ['<ol>', '<li>', '</ol>']) {
+      expect(text, `leaked ${banned}`).not.toContain(banned);
+    }
+  });
+
+  it('renders saved unordered lists as bullets without adding numbers', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      termsSnapshot: '<p>Notes:</p><ul><li>No smoking</li><li>No pets</li></ul>',
+    });
+    expect((await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {})).status).toBe(
+      200,
+    );
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('No smoking');
+    expect(text).toContain('No pets');
+    expect(text).not.toMatch(/1\.\s*No smoking/);
+    expect(text).not.toMatch(/2\.\s*No pets/);
+  });
+
   it('ignores booking references: vouchers stay booking-free', async () => {
     const client = await owner();
     // `bookingId` is now a supported free-text field (see the booking-id
@@ -974,11 +1637,14 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
 
   it('flows content without forced breaks and keeps bars with their first rows', async () => {
     const client = await owner();
-    // Short voucher: pricing flows onto the first page instead of being
-    // forced onto a near-empty second page.
+    // Short voucher: content flows onto the first page instead of being
+    // forced onto a near-empty second page. No room/meal info, so no
+    // detail tables are rendered either.
     const compact = await createVoucher(client, {
       termsSnapshot: null,
       guests: [],
+      roomTypeName: null,
+      mealPlanName: null,
       pricing: [{ roomType: 'Single Room', unit: 1, quantity: 1 }],
     });
     await client.post(`/api/hotel-vouchers/${compact.id}/generate-pdf`, {});
@@ -993,6 +1659,9 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     const compactText = pdfText(compactObject ?? Buffer.alloc(0));
     expect(compactText).toContain('Page 1 of 1');
     expect(compactText).not.toContain('Page 2 of');
+    // Stored pricing rows never render, even on a compact voucher.
+    expect(compactText).not.toContain('PRICING');
+    expect(compactText).not.toContain('Total Payable Amount');
 
     // Long terms: the section bar shares a page with its first rows and the
     // list continues onto the next page — never a stranded header.
@@ -1015,8 +1684,11 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
       .map((page) => page.trim())
       .filter((page) => page.length > 0);
     expect(pages.length).toBeGreaterThan(1);
-    expect(pages[0]).toContain('TERMS & CONDITIONS');
-    expect(pages[0]).toContain('Term 1: pack bags early.');
+    // The terms bar shares a page with its first rows wherever the section
+    // starts — never a stranded header — and the list runs to the last page.
+    const termsPage = pages.find((page) => page.includes('TERMS & CONDITIONS'));
+    expect(termsPage).toBeDefined();
+    expect(termsPage).toContain('Term 1: pack bags early.');
     expect(pages[pages.length - 1]).toContain('Term 40: pack bags early.');
   });
 
@@ -1039,11 +1711,12 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     expect(after.status).toBe(before.status);
     expect(after.voucherNumber).toBe(before.voucherNumber);
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
-    // A second generation reuses the stored document — no duplicates.
+    // A second generation re-renders into the same single current document:
+    // same row id, no duplicates, always fresh content.
     const second = await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
     expect(second.status).toBe(200);
     expect(second.body.data.id).toBe(stored.id);
-    expect(second.body.data.reused).toBe(true);
+    expect(second.body.data.reused).toBe(false);
     expect(
       await db.hotelVoucherDocument.count({ where: { voucherId: created.id } }),
     ).toBe(1);

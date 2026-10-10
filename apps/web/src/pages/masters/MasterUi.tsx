@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   AlignLeft,
   Bold,
@@ -220,8 +220,7 @@ export function RichTextEditor({
   onChange: (value: string) => void;
 }) {
   const editor = useRef<HTMLDivElement>(null);
-  const labelId = useId();
-  // HTML last emitted from this editor instance. The parent echoes it back
+  const labelId = useId();  // HTML last emitted from this editor instance. The parent echoes it back
   // via `value`; that echo must never rewrite the DOM. Rewriting would run
   // entity/whitespace normalization (e.g. `&nbsp;` vs a raw space) whose
   // output differs textually from `innerHTML`, resetting the caret on every
@@ -262,6 +261,197 @@ export function RichTextEditor({
     editor.current?.focus();
     document.execCommand(name, false, argument);
     emit();
+  };
+  // Active list state for toolbar pressed feedback. Native query state first,
+  // DOM-ancestor fallback when execCommand state is unavailable.
+  const [inOrderedList, setInOrderedList] = useState(false);
+  const [inUnorderedList, setInUnorderedList] = useState(false);
+  const refreshListState = () => {
+    const root = editor.current;
+    if (!root) return;
+    let ordered = false;
+    let unordered = false;
+    try {
+      if (typeof document.queryCommandState === 'function') {
+        ordered = document.queryCommandState('insertOrderedList');
+        unordered = document.queryCommandState('insertUnorderedList');
+      }
+    } catch {
+      ordered = false;
+      unordered = false;
+    }
+    if (!ordered && !unordered && typeof window !== 'undefined') {
+      const selection = window.getSelection();
+      const anchor =
+        selection && selection.rangeCount > 0 ? selection.anchorNode : null;
+      const host =
+        anchor?.nodeType === 1
+          ? (anchor as Element)
+          : (anchor as Node | null)?.parentElement ?? null;
+      const list = host?.closest?.('ol,ul') ?? null;
+      if (list && root.contains(list)) {
+        ordered = list.tagName.toLowerCase() === 'ol';
+        unordered = list.tagName.toLowerCase() === 'ul';
+      }
+    }
+    setInOrderedList(ordered);
+    setInUnorderedList(unordered);
+  };
+  useEffect(() => {
+    const root = editor.current;
+    if (!root) return;
+    const onKeyUp = () => refreshListState();
+    const onClick = () => refreshListState();
+    const onFocus = () => refreshListState();
+    const onSelectionChange = () => {
+      if (document.activeElement === root || (root.contains(document.activeElement) ?? false)) {
+        refreshListState();
+      }
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    root.addEventListener('keyup', onKeyUp);
+    root.addEventListener('click', onClick);
+    root.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('selectionchange', onSelectionChange);
+      root.removeEventListener('keyup', onKeyUp);
+      root.removeEventListener('click', onClick);
+      root.removeEventListener('focus', onFocus);
+    };
+  }, []);
+  /**
+   * Fallback when native `insertOrderedList` is unavailable or fails (e.g. a
+   * multi-paragraph selection the browser command does not convert): wrap the
+   * selected top-level blocks in a real `<ol>`. Never invents numbers in text.
+   *
+   * Block detection uses the selection's anchor/focus nodes (not Range
+   * boundary math): every sibling block from the anchor block through the
+   * focus block joins the list, in document order either way round. The nodes
+   * are passed in because focusing the editor can disturb a programmatic
+   * selection before the fallback runs.
+   */
+  const wrapBlocksInOrderedList = (anchorNode: Node | null, focusNode: Node | null): boolean => {
+    const root = editor.current;
+    const topBlockOf = (node: Node | null): Element | null => {
+      let current: Node | null = node?.nodeType === 1 ? node : node?.parentNode ?? null;
+      while (current && current !== root) {
+        if (current.parentNode === root) {
+          if (current.nodeType !== 1) return null;
+          const tag = (current as Element).tagName.toLowerCase();
+          if (tag === 'li' || tag === 'ol' || tag === 'ul') return null;
+          return /^(p|div|h1|h2|h3|h4|h5|h6|blockquote|pre)$/.test(tag)
+            ? (current as Element)
+            : null;
+        }
+        current = current.parentNode;
+      }
+      return null;
+    };
+    const anchorBlock = topBlockOf(anchorNode);
+    const focusBlock = topBlockOf(focusNode);
+    if (!root || !anchorBlock || !focusBlock) return false;
+    const siblings = Array.from(root.children);
+    const from = siblings.indexOf(anchorBlock);
+    const to = siblings.indexOf(focusBlock);
+    if (from === -1 || to === -1) return false;
+    const [start, end] = from <= to ? [from, to] : [to, from];
+    const candidates = siblings.slice(start, end + 1).filter(
+      (node): node is Element =>
+        node.nodeType === 1 &&
+        /^(p|div|h1|h2|h3|h4|h5|h6|blockquote|pre)$/.test(
+          (node as Element).tagName.toLowerCase(),
+        ) &&
+        !(node as Element).closest('li'),
+    );
+    if (candidates.length === 0) return false;
+    const first = candidates[0];
+    if (!first || !first.parentNode) return false;
+    const ol = document.createElement('ol');
+    first.parentNode.insertBefore(ol, first);
+    for (const block of candidates) {
+      const li = document.createElement('li');
+      while (block.firstChild) li.appendChild(block.firstChild);
+      if (!li.textContent?.trim()) li.appendChild(document.createElement('br'));
+      block.remove();
+      ol.appendChild(li);
+    }
+    const last = ol.lastElementChild;
+    const liveSelection = typeof window !== 'undefined' ? window.getSelection() : null;
+    if (last && liveSelection) {
+      const next = document.createRange();
+      next.selectNodeContents(last);
+      next.collapse(false);
+      liveSelection.removeAllRanges();
+      liveSelection.addRange(next);
+    }
+    emit();
+    refreshListState();
+    return true;
+  };
+  /** Manual toggle-off twin of the fallback above: `<li>` items become `<p>`. */
+  const unwrapOrderedList = (anchorNode: Node | null): boolean => {
+    const root = editor.current;
+    const host =
+      anchorNode?.nodeType === 1
+        ? (anchorNode as Element)
+        : (anchorNode as Node | null)?.parentElement ?? null;
+    const ol = host?.closest?.('ol') ?? null;
+    if (!root || !ol || !root.contains(ol)) return false;
+    const parent = ol.parentNode ?? root;
+    for (const li of Array.from(ol.children)) {
+      const paragraph = document.createElement('p');
+      while (li.firstChild) paragraph.appendChild(li.firstChild);
+      if (!paragraph.textContent?.trim()) paragraph.appendChild(document.createElement('br'));
+      parent.insertBefore(paragraph, ol);
+    }
+    ol.remove();
+    emit();
+    refreshListState();
+    return true;
+  };
+  /**
+   * Numbered-list toggle: native `insertOrderedList` first (correct toggle,
+   * continuation-typing and caret behavior), manual `<ol>` wrap/unwrap only
+   * when the native command is unavailable or leaves the selection unlisted.
+   */
+  const toggleOrderedList = () => {
+    const root = editor.current;
+    // Snapshot the selection before focusing: focusing can disturb a
+    // programmatic (and occasionally a real) selection before we read it.
+    const preSelection = typeof window !== 'undefined' ? window.getSelection() : null;
+    const preAnchor = preSelection && preSelection.rangeCount > 0 ? preSelection.anchorNode : null;
+    const preFocus = preSelection && preSelection.rangeCount > 0 ? preSelection.focusNode : null;
+    root?.focus();
+    const host =
+      preAnchor?.nodeType === 1
+        ? (preAnchor as Element)
+        : (preAnchor as Node | null)?.parentElement ?? null;
+    const wasInOl = Boolean(host?.closest?.('ol') && root?.contains(host.closest('ol')!));
+    let applied = false;
+    try {
+      if (typeof document.execCommand === 'function') {
+        applied = document.execCommand('insertOrderedList', false);
+      }
+    } catch {
+      applied = false;
+    }
+    const after = typeof window !== 'undefined' ? window.getSelection() : null;
+    const afterAnchor = after && after.rangeCount > 0 ? after.anchorNode : null;
+    const afterHost =
+      afterAnchor?.nodeType === 1
+        ? (afterAnchor as Element)
+        : (afterAnchor as Node | null)?.parentElement ?? null;
+    const nowInOl = Boolean(
+      afterHost?.closest?.('ol') && root?.contains(afterHost.closest('ol')!),
+    );
+    if (applied && (nowInOl || wasInOl)) {
+      // Native toggle on, or native toggle off an existing list.
+      emit();
+      refreshListState();
+      return;
+    }
+    if (!wasInOl) wrapBlocksInOrderedList(preAnchor, preFocus);
+    else unwrapOrderedList(preAnchor);
   };
   const resetFormatting = () => {
     editor.current?.focus();
@@ -357,19 +547,25 @@ export function RichTextEditor({
           </button>
           <button
             type="button"
-            className={buttonClass}
+            className={`${buttonClass}${inOrderedList ? ' bg-slate-200' : ''}`}
             aria-label={`${label} numbered list`}
+            aria-pressed={inOrderedList}
+            title={inOrderedList ? 'Remove numbered list' : 'Apply numbered list'}
             onMouseDown={keepEditorSelection}
-            onClick={() => command('insertOrderedList')}
+            onClick={toggleOrderedList}
           >
             <ListOrdered className="h-4 w-4" />
           </button>
           <button
             type="button"
-            className={buttonClass}
+            className={`${buttonClass}${inUnorderedList ? ' bg-slate-200' : ''}`}
             aria-label={`${label} list`}
+            aria-pressed={inUnorderedList}
             onMouseDown={keepEditorSelection}
-            onClick={() => command('insertUnorderedList')}
+            onClick={() => {
+              command('insertUnorderedList');
+              refreshListState();
+            }}
           >
             <List className="h-4 w-4" />
           </button>

@@ -529,7 +529,9 @@ export interface QuotationPdfInput {
       roomType: string | null;
       mealPlan: string | null;
       rooms?: number | null;
-      nights: number;
+      // Stay dates are optional: NULL nights means the duration is unknown
+      // (dateless hotel option). Customer views omit the badge in that case.
+      nights: number | null;
       selected: boolean;
       notes: string | null;
       checkInDate?: Date | string | null;
@@ -2319,7 +2321,10 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
               yy = doc.y + 4;
             }
             yy += 8;
-            badge(`Nights: ${stayNights}`, tx, yy, GREEN, '#ffffff');
+            // Dateless hotel options carry NULL nights: omit the badge rather
+            // than printing an invented or "null" duration. Spacing is kept so
+            // dated stays lay out exactly as before.
+            if (stayNights != null) badge(`Nights: ${stayNights}`, tx, yy, GREEN, '#ffffff');
             yy += 26;
             doc.fillColor(MUTED).font('Body').fontSize(10);
             rows.forEach((r) => {

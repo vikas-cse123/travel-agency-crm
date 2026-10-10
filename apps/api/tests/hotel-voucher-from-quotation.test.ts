@@ -186,8 +186,10 @@ async function readyQuotation(client: Client, companyId: string) {
       mealPlan: 'Breakfast',
       rooms: 2,
       nights: 4,
-      checkInDate: new Date('2026-11-10T00:00:00'),
-      checkOutDate: new Date('2026-11-14T00:00:00'),
+      // Noon-UTC instant: the DATE column keeps 10–14 Nov in every server
+      // timezone (local-midnight construction shifts a day east of Greenwich).
+      checkInDate: new Date('2026-11-10T12:00:00Z'),
+      checkOutDate: new Date('2026-11-14T12:00:00Z'),
       selected: true,
       sequence: 2,
     },
@@ -267,6 +269,51 @@ describe('Hotel Vouchers from Quotation', () => {
       rooms: 2,
       mealPlanName: 'Breakfast',
     });
+  });
+
+  it('stores stay rooms and meals on a quotation-linked voucher', async () => {
+    const client = await owner();
+    const companyId = await companyIdOf('owner@qv.test');
+    const { lead, quotation, masterHotelId, linkedOptionId } = await readyQuotation(client, companyId);
+    const res = await client.post(
+      '/api/hotel-vouchers',
+      voucherPayload({
+        queryId: lead.id,
+        hotelId: masterHotelId,
+        quotationId: quotation.id,
+        quotationHotelOptionId: linkedOptionId,
+        hotelName: 'Palace View Hotel',
+        hotelCity: 'Jaipur',
+        // Scalars omitted: the service mirrors them from the first rows.
+        roomTypeName: undefined,
+        mealPlanName: undefined,
+        rooms: 6,
+        checkIn: '2026-11-01',
+        checkOut: '2026-11-07',
+        stayRooms: [
+          { roomType: 'Superior Room', rooms: 2 },
+          { roomType: 'Premier Room', rooms: 4 },
+        ],
+        stayMeals: [{ mealPlan: 'Breakfast only' }, { mealPlan: 'Dinner' }],
+      }),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const reloaded = (
+      await client.get(`/api/hotel-vouchers/${res.body.data.id}`)
+    ).body.data;
+    expect(reloaded.stayRooms.map((entry: { roomType: string }) => entry.roomType)).toEqual([
+      'Superior Room',
+      'Premier Room',
+    ]);
+    expect(reloaded.stayMeals.map((entry: { mealPlan: string }) => entry.mealPlan)).toEqual([
+      'Breakfast only',
+      'Dinner',
+    ]);
+    // Scalars mirror the first rows; the stated total is untouched.
+    expect(reloaded.roomTypeName).toBe('Superior Room');
+    expect(reloaded.mealPlanName).toBe('Breakfast only');
+    expect(reloaded.rooms).toBe(6);
+    expect(reloaded.nights).toBe(6);
   });
 
   it('accepts each of several hotel options of the same quotation', async () => {
@@ -465,7 +512,7 @@ describe('Hotel Vouchers from Quotation', () => {
     expect(res.body.data.voucherNumber).toMatch(/^HV-000001$/);
   });
 
-  it('keeps PDF output unchanged for the same saved voucher data', async () => {
+  it('renders the voucher PDF without any pricing section', async () => {
     const client = await owner();
     const companyId = await companyIdOf('owner@qv.test');
     const { lead, quotation, linkedOptionId } = await readyQuotation(client, companyId);
@@ -510,11 +557,16 @@ describe('Hotel Vouchers from Quotation', () => {
       'HOTEL VOUCHER',
       'Confirmation No.',
       'Palace View Hotel',
-      'Total Payable Amount',
-      '12,980',
+      'GUEST INFORMATION',
+      'Voucher Customer',
+      // Rooms + meals tables push the small voucher onto two pages.
       'Page 1 of 2',
     ]) {
       expect(text, `missing ${expected}`).toContain(expected);
+    }
+    // Stored pricing rows never render: no section, no rows, no total.
+    for (const banned of ['PRICING', 'Total Payable Amount', '12,980']) {
+      expect(text, `leaked ${banned}`).not.toContain(banned);
     }
     // The system voucher number stays out of the document.
     expect(text).not.toContain(created.voucherNumber);

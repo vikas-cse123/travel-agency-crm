@@ -100,10 +100,43 @@ export const hotelVoucherGuestRowSchema = z.object({
  */
 export const hotelVoucherPackageIncludeItemSchema = z.string().trim().min(1).max(200);
 
+/**
+ * One room configuration snapshotted onto a voucher from a quotation hotel
+ * option (or entered manually). Mirrors the quotation room-line fields the
+ * voucher actually displays; sequence preserves the quotation's line order.
+ * Stored in the voucher's own child table, independent of the quotation.
+ */
+export const hotelVoucherStayRoomRowSchema = z.object({
+  roomType: z.string().trim().min(1).max(160),
+  rooms: z.preprocess(
+    (value) => (value === '' || value === null || value === undefined ? 1 : value),
+    z.coerce.number().int().min(1).max(100),
+  ),
+  extraBedQuantity: z.preprocess(
+    (value) => (value === '' || value === null || value === undefined ? null : value),
+    z.coerce.number().int().min(0).max(100).nullable().optional(),
+  ),
+  childWithoutBedQuantity: z.preprocess(
+    (value) => (value === '' || value === null || value === undefined ? null : value),
+    z.coerce.number().int().min(0).max(100).nullable().optional(),
+  ),
+  notes: optionalText(2000),
+});
+
+/**
+ * One meal-plan selection snapshotted onto a voucher. Sequence preserves the
+ * quotation's selection order.
+ */
+export const hotelVoucherStayMealRowSchema = z.object({
+  mealPlan: z.string().trim().min(1).max(160),
+});
+
 const pricedVoucherSchema = hotelVoucherBaseSchema.extend({
   pricing: z.array(hotelVoucherPricingRowSchema).max(100).optional(),
   guests: z.array(hotelVoucherGuestRowSchema).max(100).optional(),
   packageIncludes: z.array(hotelVoucherPackageIncludeItemSchema).max(100).optional(),
+  stayRooms: z.array(hotelVoucherStayRoomRowSchema).max(10).optional(),
+  stayMeals: z.array(hotelVoucherStayMealRowSchema).max(10).optional(),
 });
 
 export const hotelVoucherInputSchema = pricedVoucherSchema.refine(checkOutAfterCheckIn, {
@@ -130,6 +163,8 @@ export type HotelVoucherUpdateInput = z.infer<typeof hotelVoucherUpdateSchema>;
 export type HotelVoucherEmailInput = z.infer<typeof hotelVoucherEmailInputSchema>;
 export type HotelVoucherPricingRowInput = z.infer<typeof hotelVoucherPricingRowSchema>;
 export type HotelVoucherGuestRowInput = z.infer<typeof hotelVoucherGuestRowSchema>;
+export type HotelVoucherStayRoomRowInput = z.infer<typeof hotelVoucherStayRoomRowSchema>;
+export type HotelVoucherStayMealRowInput = z.infer<typeof hotelVoucherStayMealRowSchema>;
 export type HotelVoucherPackageIncludeItemInput = z.infer<
   typeof hotelVoucherPackageIncludeItemSchema
 >;

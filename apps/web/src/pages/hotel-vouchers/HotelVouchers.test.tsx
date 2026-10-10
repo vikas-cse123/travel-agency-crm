@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes, useNavigate } from 'react-router-dom';
 import { renderWithProviders } from '@/test/utils';
 import { NAV_ITEMS } from '@/components/layout/navigation';
 import { HotelVouchersPage } from './HotelVouchersPage';
@@ -21,6 +21,18 @@ const ALL = [
   'hotel_vouchers.export',
   'hotel_vouchers.send',
 ];
+
+const WITH_BRANDING = [...ALL, 'settings.view', 'settings.update'];
+
+const brandingSettings = (hotelVoucherPrimaryColor: string | null) => ({
+  branding: {
+    primaryColor: '#2563eb',
+    hotelVoucherPrimaryColor,
+    hasLogo: false,
+    logoMimeType: null,
+    logoFileSize: null,
+  },
+});
 
 const response = (data: unknown) =>
   ({ ok: true, status: 200, json: async () => ({ success: true, data }) }) as Response;
@@ -59,6 +71,8 @@ const draftVoucher = {
   specialRequests: null,
   remarks: null,
   termsSnapshot: null,
+  createdById: 'bbbbbbbb-2222-4222-8222-222222222222',
+  createdBy: { id: 'bbbbbbbb-2222-4222-8222-222222222222', fullName: 'Priya Nair' },
   createdAt: '2026-10-07T00:00:00.000Z',
   updatedAt: '2026-10-07T00:00:00.000Z',
   cancelledAt: null,
@@ -125,8 +139,9 @@ describe('Hotel Voucher pages (standalone)', () => {
     const fetchMock = vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher])));
     vi.stubGlobal('fetch', fetchMock);
     renderRoutes('/hotel-vouchers');
-    expect(await screen.findByText('HV-000001')).toBeInTheDocument();
-    expect(screen.getByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    // System voucher numbers stay internal: never rendered in list rows.
+    expect(screen.queryByText('HV-000001')).not.toBeInTheDocument();
     // Statuses are gone from the workflow: no badge, no filter control.
     expect(screen.queryByText('DRAFT')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Filter by status')).not.toBeInTheDocument();
@@ -192,11 +207,415 @@ describe('Hotel Voucher pages (standalone)', () => {
     const fetchMock = vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher])));
     vi.stubGlobal('fetch', fetchMock);
     renderRoutes('/hotel-vouchers');
-    const edit = await screen.findByRole('link', { name: 'Edit' });
+    const edit = await screen.findByRole('link', { name: 'Edit voucher for Aarav Mehta' });
     expect(edit).toHaveAttribute('href', `/hotel-vouchers/${draftVoucher.id}/edit`);
   });
 
-  it('orders form sections Hotel first, then Guest, Stay, Pricing, Guests, Includes, Terms', async () => {
+  it('shows a Back button on the detail page linking to the list', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(draftVoucher)));
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}`);
+    const back = await screen.findByRole('link', { name: 'Back' });
+    expect(back).toHaveAttribute('href', '/hotel-vouchers');
+  });
+
+  it('lists Open, Download, Edit and Delete actions in order for every row', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher]))),
+    );
+    renderRoutes('/hotel-vouchers');
+    expect(await screen.findByRole('button', { name: 'Open voucher for Aarav Mehta' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download voucher for Aarav Mehta' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Edit voucher for Aarav Mehta' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete voucher for Aarav Mehta' })).toBeInTheDocument();
+  });
+
+  it('asks for confirmation naming guest and hotel, and skips delete on cancel', async () => {
+    const fetchMock = vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher])));
+    vi.stubGlobal('fetch', fetchMock);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      renderRoutes('/hotel-vouchers');
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Delete voucher for Aarav Mehta' }),
+      );
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Aarav Mehta'),
+      );
+      expect(confirmSpy.mock.calls[0]?.[0]).toContain('Shah Palace Hotel');
+      expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'DELETE')).toBe(
+        false,
+      );
+      // Row left unchanged.
+      expect(screen.getByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('deletes the voucher and refreshes the list on confirm', async () => {
+    let rows = [draftVoucher];
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(request);
+      if (init?.method === 'DELETE' && href.includes(`/hotel-vouchers/${draftVoucher.id}`)) {
+        rows = [];
+        return response({ id: draftVoucher.id, deleted: true });
+      }
+      return response(page(rows));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      renderRoutes('/hotel-vouchers');
+      expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Delete voucher for Aarav Mehta' }),
+      );
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([url, init]) =>
+              String(url).includes(`/hotel-vouchers/${draftVoucher.id}`) &&
+              (init as RequestInit)?.method === 'DELETE',
+          ),
+        ).toBe(true),
+      );
+      await waitFor(() =>
+        expect(screen.queryByText('Aarav Mehta · Shah Palace Hotel')).not.toBeInTheDocument(),
+      );
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('steps back a page when the last row on the page is deleted', async () => {
+    const second = { ...draftVoucher, id: 'bbbbbbbb-2222-4222-8222-222222222222' };
+    let pageTwo = [second];
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(request);
+      if (init?.method === 'DELETE') {
+        pageTwo = [];
+        return response({ id: second.id, deleted: true });
+      }
+      const url = new URL(href, 'http://localhost');
+      if (url.searchParams.get('page') === '1' || !url.searchParams.get('page')) {
+        return response({
+          data: [draftVoucher],
+          pagination: { page: 1, pageSize: 10, total: 11, totalPages: 2 },
+        });
+      }
+      return response({
+        data: pageTwo,
+        pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      renderRoutes('/hotel-vouchers?page=2');
+      expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Delete voucher for Aarav Mehta' }),
+      );
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([url]) => String(url).includes('page=1')),
+        ).toBe(true),
+      );
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('hides Delete without the delete permission', async () => {
+    auth.permissions = new Set([
+      'hotel_vouchers.view',
+      'hotel_vouchers.create',
+      'hotel_vouchers.update',
+      'hotel_vouchers.export',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher]))),
+    );
+    renderRoutes('/hotel-vouchers');
+    expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Delete voucher/ })).not.toBeInTheDocument();
+    // Other actions still respect their own permissions.
+    expect(screen.getByRole('link', { name: 'Edit voucher for Aarav Mehta' })).toBeInTheDocument();
+  });
+
+  it('hides Voucher Branding without the settings.view permission', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher]))),
+    );
+    renderRoutes('/hotel-vouchers');
+    expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Voucher Branding Settings' })).not.toBeInTheDocument();
+  });
+
+  it('loads the saved voucher color and previews edits before saving', async () => {
+    auth.permissions = new Set(WITH_BRANDING);
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const href = String(request);
+      if (href.includes('/settings')) return response(brandingSettings('#15803D'));
+      return response(page([draftVoucher]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes('/hotel-vouchers');
+    const gear = await screen.findByRole('button', { name: 'Voucher Branding Settings' });
+    // Icon-only gear button: no visible text label in the header.
+    expect(gear.textContent?.trim()).toBe('');
+    await userEvent.click(gear);
+    const hex = await screen.findByLabelText('Voucher primary colour hex');
+    expect(hex).toHaveValue('#15803D');
+    await userEvent.clear(hex);
+    await userEvent.type(hex, '#2563EB');
+    const preview = screen.getByLabelText('Voucher colour preview');
+    expect(preview).toHaveStyle({ backgroundColor: '#2563EB' });
+    // Unsaved edits never persist on their own.
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith('/settings/branding')),
+    ).toBe(false);
+  });
+
+  it('saves the voucher color and resets to the default purple', async () => {
+    auth.permissions = new Set(WITH_BRANDING);
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(request);
+      if (href.includes('/settings/branding') && init?.method === 'PATCH') {
+        return response(brandingSettings('#fde68a'));
+      }
+      if (href.includes('/settings')) return response(brandingSettings(null));
+      return response(page([draftVoucher]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes('/hotel-vouchers');
+    await userEvent.click(await screen.findByRole('button', { name: 'Voucher Branding Settings' }));
+    const hex = await screen.findByLabelText('Voucher primary colour hex');
+    // No saved color: the established default purple loads.
+    expect(hex).toHaveValue('#3d2352');
+    await userEvent.clear(hex);
+    await userEvent.type(hex, '#FDE68A');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Color' }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url, o]) => {
+          const body = (o as RequestInit)?.body ? JSON.parse(String((o as RequestInit).body)) : null;
+          return (
+            String(url).endsWith('/settings/branding') &&
+            (o as RequestInit)?.method === 'PATCH' &&
+            body?.hotelVoucherPrimaryColor === '#fde68a'
+          );
+        }),
+      ).toBe(true),
+    );
+    expect(await screen.findByText('Voucher color saved. New PDFs will use it.')).toBeInTheDocument();
+    // After saving, Reset to Default clears back to null (default purple).
+    await userEvent.click(await screen.findByRole('button', { name: 'Reset to Default' }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url, o]) => {
+          const body = (o as RequestInit)?.body ? JSON.parse(String((o as RequestInit).body)) : null;
+          return (
+            String(url).endsWith('/settings/branding') &&
+            (o as RequestInit)?.method === 'PATCH' &&
+            body?.hotelVoucherPrimaryColor === null
+          );
+        }),
+      ).toBe(true),
+    );
+  });
+
+  it('requests 20 vouchers per page and numbers page 2 from 21', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => ({
+      ...draftVoucher,
+      id: `v-${i}`,
+      guestName: `Guest ${i + 1}`,
+    }));
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const href = String(request);
+      if (href.includes('/settings')) return response(brandingSettings(null));
+      const url = new URL(href, 'http://localhost');
+      if (url.searchParams.get('page') === '2') {
+        return response({
+          data: [{ ...draftVoucher, id: 'v-21', guestName: 'Guest 21' }],
+          pagination: { page: 2, pageSize: 20, total: 21, totalPages: 2 },
+        });
+      }
+      return response({
+        data: twenty,
+        pagination: { page: 1, pageSize: 20, total: 21, totalPages: 2 },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes('/hotel-vouchers');
+    await screen.findByText('Guest 20 · Shah Palace Hotel');
+    // The outgoing list query asks for 20 rows, not 10.
+    expect(
+      fetchMock.mock.calls.some(([url]) => {
+        const href = String(url);
+        return href.includes('/hotel-vouchers?') && href.includes('pageSize=20');
+      }),
+    ).toBe(true);
+    expect(screen.getByText('20')).toBeInTheDocument();
+    renderRoutes('/hotel-vouchers?page=2&pageSize=20');
+    await screen.findByText('Guest 21 · Shah Palace Hotel');
+    expect(screen.getByText('21')).toBeInTheDocument();
+  });
+
+  it('renders enterprise row hierarchy with stay facts and traveller meta', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher]))),
+    );
+    renderRoutes('/hotel-vouchers');
+    expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    // Secondary facts from the same row: city, date range, duration, occupancy.
+    expect(screen.getByText('Jaipur')).toBeInTheDocument();
+    expect(screen.getByText('10-11-2026 → 13-11-2026')).toBeInTheDocument();
+    expect(screen.getByText('3 nights')).toBeInTheDocument();
+    expect(screen.getByText('3 guests')).toBeInTheDocument();
+    expect(screen.getByText('1 room')).toBeInTheDocument();
+  });
+
+  it('uses the Leads-style green compact table header with voucher columns', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher]))),
+    );
+    const { container } = renderRoutes('/hotel-vouchers');
+    await screen.findByText('Aarav Mehta · Shah Palace Hotel');
+    // Scope class wires the CSS variables (green header, divider colors).
+    expect(container.querySelector('.vouchers-page')).not.toBeNull();
+    const thead = document.querySelector('.vouchers-thead');
+    expect(thead).not.toBeNull();
+    const headers = Array.from(thead!.querySelectorAll('th')).map((th) => th.textContent?.trim());
+    expect(headers).toEqual(['No.', 'Guest / Hotel', 'Stay Dates', 'Created By', 'Actions']);
+    const bodyRow = document.querySelector('.vouchers-tbody tr');
+    expect(bodyRow).not.toBeNull();
+    expect(thead!.querySelectorAll('th').length).toBe(5);
+    expect(bodyRow!.querySelectorAll('td').length).toBe(5);
+    // Header sits above the first body row inside the same table.
+    const table = document.querySelector('table.vouchers-table');
+    expect(table).not.toBeNull();
+    expect(table!.querySelector('thead.vouchers-thead')).not.toBeNull();
+    expect(table!.querySelector('tbody.vouchers-tbody')).not.toBeNull();
+  });
+
+  it('lists sequential row numbers with a No. column and no initials avatars', async () => {
+    const second = {
+      ...draftVoucher,
+      id: 'cccccccc-3333-4333-8333-333333333333',
+      guestName: 'Mohan Rao',
+      createdBy: { id: 'dddddddd-4444-4444-8444-444444444444', fullName: 'Rahul Verma' },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([draftVoucher, second]))),
+    );
+    renderRoutes('/hotel-vouchers');
+    expect(await screen.findByText('No.')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    // Circular initials badges are gone; names align directly.
+    expect(screen.queryByText('AM')).not.toBeInTheDocument();
+    expect(screen.queryByText('MR')).not.toBeInTheDocument();
+    expect(screen.getByText('Priya Nair')).toBeInTheDocument();
+    expect(screen.getByText('Rahul Verma')).toBeInTheDocument();
+  });
+
+  it('continues row numbering on subsequent pages', async () => {
+    const paged = {
+      data: [draftVoucher],
+      pagination: { page: 2, pageSize: 10, total: 11, totalPages: 2 },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (_request: RequestInfo | URL) => response(paged)));
+    renderRoutes('/hotel-vouchers?page=2');
+    expect(await screen.findByText('11')).toBeInTheDocument();
+  });
+
+  it('shows — for a missing creator without fabricating a name', async () => {
+    const orphan = { ...draftVoucher, createdBy: null, createdById: null };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_request: RequestInfo | URL) => response(page([orphan]))),
+    );
+    renderRoutes('/hotel-vouchers');
+    expect(await screen.findByText('Aarav Mehta · Shah Palace Hotel')).toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.queryByText('Priya Nair')).not.toBeInTheDocument();
+  });
+
+  it('opens the voucher PDF in a viewer without downloading', async () => {
+    const replaceSpy = vi.fn();
+    vi.stubGlobal('open', vi.fn(() => ({ location: { replace: replaceSpy }, document: {}, opener: null, close: vi.fn() })));
+    const originalCreateObjectURL = URL.createObjectURL;
+    vi.stubGlobal('fetch', (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(url);
+      if (href === 'https://signed.test/v.pdf')
+        return { ok: true, blob: async () => new Blob(['pdf'], { type: 'application/pdf' }) };
+      const method = (init as RequestInit | undefined)?.method;
+      if (href.includes('/generate-pdf') && method === 'POST')
+        return response({ id: 'doc-1', fileName: 'Aarav - Shah.pdf' });
+      if (href.includes('/documents/doc-1/download-url'))
+        return response({ url: 'https://signed.test/v.pdf', fileName: 'Aarav - Shah.pdf' });
+      return response(page([draftVoucher]));
+    }) as typeof fetch);
+    URL.createObjectURL = vi.fn(() => 'blob:mock-pdf-url') as unknown as typeof URL.createObjectURL;
+    try {
+      renderRoutes('/hotel-vouchers');
+      await userEvent.click(await screen.findByRole('button', { name: 'Open voucher for Aarav Mehta' }));
+      await waitFor(() => expect(replaceSpy).toHaveBeenCalled());
+      expect(String(replaceSpy.mock.calls[0]?.[0])).toContain('blob:');
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL;
+    }
+  });
+
+  it('downloads the voucher PDF with the signed filename', async () => {
+    vi.stubGlobal('open', vi.fn(() => null));
+    vi.stubGlobal('fetch', (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(url);
+      const method = (init as RequestInit | undefined)?.method;
+      if (href.includes('/generate-pdf') && method === 'POST')
+        return response({ id: 'doc-1', fileName: 'Aarav - Shah.pdf' });
+      if (href.includes('/documents/doc-1/download-url'))
+        return response({
+          url: 'https://signed.test/v.pdf?sig=abc',
+          fileName: 'Aarav - Shah.pdf',
+        });
+      return response(page([draftVoucher]));
+    }) as typeof fetch);
+    const originalCreateElement = window.document.createElement.bind(window.document);
+    const clickSpy = vi.fn();
+    let capturedAnchor: HTMLAnchorElement | null = null;
+    const createSpy = vi
+      .spyOn(window.document, 'createElement')
+      .mockImplementation(((tagName: string, ...rest: unknown[]) => {
+        if (tagName.toLowerCase() !== 'a')
+          return (originalCreateElement as unknown as (...args: unknown[]) => HTMLElement)(
+            ...( [tagName, ...rest] as unknown as []),
+          );
+        const anchor = originalCreateElement('a') as HTMLAnchorElement;
+        capturedAnchor = anchor;
+        anchor.click = clickSpy;
+        return anchor;
+      }) as unknown as typeof window.document.createElement);
+    try {
+      renderRoutes('/hotel-vouchers');
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Download voucher for Aarav Mehta' }),
+      );
+      await waitFor(() => expect(clickSpy).toHaveBeenCalled());
+      expect(capturedAnchor?.download).toBe('Aarav - Shah.pdf');
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  it('orders form sections Hotel first, then Guest, Stay, Rooms, Meals, Guests, Includes, Terms', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: RequestInfo | URL) => {
@@ -213,7 +632,8 @@ describe('Hotel Voucher pages (standalone)', () => {
       'Hotel Details',
       'Guest Details',
       'Stay Details',
-      'Pricing (Optional)',
+      'Rooms',
+      'Meal Plans',
       'Guest Information (Optional)',
       'Package Includes (Optional)',
       'Terms & Conditions',
@@ -250,7 +670,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     expect(screen.getByLabelText('Hotel Phone')).toHaveValue('+91 14100 00000');
     expect(screen.getByLabelText('Hotel Email')).toHaveValue('stay@shahpalace.test');
   });
-  it('shows Edit/Generate/Delete on legacy drafts with no status UI or Issue action', async () => {
+  it('shows Edit/Open/Download/Delete in the unified header with no Share section', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => response(draftVoucher)),
@@ -262,13 +682,16 @@ describe('Hotel Voucher pages (standalone)', () => {
     expect(screen.queryByRole('button', { name: 'Issue voucher' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
     expect(screen.queryByText('DRAFT')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Generate PDF' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Voucher' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Delete/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate PDF' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Share' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'WhatsApp' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Email' })).not.toBeInTheDocument();
   });
 
-  it('shows only Open and Download in Share alongside Edit', async () => {
+  it('shows unified Open and Download in the header alongside Edit', async () => {
     const withDoc = {
       ...issuedVoucher,
       documents: [
@@ -293,7 +716,9 @@ describe('Hotel Voucher pages (standalone)', () => {
     expect(screen.getByRole('link', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Issue voucher' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Download PDF' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open Hotel Voucher' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Voucher' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate PDF' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Share' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'WhatsApp' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Email' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Recipient email')).not.toBeInTheDocument();
@@ -311,7 +736,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     expect(await screen.findByText('Hotel Voucher HV-000001')).toBeInTheDocument();
     expect(screen.queryByText('CANCELLED')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Generate PDF' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Voucher' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
   });
 
@@ -325,7 +750,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
   });
 
-  it('Generate PDF fetches a download URL and opens the signed PDF in a new tab', async () => {
+  it('Open Voucher fetches a download URL and opens the signed PDF in a new tab', async () => {
     const generatedDoc = {
       id: 'd-1',
       fileName: 'hotel-voucher-HV-000001.pdf',
@@ -358,7 +783,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     try {
       renderRoutes(`/hotel-vouchers/${draftVoucher.id}`);
       expect(await screen.findByText('Hotel Voucher HV-000001')).toBeInTheDocument();
-      await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Open Voucher' }));
       await waitFor(() =>
         expect(replace).toHaveBeenCalledWith(
           'https://signed.test/hotel-voucher-HV-000001.pdf?sig=abc',
@@ -427,7 +852,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     }
   });
 
-  it('Open Hotel Voucher shows the existing PDF in a new tab without regenerating', async () => {
+  it('Open Voucher shows the existing PDF in a new tab without regenerating', async () => {
     const withDoc = {
       ...issuedVoucher,
       documents: [
@@ -470,7 +895,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     try {
       renderRoutes(`/hotel-vouchers/${draftVoucher.id}`);
       expect(await screen.findByText('Hotel Voucher HV-000001')).toBeInTheDocument();
-      await userEvent.click(screen.getByRole('button', { name: 'Open Hotel Voucher' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Open Voucher' }));
       await waitFor(() => expect(replace).toHaveBeenCalledWith('blob:mock-voucher-pdf'));
       expect(window.open).toHaveBeenCalledWith('about:blank', '_blank');
       const calls = fetchMock.mock.calls.map(([url]) => String(url));
@@ -483,7 +908,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     }
   });
 
-  it('Open Hotel Voucher generates the missing PDF first instead of dead-ending', async () => {
+  it('Open Voucher generates the missing PDF first instead of dead-ending', async () => {
     const withoutDoc = { ...issuedVoucher, documents: [] };
     const generatedDoc = {
       id: 'd-9',
@@ -523,7 +948,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     try {
       renderRoutes(`/hotel-vouchers/${draftVoucher.id}`);
       expect(await screen.findByText('Hotel Voucher HV-000001')).toBeInTheDocument();
-      await userEvent.click(screen.getByRole('button', { name: 'Open Hotel Voucher' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Open Voucher' }));
       // The missing PDF is generated first, then opened — no error banner,
       // and the same voucher/document pair is used throughout.
       await waitFor(() => expect(replace).toHaveBeenCalledWith('blob:mock-fresh-pdf'));
@@ -535,7 +960,7 @@ describe('Hotel Voucher pages (standalone)', () => {
         screen.queryByText('Hotel voucher PDF has not been generated yet. Generate PDF first.'),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByText('Hotel voucher PDF could not be generated. Try Generate PDF to retry.'),
+        screen.queryByText('Hotel voucher PDF could not be generated. Please try again\.'),
       ).not.toBeInTheDocument();
     } finally {
       window.open = originalOpen;
@@ -543,7 +968,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     }
   });
 
-  it('Open Hotel Voucher surfaces generation failures without opening a dead tab', async () => {
+  it('Open Voucher surfaces generation failures without opening a dead tab', async () => {
     const withoutDoc = { ...issuedVoucher, documents: [] };
     const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
@@ -557,18 +982,18 @@ describe('Hotel Voucher pages (standalone)', () => {
     try {
       renderRoutes(`/hotel-vouchers/${draftVoucher.id}`);
       expect(await screen.findByText('Hotel Voucher HV-000001')).toBeInTheDocument();
-      await userEvent.click(screen.getByRole('button', { name: 'Open Hotel Voucher' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Open Voucher' }));
       // No blank tab is left open; the failure is shown and retry stays available.
       await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
       expect(window.open).not.toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: 'Open Hotel Voucher' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Generate PDF' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Open Voucher' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Download PDF' })).toBeInTheDocument();
     } finally {
       window.open = originalOpen;
     }
   });
 
-  it('creates a voucher with pricing and guest rows and shows the computed total', async () => {
+  it('creates a voucher with guest rows and no pricing section', async () => {
     const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (init?.method === 'POST' && url.endsWith('/hotel-vouchers'))
@@ -585,21 +1010,18 @@ describe('Hotel Voucher pages (standalone)', () => {
     fireEvent.change(screen.getByLabelText('Check-in'), { target: { value: '2026-11-10' } });
     fireEvent.change(screen.getByLabelText('Check-out'), { target: { value: '2026-11-13' } });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Add Pricing Row' }));
-    await userEvent.type(screen.getByLabelText('Pricing row 1 room type'), 'Single Room');
-    fireEvent.change(screen.getByLabelText('Pricing row 1 GST plus service'), {
-      target: { value: '19883' },
-    });
-    await userEvent.click(screen.getByRole('button', { name: 'Add Pricing Row' }));
-    await userEvent.type(screen.getByLabelText('Pricing row 2 room type'), 'Double Room');
-    fireEvent.change(screen.getByLabelText('Pricing row 2 GST plus service'), {
-      target: { value: '12980' },
-    });
-    expect(await screen.findByText('Total Payable Amount: 32,863')).toBeInTheDocument();
+    // Pricing left the voucher workflow: no section, no rows, no total.
+    expect(screen.queryByText('Pricing (Optional)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add Pricing Row' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Total Payable Amount/)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Add Guest' }));
+    // The single default adult row is already present (Adults defaults to 1).
     await userEvent.type(screen.getByLabelText('Guest 1 name'), 'Dilip Vaid');
-    fireEvent.change(screen.getByLabelText('Guest 1 age'), { target: { value: '63' } });
+    // Age and Sex are gone from Guest Information: no headings, no inputs.
+    expect(screen.queryByLabelText('Guest 1 age')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Guest 1 sex')).not.toBeInTheDocument();
+    expect(screen.queryByText('Age')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sex')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
     await waitFor(() => {
@@ -612,16 +1034,239 @@ describe('Hotel Voucher pages (standalone)', () => {
       ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
     );
     const body = JSON.parse(String(post?.[1]?.body));
-    expect(body.pricing).toHaveLength(2);
-    expect(body.pricing[0]).toMatchObject({ roomType: 'Single Room', gstService: 19883 });
-    expect(body.pricing[1]).toMatchObject({ roomType: 'Double Room', gstService: 12980 });
+    expect(body).not.toHaveProperty('pricing');
     expect(body.guests).toHaveLength(1);
     expect(body.guests[0]).toMatchObject({
       guestName: 'Dilip Vaid',
-      age: 63,
-      sex: 'M',
       paxType: 'ADULT',
     });
+  });
+
+  it('shows the saved hotel in its picker when the master is missing from lookups', async () => {
+    const linked = {
+      ...draftVoucher,
+      hotelId: '33333333-3333-4333-8333-333333333333',
+      hotelName: 'Shah Palace Hotel',
+    };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      // Archived/absent master: lookups come back empty.
+      if (url.includes('/masters/hotels')) return response(page([]));
+      if (url.includes('/customers')) return response(page([]));
+      if (url.includes('/queries')) return response(page([]));
+      return response(linked);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+    // Picker falls back to the saved snapshot instead of rendering blank…
+    await waitFor(() => expect(screen.getByLabelText('Hotel')).toHaveValue('Shah Palace Hotel'));
+    // …and the saved link survives an unrelated save.
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        ([url, options]) =>
+          String(url).endsWith(`/hotel-vouchers/${draftVoucher.id}`) &&
+          (options as RequestInit)?.method === 'PATCH',
+      );
+      expect(patch).toBeDefined();
+      expect(JSON.parse(String(patch?.[1]?.body)).hotelId).toBe(
+        '33333333-3333-4333-8333-333333333333',
+      );
+    });
+  });
+
+  it('shows the saved lead in its picker when the lead is missing from lookups', async () => {
+    const linked = {
+      ...draftVoucher,
+      queryId: '44444444-4444-4444-8444-444444444444',
+      query: { id: '44444444-4444-4444-8444-444444444444', customerName: 'Saved Lead Name' },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        return response(linked);
+      }),
+    );
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+    await waitFor(() => expect(screen.getByLabelText('Lead')).toHaveValue('Saved Lead Name'));
+  });
+
+  it('keeps customized hotel contact fields instead of overwriting them from the master', async () => {
+    const customized = {
+      ...draftVoucher,
+      hotelId: '33333333-3333-4333-8333-333333333333',
+      hotelName: 'Custom Hotel Title',
+      hotelPhone: '+91 77777 77777',
+    };
+    const master = {
+      ...hotelMaster,
+      id: '33333333-3333-4333-8333-333333333333',
+      name: 'Master Hotel Name',
+      phone: '+91 14100 00000',
+    };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes('/masters/hotels/') && !url.includes('?')) return response(master);
+      if (url.includes('/masters/hotels')) return response(page([hotelMaster]));
+      if (url.includes('/customers')) return response(page([]));
+      if (url.includes('/queries')) return response(page([]));
+      return response(customized);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+    // The saved customization wins over the master response on open…
+    await waitFor(() => expect(screen.getByLabelText('Hotel Phone')).toHaveValue('+91 77777 77777'));
+    expect(screen.getByLabelText('Hotel Name')).toHaveValue('Custom Hotel Title');
+    // …and survives a save unchanged.
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        ([url, options]) =>
+          String(url).endsWith(`/hotel-vouchers/${draftVoucher.id}`) &&
+          (options as RequestInit)?.method === 'PATCH',
+      );
+      expect(patch).toBeDefined();
+      const body = JSON.parse(String(patch?.[1]?.body));
+      expect(body.hotelPhone).toBe('+91 77777 77777');
+      expect(body.hotelName).toBe('Custom Hotel Title');
+    });
+  });
+
+  it('edits a legacy voucher with stored age/sex without showing those fields', async () => {
+    const legacyGuests = {
+      ...draftVoucher,
+      adults: 1,
+      children: 1,
+      guests: [
+        { id: 'g-1', guestName: 'Old Guest', age: 63, sex: 'M', paxType: 'ADULT' },
+        { id: 'g-2', guestName: 'Young Guest', age: 8, sex: 'F', paxType: 'CHILD' },
+      ],
+    };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes('/masters/hotels')) return response(page([]));
+      if (url.includes('/customers')) return response(page([]));
+      if (url.includes('/queries')) return response(page([]));
+      return response(legacyGuests);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+    // Stored names and categories restore; age/sex values stay stored but hidden.
+    expect(await screen.findByDisplayValue('Old Guest')).toBeInTheDocument();
+    expect(screen.getByLabelText('Guest 1 name')).toHaveValue('Old Guest');
+    expect(screen.getByLabelText('Guest 2 name')).toHaveValue('Young Guest');
+    expect(screen.queryByLabelText('Guest 1 age')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Guest 1 sex')).not.toBeInTheDocument();
+    expect(screen.queryByText('Age')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sex')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith(`/hotel-vouchers/${draftVoucher.id}`) && options?.method === 'PATCH',
+      );
+      expect(patch).toBeDefined();
+    });
+  });
+
+  it('restores all seven saved guest names in order when editing', async () => {
+    const names = [
+      'Mr. Himanshu Rajbhar',
+      'Mr. Akash Sahni',
+      'Mr. Vivek Lodhi',
+      'Mrs. Pinki Patel',
+      'Lalu prasad',
+      'krish',
+      'op rajbhar',
+    ];
+    const masterHotel = {
+      id: 'a664a7da-da50-4727-bddc-02ff8eef2cb9',
+      name: 'Hotel Boss Singapore',
+      address: 'Address: 500 Jalan Sultan, Singapore 199020',
+      city: { id: 'c-1', name: 'Singapore' },
+      phone: '987654323',
+      email: 'hotelboss@gmail.com',
+      starCategory: 4,
+      starRating: 4.3,
+      status: 'ACTIVE',
+    };
+    const sevenGuests = {
+      ...draftVoucher,
+      adults: 4,
+      children: 3,
+      hotelId: 'a664a7da-da50-4727-bddc-02ff8eef2cb9',
+      hotelName: 'Hotel Boss Singapore',
+      guests: names.map((guestName, index) => ({
+        id: `g-${index + 1}`,
+        guestName,
+        age: null,
+        sex: index === 3 ? 'F' : 'M',
+        paxType: index < 4 ? 'ADULT' : 'CHILD',
+      })),
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels/') && !url.includes('?')) return response(masterHotel);
+        if (url.includes('/masters/hotels')) return response(page([masterHotel]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        // Voucher resolves after lookups (slow-network order), as in production.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return response(sevenGuests);
+      }),
+    );
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+    // Wait for the full hydrated set so pre-load blank rows are settled.
+    await screen.findByDisplayValue('op rajbhar');
+    for (const [index, guestName] of names.entries()) {
+      expect(screen.getByLabelText(`Guest ${index + 1} name`)).toHaveValue(guestName);
+    }
+    expect(screen.getByText('Adult 4')).toBeInTheDocument();
+    expect(screen.getByText('Child 3')).toBeInTheDocument();
+  });
+
+  it('keeps saved guest names when counts change during editing', async () => {
+    const sevenGuests = {
+      ...draftVoucher,
+      adults: 4,
+      children: 3,
+      guests: [
+        { id: 'g-1', guestName: 'Adult One', age: null, sex: 'M', paxType: 'ADULT' },
+        { id: 'g-2', guestName: 'Adult Two', age: null, sex: 'M', paxType: 'ADULT' },
+        { id: 'g-3', guestName: 'Adult Three', age: null, sex: 'M', paxType: 'ADULT' },
+        { id: 'g-4', guestName: 'Adult Four', age: null, sex: 'M', paxType: 'ADULT' },
+        { id: 'g-5', guestName: 'Child One', age: null, sex: 'M', paxType: 'CHILD' },
+        { id: 'g-6', guestName: 'Child Two', age: null, sex: 'M', paxType: 'CHILD' },
+        { id: 'g-7', guestName: 'Child Three', age: null, sex: 'M', paxType: 'CHILD' },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        return response(sevenGuests);
+      }),
+    );
+    renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+    await screen.findByDisplayValue('Child Three');
+    // Shrinking children drops trailing entries only; kept names survive.
+    fireEvent.change(screen.getByLabelText('Children'), { target: { value: '1' } });
+    await waitFor(() => expect(screen.queryByLabelText('Guest 7 name')).not.toBeInTheDocument());
+    expect(screen.getByLabelText('Guest 1 name')).toHaveValue('Adult One');
+    expect(screen.getByLabelText('Guest 5 name')).toHaveValue('Child One');
+    // Growing again appends blanks without touching kept names.
+    fireEvent.change(screen.getByLabelText('Children'), { target: { value: '2' } });
+    await waitFor(() => expect(screen.getByLabelText('Guest 6 name')).toBeInTheDocument());
+    expect(screen.getByLabelText('Guest 6 name')).toHaveValue('');
+    expect(screen.getByLabelText('Guest 1 name')).toHaveValue('Adult One');
   });
 
   it('creates a voucher with package includes and drops blank items', async () => {
@@ -662,6 +1307,101 @@ describe('Hotel Voucher pages (standalone)', () => {
     );
     const body = JSON.parse(String(post?.[1]?.body));
     expect(body.packageIncludes).toEqual(['<p>Breakfast</p>', '<p><strong>Pool</strong> access</p>']);
+  });
+
+  it('generates guest rows from adults and children counts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        return response(page([]));
+      }),
+    );
+    renderRoutes('/hotel-vouchers/new');
+    await screen.findByLabelText('Guest Name');
+    // Defaults (1 adult, 0 children) yield a single adult row.
+    expect(screen.getByText('Adult 1')).toBeInTheDocument();
+    expect(screen.queryByText(/Child 1/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Adults'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('Children'), { target: { value: '3' } });
+    await waitFor(() => expect(screen.getByLabelText('Guest 7 name')).toBeInTheDocument());
+    for (const label of ['Adult 1', 'Adult 2', 'Adult 3', 'Adult 4', 'Child 1', 'Child 2', 'Child 3']) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    // Reducing children drops entries from the end of that category only.
+    await userEvent.type(screen.getByLabelText('Guest 7 name'), 'Youngest');
+    fireEvent.change(screen.getByLabelText('Children'), { target: { value: '1' } });
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Guest 6 name')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('Guest 5 name')).toBeInTheDocument();
+    expect(screen.queryByText('Child 2')).not.toBeInTheDocument();
+  });
+
+  it('clears all guest rows when both counts are zero', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        return response(page([]));
+      }),
+    );
+    renderRoutes('/hotel-vouchers/new');
+    await screen.findByLabelText('Guest Name');
+    fireEvent.change(screen.getByLabelText('Adults'), { target: { value: '0' } });
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Guest 1 name')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Adult 1')).not.toBeInTheDocument();
+  });
+
+  it('preserves typed guest details when counts change', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (init?.method === 'POST' && url.endsWith('/hotel-vouchers'))
+        return response({ ...draftVoucher, id: 'new-id' });
+      if (url.includes('/masters/hotels')) return response(page([]));
+      if (url.includes('/customers')) return response(page([]));
+      if (url.includes('/queries')) return response(page([]));
+      return response(page([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRoutes('/hotel-vouchers/new');
+    await userEvent.type(screen.getByLabelText('Guest Name'), 'Aarav Mehta');
+    await userEvent.type(screen.getByLabelText('Hotel Name'), 'Shah Palace Hotel');
+    fireEvent.change(screen.getByLabelText('Check-in'), { target: { value: '2026-11-10' } });
+    fireEvent.change(screen.getByLabelText('Check-out'), { target: { value: '2026-11-13' } });
+    fireEvent.change(screen.getByLabelText('Adults'), { target: { value: '2' } });
+    await waitFor(() => expect(screen.getByLabelText('Guest 2 name')).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText('Guest 1 name'), 'First Adult');
+    await userEvent.type(screen.getByLabelText('Guest 2 name'), 'Second Adult');
+    // Growing the count appends a blank row without touching typed rows.
+    fireEvent.change(screen.getByLabelText('Adults'), { target: { value: '3' } });
+    await waitFor(() => expect(screen.getByLabelText('Guest 3 name')).toBeInTheDocument());
+    expect(screen.getByLabelText('Guest 1 name')).toHaveValue('First Adult');
+    expect(screen.getByLabelText('Guest 2 name')).toHaveValue('Second Adult');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+      );
+      expect(post).toBeDefined();
+    });
+    const post = fetchMock.mock.calls.find(
+      ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+    );
+    const body = JSON.parse(String(post?.[1]?.body));
+    // Named travellers persist with their category; the blank row is dropped.
+    expect(body.guests).toEqual([
+      expect.objectContaining({ guestName: 'First Adult', paxType: 'ADULT' }),
+      expect.objectContaining({ guestName: 'Second Adult', paxType: 'ADULT' }),
+    ]);
   });
 
   it('saves the booking id alongside the confirmation number', async () => {
@@ -910,7 +1650,7 @@ describe('Hotel Voucher pages (standalone)', () => {
     expect(screen.getByText(/Total Payable Amount: 19,883/)).toBeInTheDocument();
   });
 
-  it('removes a saved pricing row on edit', async () => {
+  it('opens a saved priced voucher for edit without pricing UI and preserves its rows', async () => {
     const withRows = {
       ...draftVoucher,
       pricing: [
@@ -939,15 +1679,22 @@ describe('Hotel Voucher pages (standalone)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
-    expect(await screen.findByDisplayValue('Single Room')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Remove pricing row 1' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Hotel Name')).toHaveValue('Shah Palace Hotel'),
+    );
+    // Stored pricing stays stored but hidden: no section, no row UI.
+    expect(screen.queryByText('Pricing (Optional)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add Pricing Row' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove pricing row 1' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
       expect(patch).toBeDefined();
     });
     const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
-    expect(JSON.parse(String(patch?.[1]?.body)).pricing).toEqual([]);
+    // The payload carries no pricing key, so the saved rows are retained
+    // server-side instead of being wiped.
+    expect(JSON.parse(String(patch?.[1]?.body))).not.toHaveProperty('pricing');
   });
 
   describe('From Quotation', () => {
@@ -1096,12 +1843,24 @@ describe('Hotel Voucher pages (standalone)', () => {
       expect(screen.getByLabelText('Adults')).toHaveValue(2);
       expect(screen.getByLabelText('Children')).toHaveValue(1);
       expect(screen.getByLabelText('No. of Rooms')).toHaveValue(2);
-      // Both hotel entries of the version are offered.
+      // Quotation-prefilled counts generate blank traveller rows (2+1).
+      await waitFor(() => expect(screen.getByLabelText('Guest 3 name')).toBeInTheDocument());
+      expect(screen.getByText('Adult 1')).toBeInTheDocument();
+      expect(screen.getByText('Adult 2')).toBeInTheDocument();
+      expect(screen.getByText('Child 1')).toBeInTheDocument();
+      expect(screen.getByLabelText('Guest 1 name')).toHaveValue('');
+      // Both hotel entries of the version are offered, with stay dates
+      // shown as DD-MM-YYYY.
       await waitFor(() =>
         expect(datalistValues('Select Hotel')).toEqual(
           expect.arrayContaining(['Shah Palace Hotel', 'Lakeview Resort']),
         ),
       );
+      const hotelList = document.getElementById(
+        screen.getByLabelText('Select Hotel').getAttribute('list') ?? '',
+      );
+      expect(hotelList?.textContent).toContain('Jaipur · Deluxe · 10-11-2026');
+      expect(hotelList?.textContent).not.toContain('2026-11-10');
       expect(screen.getByLabelText('Select Hotel')).not.toBeDisabled();
     });
 
@@ -1125,8 +1884,10 @@ describe('Hotel Voucher pages (standalone)', () => {
         expect(screen.getByLabelText('Hotel City')).toHaveValue('Jaipur'),
       );
       expect(screen.getByLabelText('Hotel Name')).toHaveValue('Shah Palace Hotel');
-      expect(screen.getByLabelText('Room Type')).toHaveValue('Deluxe');
-      expect(screen.getByLabelText('Meal Plan')).toHaveValue('Breakfast');
+      // Legacy scalar-only option contributes one stay row and one meal row.
+      expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Deluxe');
+      expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
+      expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast');
       expect(screen.getByLabelText('Check-in')).toHaveValue('2026-11-10');
       expect(screen.getByLabelText('Check-out')).toHaveValue('2026-11-14');
       expect(screen.getByLabelText('No. of Rooms')).toHaveValue(2);
@@ -1137,6 +1898,295 @@ describe('Hotel Voucher pages (standalone)', () => {
       expect(screen.getByLabelText('Hotel Phone')).toHaveValue('+91 14100 00000');
       // No confirmation number is ever invented.
       expect(screen.getByLabelText('Confirmation Number')).toHaveValue('');
+    });
+
+    it('leaves voucher dates blank for a quotation hotel option without stay dates', async () => {
+      grantQuotationsView();
+      vi.stubGlobal('fetch', stubQuotationFlow({ [quotationOne.id]: quotationOne }));
+      renderRoutes('/hotel-vouchers/new');
+      await waitFor(() =>
+        expect(datalistValues('Quotation ID')).toContain('QT-000123'),
+      );
+      fireEvent.change(await screen.findByLabelText('Quotation ID'), {
+        target: { value: 'QT-000123' },
+      });
+      // Lakeview Resort is the version entry with null check-in/check-out dates.
+      await waitFor(() =>
+        expect(datalistValues('Select Hotel')).toContain('Lakeview Resort'),
+      );
+      fireEvent.change(screen.getByLabelText('Select Hotel'), {
+        target: { value: 'Lakeview Resort' },
+      });
+      await waitFor(() =>
+        expect(screen.getByLabelText('Hotel City')).toHaveValue('Udaipur'),
+      );
+      expect(screen.getByLabelText('Hotel Name')).toHaveValue('Lakeview Resort');
+      // Missing quotation dates stay blank — no fabricated date is inserted —
+      // and the user can type them manually afterwards.
+      expect(screen.getByLabelText('Check-in')).toHaveValue('');
+      expect(screen.getByLabelText('Check-out')).toHaveValue('');
+      fireEvent.change(screen.getByLabelText('Check-in'), {
+        target: { value: '2026-12-01' },
+      });
+      expect(screen.getByLabelText('Check-in')).toHaveValue('2026-12-01');
+      expect(screen.getByLabelText('Check-out')).toHaveValue('');
+    });
+
+    it('imports every room configuration and meal plan from the selected hotel option', async () => {
+      const multiRoomHotel = {
+        id: 'cccccccc-cccc-4111-8111-cccccccccccc',
+        hotelId: null,
+        hotelName: 'Grand Plaza Hotel',
+        city: 'Singapore',
+        roomType: 'Superior Room',
+        mealPlan: 'Breakfast only',
+        rooms: 6,
+        checkInDate: '2026-11-01T00:00:00.000Z',
+        checkOutDate: '2026-11-07T00:00:00.000Z',
+        roomLines: [
+          {
+            hotelRoomTypeId: null,
+            roomType: 'Superior Room',
+            rooms: 2,
+            extraBedQuantity: 1,
+            childWithoutBedQuantity: 0,
+            notes: 'High floor',
+          },
+          {
+            hotelRoomTypeId: null,
+            roomType: 'Premier Room',
+            rooms: 4,
+            extraBedQuantity: 0,
+            childWithoutBedQuantity: 1,
+            notes: null,
+          },
+        ],
+        mealPlanLines: [{ mealPlan: 'Breakfast only' }, { mealPlan: 'Dinner' }],
+      };
+      const quotationMulti = {
+        ...quotationOne,
+        id: 'c0ffee00-0000-4000-8000-000000000031',
+        quotationNumber: 'QT-000777',
+        versions: [
+          {
+            id: 'c0ffee00-0000-4000-8000-000000000041',
+            hotels: [multiRoomHotel],
+          },
+        ],
+      };
+      grantQuotationsView();
+      const fetchMock = stubQuotationFlow(
+        { [quotationMulti.id]: quotationMulti },
+        [quotationMulti],
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      renderRoutes('/hotel-vouchers/new');
+      await waitFor(() =>
+        expect(datalistValues('Quotation ID')).toContain('QT-000777'),
+      );
+      fireEvent.change(await screen.findByLabelText('Quotation ID'), {
+        target: { value: 'QT-000777' },
+      });
+      // Single-hotel quotation: the option is auto-selected and every room
+      // configuration plus every meal plan is imported, in saved order.
+      await waitFor(() =>
+        expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Superior Room'),
+      );
+      expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
+      expect(screen.getByLabelText('Stay room 1 extra beds')).toHaveValue(1);
+      expect(screen.getByLabelText('Stay room 1 remark')).toHaveValue('High floor');
+      expect(screen.getByLabelText('Stay room 2 type')).toHaveValue('Premier Room');
+      expect(screen.getByLabelText('Stay room 2 rooms')).toHaveValue(4);
+      expect(screen.getByLabelText('Stay room 2 children without bed')).toHaveValue(1);
+      expect(screen.queryByLabelText('Stay room 3 type')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast only');
+      expect(screen.getByLabelText('Stay meal 2 plan')).toHaveValue('Dinner');
+      expect(screen.queryByLabelText('Stay meal 3 plan')).not.toBeInTheDocument();
+      // Total, dates, and nights stay consistent with the quotation option.
+      expect(screen.getByLabelText('No. of Rooms')).toHaveValue(6);
+      expect(screen.getByLabelText('Check-in')).toHaveValue('2026-11-01');
+      expect(screen.getByLabelText('Check-out')).toHaveValue('2026-11-07');
+      expect(screen.getByText('Nights: 6')).toBeInTheDocument();
+      // Saving persists every entry plus the scalar mirrors.
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+        );
+        expect(post).toBeDefined();
+      });
+      const post = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+      );
+      const body = JSON.parse(String(post?.[1]?.body));
+      expect(body.stayRooms).toHaveLength(2);
+      expect(body.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', rooms: 2 });
+      expect(body.stayRooms[1]).toMatchObject({ roomType: 'Premier Room', rooms: 4 });
+      expect(body.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
+        'Breakfast only',
+        'Dinner',
+      ]);
+      expect(body.rooms).toBe(6);
+      expect(body.roomTypeName).toBe('Superior Room');
+      expect(body.mealPlanName).toBe('Breakfast only');
+      expect(body.checkIn).toBe('2026-11-01');
+      expect(body.checkOut).toBe('2026-11-07');
+    });
+
+    it('lets manual vouchers add stay rows without a quotation', async () => {
+      const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        if (init?.method === 'POST' && url.endsWith('/hotel-vouchers'))
+          return response({ ...draftVoucher, id: 'new-id' });
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        return response(page([]));
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Hotel Name');
+      // Empty stay tables offer add actions instead of scalar fields.
+      expect(screen.queryByLabelText('Room Type')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Meal Plan')).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Add Room' }));
+      await userEvent.type(screen.getByLabelText('Stay room 1 type'), 'Suite');
+      fireEvent.change(screen.getByLabelText('Stay room 1 rooms'), { target: { value: '2' } });
+      await userEvent.click(screen.getByRole('button', { name: 'Add Meal Plan' }));
+      await userEvent.type(screen.getByLabelText('Stay meal 1 plan'), 'Half Board');
+      await userEvent.type(screen.getByLabelText('Guest Name'), 'Aarav Mehta');
+      await userEvent.type(screen.getByLabelText('Hotel Name'), 'Shah Palace Hotel');
+      fireEvent.change(screen.getByLabelText('Check-in'), { target: { value: '2026-11-10' } });
+      fireEvent.change(screen.getByLabelText('Check-out'), { target: { value: '2026-11-13' } });
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+        );
+        expect(post).toBeDefined();
+      });
+      const post = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+      );
+      const body = JSON.parse(String(post?.[1]?.body));
+      expect(body.stayRooms).toEqual([
+        expect.objectContaining({ roomType: 'Suite', rooms: 2 }),
+      ]);
+      expect(body.stayMeals).toEqual([expect.objectContaining({ mealPlan: 'Half Board' })]);
+      expect(body.roomTypeName).toBe('Suite');
+      expect(body.mealPlanName).toBe('Half Board');
+    });
+
+    it('restores saved stay rows on edit and keeps them on save', async () => {
+      const withStay = {
+        ...draftVoucher,
+        rooms: 6,
+        roomTypeName: 'Superior Room',
+        mealPlanName: 'Breakfast only',
+        stayRooms: [
+          { id: 'r-1', sequence: 0, roomType: 'Superior Room', rooms: 2, extraBedQuantity: 1, childWithoutBedQuantity: 0, notes: 'High floor' },
+          { id: 'r-2', sequence: 1, roomType: 'Premier Room', rooms: 4, extraBedQuantity: 0, childWithoutBedQuantity: 1, notes: null },
+        ],
+        stayMeals: [
+          { id: 'm-1', sequence: 0, mealPlan: 'Breakfast only' },
+          { id: 'm-2', sequence: 1, mealPlan: 'Dinner' },
+        ],
+      };
+      const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        return response(withStay);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderRoutes(`/hotel-vouchers/${draftVoucher.id}/edit`);
+      await waitFor(() =>
+        expect(screen.getByLabelText('Stay room 2 type')).toHaveValue('Premier Room'),
+      );
+      expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Superior Room');
+      expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
+      expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast only');
+      expect(screen.getByLabelText('Stay meal 2 plan')).toHaveValue('Dinner');
+      await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => {
+        const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+        expect(patch).toBeDefined();
+      });
+      const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      const body = JSON.parse(String(patch?.[1]?.body));
+      expect(body.stayRooms).toHaveLength(2);
+      expect(body.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', rooms: 2 });
+      expect(body.stayRooms[1]).toMatchObject({ roomType: 'Premier Room', rooms: 4 });
+      expect(body.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
+        'Breakfast only',
+        'Dinner',
+      ]);
+      expect(body.rooms).toBe(6);
+    });
+
+    it('populates exact quotation calendar dates and follows hotel switching', async () => {
+      const novemberA = {
+        ...quotationHotelA,
+        id: 'aaaaaaaa-aaaa-4111-8111-aaaaaaaaaaab',
+        hotelName: 'November Alpha',
+        // Midnight-UTC ISO date-times: the voucher must keep these calendar
+        // days exactly, never shifted by timezone handling.
+        checkInDate: '2026-11-01T00:00:00.000Z',
+        checkOutDate: '2026-11-04T00:00:00.000Z',
+      };
+      const novemberB = {
+        ...quotationHotelB,
+        id: 'bbbbbbbb-bbbb-4111-8111-bbbbbbbbbbbd',
+        hotelName: 'November Beta',
+        city: 'Udaipur',
+        checkInDate: '2026-11-05T00:00:00.000Z',
+        checkOutDate: '2026-11-07T00:00:00.000Z',
+      };
+      const quotationNovember = {
+        ...quotationOne,
+        id: 'c0ffee00-0000-4000-8000-000000000011',
+        quotationNumber: 'QT-000111',
+        versions: [
+          {
+            id: 'c0ffee00-0000-4000-8000-000000000031',
+            hotels: [novemberA, novemberB],
+          },
+        ],
+      };
+      grantQuotationsView();
+      vi.stubGlobal(
+        'fetch',
+        stubQuotationFlow({ [quotationNovember.id]: quotationNovember }, [quotationNovember]),
+      );
+      renderRoutes('/hotel-vouchers/new');
+      await waitFor(() =>
+        expect(datalistValues('Quotation ID')).toContain('QT-000111'),
+      );
+      fireEvent.change(await screen.findByLabelText('Quotation ID'), {
+        target: { value: 'QT-000111' },
+      });
+      await waitFor(() =>
+        expect(datalistValues('Select Hotel')).toContain('November Alpha'),
+      );
+      fireEvent.change(screen.getByLabelText('Select Hotel'), {
+        target: { value: 'November Alpha' },
+      });
+      // Exact calendar dates from the selected option; three-night stay.
+      await waitFor(() =>
+        expect(screen.getByLabelText('Check-in')).toHaveValue('2026-11-01'),
+      );
+      expect(screen.getByLabelText('Check-out')).toHaveValue('2026-11-04');
+      expect(screen.getByText('Nights: 3')).toBeInTheDocument();
+      // Switching options re-reads dates from the newly selected entry.
+      fireEvent.change(screen.getByLabelText('Select Hotel'), {
+        target: { value: 'November Beta' },
+      });
+      await waitFor(() =>
+        expect(screen.getByLabelText('Check-in')).toHaveValue('2026-11-05'),
+      );
+      expect(screen.getByLabelText('Check-out')).toHaveValue('2026-11-07');
+      expect(screen.getByText('Nights: 2')).toBeInTheDocument();
     });
 
     it('auto-selects the only hotel of a single-hotel quotation without dropdown interaction', async () => {
@@ -1184,7 +2234,7 @@ describe('Hotel Voucher pages (standalone)', () => {
       fireEvent.change(screen.getByLabelText('Select Hotel'), {
         target: { value: 'Shah Palace Hotel' },
       });
-      await waitFor(() => expect(screen.getByLabelText('Room Type')).toHaveValue('Deluxe'));
+      await waitFor(() => expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Deluxe'));
       // Manual edit that must survive the quotation change.
       fireEvent.change(screen.getByLabelText('Hotel Name'), { target: { value: 'Custom Name' } });
       fireEvent.change(screen.getByLabelText('Quotation ID'), { target: { value: 'QT-000456' } });
@@ -1192,12 +2242,15 @@ describe('Hotel Voucher pages (standalone)', () => {
         expect(screen.getByLabelText('Guest Name')).toHaveValue('Second Traveller'),
       );
       // The single hotel of the new quotation is auto-selected (not left
-      // cleared); untouched hotel facts now reflect the new hotel.
+      // cleared); untouched hotel facts now reflect the new hotel. The new
+      // entry carries no rooms or meals, so the previous stay rows revert
+      // instead of leaking.
       await waitFor(() =>
         expect(screen.getByLabelText('Select Hotel')).toHaveValue('Hillside Inn'),
       );
       expect(screen.getByLabelText('Hotel City')).toHaveValue('Munnar');
-      expect(screen.getByLabelText('Room Type')).toHaveValue('');
+      expect(screen.queryByLabelText('Stay room 1 type')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay meal 1 plan')).not.toBeInTheDocument();
       // The manual edit survives.
       expect(screen.getByLabelText('Hotel Name')).toHaveValue('Custom Name');
       // New quotation's hotel entry is offered instead.
@@ -1222,6 +2275,152 @@ describe('Hotel Voucher pages (standalone)', () => {
         await screen.findByText('This quotation has no hotel entries. Fill the hotel details manually below.'),
       ).toBeInTheDocument();
       expect(screen.getByLabelText('Select Hotel')).toHaveValue('');
+    });
+  });
+
+  describe('Edit guest hydration (no-refresh)', () => {
+    // Mirrors HV-000024: 7 adults + 3 children, 10 saved names in order.
+    const adultNames = [
+      'Pintu Shah',
+      'Rohan Mehta',
+      'Kiran Rao',
+      'Pinki Patel',
+      'Lalu Yadav',
+      'Krish Iyer',
+      'Raj Bhar',
+    ];
+    const childNames = ['Asha Nair', 'Dev Kumar', 'Mira Rider'];
+    const voucherA = {
+      ...draftVoucher,
+      id: 'aaaaaaaa-aaaa-4111-8111-aaaaaaaaaaaa',
+      voucherNumber: 'HV-000024',
+      adults: 7,
+      children: 3,
+      guests: [
+        ...adultNames.map((guestName, index) => ({
+          id: `a-guest-${index + 1}`,
+          guestName,
+          age: null,
+          sex: 'M',
+          paxType: 'ADULT',
+        })),
+        ...childNames.map((guestName, index) => ({
+          id: `a-child-${index + 1}`,
+          guestName,
+          age: null,
+          sex: 'F',
+          paxType: 'CHILD',
+        })),
+      ],
+    };
+    const voucherB = {
+      ...draftVoucher,
+      id: 'bbbbbbbb-bbbb-4111-8111-bbbbbbbbbbbb',
+      voucherNumber: 'HV-000025',
+      adults: 1,
+      children: 1,
+      guests: [
+        { id: 'b-guest-1', guestName: 'Beta Adult', age: null, sex: 'M', paxType: 'ADULT' },
+        { id: 'b-guest-2', guestName: 'Beta Child', age: null, sex: 'F', paxType: 'CHILD' },
+      ],
+    };
+    const voucherById: Record<string, unknown> = {
+      [voucherA.id]: voucherA,
+      [voucherB.id]: voucherB,
+    };
+
+    function stubVoucherFlow() {
+      return vi.fn(async (request: RequestInfo | URL) => {
+        const url = String(request);
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        const match = url.match(/\/hotel-vouchers\/([0-9a-f-]{36})(?:[?]|$)/);
+        if (match) return response(voucherById[match[1]!] ?? null);
+        return response(page([]));
+      });
+    }
+
+    function expectGuestNames(names: string[]) {
+      names.forEach((name, index) => {
+        expect(screen.getByLabelText(`Guest ${index + 1} name`)).toHaveValue(name);
+      });
+    }
+
+    it('hydrates every saved guest name when navigating to Edit without refresh', async () => {
+      vi.stubGlobal('fetch', stubVoucherFlow());
+      // Details first: warms the shared voucher query cache, exactly like
+      // list → detail → Edit navigation in production.
+      renderRoutes(`/hotel-vouchers/${voucherA.id}`);
+      expect(await screen.findByText('Hotel Voucher HV-000024')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('link', { name: 'Edit' }));
+      // All 10 names appear immediately — no refresh, no blank rows.
+      await waitFor(() => expect(screen.getByLabelText('Guest 10 name')).toBeInTheDocument());
+      expectGuestNames([...adultNames, ...childNames]);
+      expect(screen.queryByLabelText('Guest 11 name')).not.toBeInTheDocument();
+    });
+
+    it('hydrates every saved guest name on direct URL load', async () => {
+      vi.stubGlobal('fetch', stubVoucherFlow());
+      renderRoutes(`/hotel-vouchers/${voucherA.id}/edit`);
+      await waitFor(() => expect(screen.getByLabelText('Guest 10 name')).toBeInTheDocument());
+      expectGuestNames([...adultNames, ...childNames]);
+      expect(screen.queryByLabelText('Guest 11 name')).not.toBeInTheDocument();
+    });
+
+    it('keeps restored names when counts grow after hydration', async () => {
+      vi.stubGlobal('fetch', stubVoucherFlow());
+      renderRoutes(`/hotel-vouchers/${voucherA.id}/edit`);
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest 10 name')).toHaveValue(childNames[2]),
+      );
+      fireEvent.change(screen.getByLabelText('Adults'), { target: { value: '8' } });
+      await waitFor(() => expect(screen.getByLabelText('Guest 11 name')).toBeInTheDocument());
+      // Adults stay first: the new blank adult lands at position 8 and the
+      // restored children shift down intact — no name is lost or overwritten.
+      adultNames.forEach((name, index) => {
+        expect(screen.getByLabelText(`Guest ${index + 1} name`)).toHaveValue(name);
+      });
+      expect(screen.getByLabelText('Guest 8 name')).toHaveValue('');
+      childNames.forEach((name, index) => {
+        expect(screen.getByLabelText(`Guest ${index + 9} name`)).toHaveValue(name);
+      });
+    });
+
+    it('switches vouchers without leaking guest rows', async () => {
+      vi.stubGlobal('fetch', stubVoucherFlow());
+      function SwitchHarness() {
+        const navigate = useNavigate();
+        return (
+          <>
+            <button type="button" onClick={() => navigate(`/hotel-vouchers/${voucherA.id}/edit`)}>
+              Go voucher A
+            </button>
+            <button type="button" onClick={() => navigate(`/hotel-vouchers/${voucherB.id}/edit`)}>
+              Go voucher B
+            </button>
+            <Routes>
+              <Route path="/hotel-vouchers/:voucherId/edit" element={<HotelVoucherFormPage />} />
+            </Routes>
+          </>
+        );
+      }
+      renderWithProviders(<SwitchHarness />, { route: `/hotel-vouchers/${voucherA.id}/edit` });
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest 10 name')).toHaveValue(childNames[2]),
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Go voucher B' }));
+      await waitFor(() => expect(screen.getByLabelText('Guest 1 name')).toHaveValue('Beta Adult'));
+      expect(screen.getByLabelText('Guest 2 name')).toHaveValue('Beta Child');
+      expect(screen.queryByLabelText('Guest 3 name')).not.toBeInTheDocument();
+      // Back to A (now served from cache): all 10 names, no blanks, no B rows.
+      await userEvent.click(screen.getByRole('button', { name: 'Go voucher A' }));
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest 10 name')).toHaveValue(childNames[2]),
+      );
+      expectGuestNames([...adultNames, ...childNames]);
+      expect(screen.queryByLabelText('Guest 11 name')).not.toBeInTheDocument();
+      expect(screen.queryByDisplayValue('Beta Adult')).not.toBeInTheDocument();
     });
   });
 });

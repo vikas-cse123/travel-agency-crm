@@ -117,6 +117,13 @@ function Panel({
   children: (items: Record<string, unknown>[]) => ReactNode;
 }) {
   if (!section) return null;
+  // Retired standalone modules (Customers/Vendors) redirect to the dashboard,
+  // so never render a "View all" link into them — even though the backend may
+  // still report their legacy viewAllPath. Other sections link normally.
+  const viewAllRetired = (section.viewAllPath === '/customers' ||
+    section.viewAllPath === '/vendors' ||
+    section.viewAllPath.startsWith('/customers/') ||
+    section.viewAllPath.startsWith('/vendors/')) as boolean;
   return (
     <section className="rounded-xl border bg-card shadow-sm">
       <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
@@ -127,12 +134,18 @@ function Panel({
             {section.totalCount}
           </span>
         </span>
-        <Link
-          to={section.viewAllPath}
-          className="flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-        >
-          View all <ArrowRight className="h-3 w-3" />
-        </Link>
+        {viewAllRetired ? (
+          <span className="flex items-center gap-1 text-xs font-medium text-slate-400">
+            View all <ArrowRight className="h-3 w-3" />
+          </span>
+        ) : (
+          <Link
+            to={section.viewAllPath}
+            className="flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+          >
+            View all <ArrowRight className="h-3 w-3" />
+          </Link>
+        )}
       </header>
       <div className="divide-y">
         {section.items.length ? (
@@ -323,10 +336,9 @@ export function OperationsDashboard({ params }: { params: DashboardParams }) {
           >
             {(items) =>
               items.map((item) => (
-                <Link
+                <article
                   key={String(item.payableId)}
-                  to={`/vendors/${String(item.vendorId)}`}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-slate-50"
+                  className="flex items-center justify-between gap-3 px-4 py-2.5"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">
@@ -339,7 +351,7 @@ export function OperationsDashboard({ params }: { params: DashboardParams }) {
                   <span className="shrink-0 text-sm font-semibold">
                     {money(String(item.outstandingAmount))}
                   </span>
-                </Link>
+                </article>
               ))
             }
           </Panel>

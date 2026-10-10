@@ -3,6 +3,18 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm, Controller } from 'react-hook-form';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
+  BedDouble,
+  Building2,
+  CalendarDays,
+  ClipboardList,
+  FileText,
+  PackagePlus,
+  ScrollText,
+  Users,
+  UtensilsCrossed,
+  type LucideIcon,
+} from 'lucide-react';
+import {
   hotelVoucherInputSchema,
   hotelVoucherUpdateSchema,
   PERMISSIONS,
@@ -33,6 +45,46 @@ import {
 
 const inputClass =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm placeholder:text-muted-foreground';
+
+/** Subtle tint marking snapshot fields (auto-filled, still editable). */
+const snapshotClass = `${inputClass} bg-indigo-50/40`;
+
+/** Icon + title row shared by every form section (presentation only). */
+function SectionHeading({
+  icon: Icon,
+  title,
+  badge,
+}: {
+  icon: LucideIcon;
+  title: string;
+  badge?: string;
+}) {
+  return (
+    <div className="mb-4 flex items-center gap-2.5">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <h2 className="text-base font-semibold">{title}</h2>
+      {badge && (
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+          {badge}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const FORM_STEPS = [
+  { id: 'voucher-quotation', label: 'Quotation' },
+  { id: 'voucher-hotel', label: 'Hotel' },
+  { id: 'voucher-guest', label: 'Guest' },
+  { id: 'voucher-stay', label: 'Stay' },
+  { id: 'voucher-rooms', label: 'Rooms' },
+  { id: 'voucher-meals', label: 'Meals' },
+  { id: 'voucher-guests', label: 'Guests' },
+  { id: 'voucher-includes', label: 'Includes' },
+  { id: 'voucher-terms', label: 'Terms' },
+] as const;
 
 const ACTIVE_HOTELS = new URLSearchParams('status=ACTIVE&pageSize=100');
 const LEAD_LOOKUPS = new URLSearchParams('pageSize=100');
@@ -70,6 +122,8 @@ const emptyDefaults: FormValues = {  customerId: null,
   pricing: [],
   guests: [],
   packageIncludes: [],
+  stayRooms: [],
+  stayMeals: [],
 };
 
 function starLabel(starCategory: number | null, starRating: number | null): string | null {
@@ -106,8 +160,26 @@ export function HotelVoucherFormPage() {
   const isEdit = Boolean(voucherId);
   const schema = isEdit ? hotelVoucherUpdateSchema : hotelVoucherInputSchema;
   const form = useForm<FormValues>({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    resolver: zodResolver(schema as any),
+    resolver: (async (values: FormValues, context: unknown, options: unknown) => {
+      // Blank guest placeholders must never fail validation: they are
+      // filtered before the schema runs (and again before submit). The same
+      // applies to blank stay rows (room without a type, meal without a
+      // plan): only filled entries are validated and saved.
+      const stripped: FormValues = {
+        ...values,
+        guests: values.guests?.filter(
+          (row) => typeof row.guestName === 'string' && row.guestName.trim().length > 0,
+        ),
+        stayRooms: values.stayRooms?.filter(
+          (row) => typeof row.roomType === 'string' && row.roomType.trim().length > 0,
+        ),
+        stayMeals: values.stayMeals?.filter(
+          (row) => typeof row.mealPlan === 'string' && row.mealPlan.trim().length > 0,
+        ),
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (zodResolver(schema as any) as any)(stripped, context, options);
+    }) as never,
     defaultValues: emptyDefaults,
   });
   const {
@@ -121,54 +193,9 @@ export function HotelVoucherFormPage() {
     formState: { errors },
   } = form;
 
-  useEffect(() => {
-    if (!existing.data) return;
-    const value = existing.data;
-    reset({
-      customerId: value.customerId,
-      queryId: value.queryId,
-      hotelId: value.hotelId,
-      guestName: value.guestName,
-      guestPhone: value.guestPhone,
-      guestEmail: value.guestEmail,
-      adults: value.adults,
-      children: value.children,
-      hotelName: value.hotelName,
-      hotelAddress: value.hotelAddress,
-      hotelCity: value.hotelCity,
-      hotelPhone: value.hotelPhone,
-      hotelEmail: value.hotelEmail,
-      hotelStarRating: value.hotelStarRating,
-      checkIn: value.checkIn,
-      checkOut: value.checkOut,
-      roomTypeName: value.roomTypeName,
-      rooms: value.rooms,
-      mealPlanName: value.mealPlanName,
-      confirmationNumber: value.confirmationNumber,
-      confirmationNumberLabel: value.confirmationNumberLabel ?? null,
-      bookingId: value.bookingId ?? null,
-      bookingIdLabel: value.bookingIdLabel ?? null,
-      specialRequests: value.specialRequests,
-      remarks: value.remarks,
-      termsSnapshot: value.termsSnapshot,
-      pricing: (value.pricing ?? []).map((row) => ({
-        roomType: row.roomType,
-        unit: row.unit,
-        quantity: row.quantity,
-        gst: row.gst,
-        amount: row.amount,
-        taxablePay: row.taxablePay,
-        gstService: row.gstService,
-      })),
-      guests: (value.guests ?? []).map((row) => ({
-        guestName: row.guestName,
-        age: row.age,
-        sex: row.sex,
-        paxType: row.paxType,
-      })),
-      packageIncludes: value.packageIncludes ?? [],
-    });
-  }, [existing.data, reset]);
+  // Edit hydration runs once per voucher below (after the field arrays), so
+  // the guest field rows are explicitly synced and background refetches never
+  // wipe in-progress edits.
 
   // --- Lookup data ---------------------------------------------------------
   const hotels = useHotels(ACTIVE_HOTELS);
@@ -247,7 +274,19 @@ export function HotelVoucherFormPage() {
   const quotationHotelItems = useMemo(
     () =>
       quotationHotelOptions.map((row) => {
-        const bits = [row.city, row.roomType, row.checkInDate?.slice(0, 10)].filter(Boolean);
+        // Display-only DD-MM-YYYY; anything unparseable is omitted rather
+        // than shown as ISO text or "Invalid Date".
+        const stayDate = (value: string | null | undefined): string | null => {
+          const day = (value ?? '').slice(0, 10);
+          const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+          if (!match) return null;
+          const [, year, month, date] = match as unknown as [string, string, string, string];
+          const monthNumber = Number(month);
+          const dateNumber = Number(date);
+          if (monthNumber < 1 || monthNumber > 12 || dateNumber < 1 || dateNumber > 31) return null;
+          return `${date}-${month}-${year}`;
+        };
+        const bits = [row.city, row.roomType, stayDate(row.checkInDate)].filter(Boolean);
         return { id: row.id, label: row.hotelName, hint: bits.join(' · ') || undefined };
       }),
     [quotationHotelOptions],
@@ -349,6 +388,7 @@ export function HotelVoucherFormPage() {
     // stale prefilled values here too (the hotel effect would early-return
     // once the applied id is reset below).
     revertValues(lastHotelKeys.current);
+    revertStayArrays();
     lastHotelKeys.current = [];
     appliedOptionId.current = null;
     // Details may still be loading (or stale from the previous quotation):
@@ -392,6 +432,7 @@ export function HotelVoucherFormPage() {
     if (!canUseQuotations) return;
     if (selectedQuotationHotelId === appliedOptionId.current) return;
     revertValues(lastHotelKeys.current);
+    revertStayArrays();
     if (!selectedQuotationHotelId) {
       lastHotelKeys.current = [];
       appliedOptionId.current = null;
@@ -405,6 +446,60 @@ export function HotelVoucherFormPage() {
     }
     // Allow the master snapshot effect to refire for the new hotel link.
     lastHotelSnapshot.current = null;
+    // Every room configuration and meal plan of this exact option. Lines
+    // come first; a legacy option without lines contributes one row from
+    // its scalar mirror so nothing saved is ever dropped silently.
+    const optionRoomLines = Array.isArray(option.roomLines) ? option.roomLines : [];
+    const optionMealLines = Array.isArray(option.mealPlanLines) ? option.mealPlanLines : [];
+    const roomLineOf = (line: unknown): Record<string, unknown> =>
+      line && typeof line === 'object' ? (line as Record<string, unknown>) : {};
+    const textOf = (record: Record<string, unknown>, key: string): string | null => {
+      const value = record[key];
+      return typeof value === 'string' && value.trim() ? value : null;
+    };
+    const countOf = (record: Record<string, unknown>, key: string, fallback: number | null = null) => {
+      const value = record[key];
+      if (typeof value === 'number' && Number.isFinite(value)) return Math.floor(value);
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && value !== null && value !== undefined && value !== ''
+        ? Math.floor(parsed)
+        : fallback;
+    };
+    const stayRooms: NonNullable<FormValues['stayRooms']> = (
+      optionRoomLines.length > 0
+        ? optionRoomLines.map((line) => {
+            const record = roomLineOf(line);
+            return {
+              roomType: textOf(record, 'roomType') ?? option.roomType ?? '',
+              rooms: countOf(record, 'rooms', 1) ?? 1,
+              extraBedQuantity: countOf(record, 'extraBedQuantity'),
+              childWithoutBedQuantity: countOf(record, 'childWithoutBedQuantity'),
+              notes: textOf(record, 'notes'),
+            };
+          })
+        : option.roomType
+          ? [
+              {
+                roomType: option.roomType,
+                rooms: option.rooms ?? 1,
+                extraBedQuantity: null,
+                childWithoutBedQuantity: null,
+                notes: null,
+              },
+            ]
+          : []
+    );
+    const stayMeals: NonNullable<FormValues['stayMeals']> = (
+      optionMealLines.length > 0
+        ? optionMealLines.map((line) => ({
+            mealPlan: textOf(roomLineOf(line), 'mealPlan') ?? option.mealPlan ?? '',
+          }))
+        : option.mealPlan
+          ? [{ mealPlan: option.mealPlan }]
+          : []
+    );
+    const firstRoom = stayRooms[0];
+    const firstMeal = stayMeals[0];
     const values: Partial<FormValues> = {
       hotelId: option.hotelId ?? null,
       hotelName: option.hotelName,
@@ -416,13 +511,14 @@ export function HotelVoucherFormPage() {
       hotelPhone: null,
       hotelEmail: null,
       hotelStarRating: null,
-      roomTypeName: option.roomType,
-      mealPlanName: option.mealPlan,
+      roomTypeName: firstRoom?.roomType?.trim() || option.roomType,
+      mealPlanName: firstMeal?.mealPlan?.trim() || option.mealPlan,
       rooms: option.rooms ?? selectedQuotation?.rooms ?? 1,
     };
     if (option.checkInDate) values.checkIn = option.checkInDate.slice(0, 10);
     if (option.checkOutDate) values.checkOut = option.checkOutDate.slice(0, 10);
     lastHotelKeys.current = applyValues(values);
+    applyStayArrays(stayRooms, stayMeals);
     appliedOptionId.current = selectedQuotationHotelId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -459,17 +555,174 @@ export function HotelVoucherFormPage() {
 
   // Hooks must all run above the early returns below: the redirect paths
   // render nothing, so any hook placed after them breaks hook order.
-  const pricingRows = useFieldArray({ control, name: 'pricing' });
   const guestRows = useFieldArray({ control, name: 'guests' });
   const packageRows = useFieldArray({ control, name: 'packageIncludes' });
+  const stayRoomRows = useFieldArray({ control, name: 'stayRooms' });
+  const stayMealRows = useFieldArray({ control, name: 'stayMeals' });
 
-  // Display-only total: sum of the per-row GST + Service values actually entered.
-  const watchedPricing = watch('pricing') ?? [];
-  const totalPayable = watchedPricing.reduce((sum, row) => {
-    const raw = row.gstService;
-    const value = typeof raw === 'number' ? raw : Number(raw);
-    return sum + (Number.isFinite(value) ? value : 0);
-  }, 0);
+  /**
+   * Quotation-prefilled stay rows, tracked per array so switching options
+   * reverts only untouched rows. Baselines are JSON snapshots: a row set the
+   * user edited no longer matches, so manual entries always survive later
+   * prefills — the same revert-if-untouched contract as scalar fields.
+   */
+  const appliedStayRooms = useRef<string | null>(null);
+  const appliedStayMeals = useRef<string | null>(null);
+  const snapshotStayRows = (rows: unknown): string => JSON.stringify(rows ?? []);
+  const revertStayArrays = () => {
+    const live = getValues();
+    if (
+      appliedStayRooms.current !== null &&
+      snapshotStayRows(live.stayRooms) === appliedStayRooms.current
+    ) {
+      stayRoomRows.replace([]);
+      appliedStayRooms.current = null;
+    }
+    if (
+      appliedStayMeals.current !== null &&
+      snapshotStayRows(live.stayMeals) === appliedStayMeals.current
+    ) {
+      stayMealRows.replace([]);
+      appliedStayMeals.current = null;
+    }
+  };
+  const applyStayArrays = (
+    rooms: NonNullable<FormValues['stayRooms']>,
+    meals: NonNullable<FormValues['stayMeals']>,
+  ) => {
+    if (appliedStayRooms.current === null) {
+      stayRoomRows.replace(rooms);
+      appliedStayRooms.current = snapshotStayRows(rooms);
+    }
+    if (appliedStayMeals.current === null) {
+      stayMealRows.replace(meals);
+      appliedStayMeals.current = snapshotStayRows(meals);
+    }
+  };
+
+  // Edit hydration: restore the saved record once per voucher. The guest
+  // field array is explicitly replaced (not just reset) because inputs
+  // mounted from the pre-load blank row otherwise keep their stale blank
+  // value instead of the hydrated name. Guarded by voucher id so background
+  // refetches never wipe in-progress edits.
+  const hydratedVoucherId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!existing.data || hydratedVoucherId.current === existing.data.id) return;
+    hydratedVoucherId.current = existing.data.id;
+    const value = existing.data;
+    const savedGuests = (value.guests ?? []).map((row) => ({
+      guestName: row.guestName,
+      age: row.age,
+      sex: row.sex,
+      paxType: row.paxType,
+    }));
+    const savedStayRooms = (value.stayRooms ?? []).map((row) => ({
+      roomType: row.roomType,
+      rooms: row.rooms,
+      extraBedQuantity: row.extraBedQuantity ?? null,
+      childWithoutBedQuantity: row.childWithoutBedQuantity ?? null,
+      notes: row.notes ?? null,
+    }));
+    const savedStayMeals = (value.stayMeals ?? []).map((row) => ({
+      mealPlan: row.mealPlan,
+    }));
+    reset({
+      customerId: value.customerId,
+      queryId: value.queryId,
+      hotelId: value.hotelId,
+      guestName: value.guestName,
+      guestPhone: value.guestPhone,
+      guestEmail: value.guestEmail,
+      adults: value.adults,
+      children: value.children,
+      hotelName: value.hotelName,
+      hotelAddress: value.hotelAddress,
+      hotelCity: value.hotelCity,
+      hotelPhone: value.hotelPhone,
+      hotelEmail: value.hotelEmail,
+      hotelStarRating: value.hotelStarRating,
+      checkIn: value.checkIn,
+      checkOut: value.checkOut,
+      roomTypeName: value.roomTypeName,
+      rooms: value.rooms,
+      mealPlanName: value.mealPlanName,
+      confirmationNumber: value.confirmationNumber,
+      confirmationNumberLabel: value.confirmationNumberLabel ?? null,
+      bookingId: value.bookingId ?? null,
+      bookingIdLabel: value.bookingIdLabel ?? null,
+      specialRequests: value.specialRequests,
+      remarks: value.remarks,
+      termsSnapshot: value.termsSnapshot,
+      pricing: (value.pricing ?? []).map((row) => ({
+        roomType: row.roomType,
+        unit: row.unit,
+        quantity: row.quantity,
+        gst: row.gst,
+        amount: row.amount,
+        taxablePay: row.taxablePay,
+        gstService: row.gstService,
+      })),
+      guests: savedGuests,
+      packageIncludes: value.packageIncludes ?? [],
+      stayRooms: savedStayRooms,
+      stayMeals: savedStayMeals,
+    });
+    guestRows.replace(savedGuests);
+    stayRoomRows.replace(savedStayRooms);
+    stayMealRows.replace(savedStayMeals);
+    // Seed the master-snapshot guard with the hydrated link so opening an
+    // existing voucher never rewrites its saved hotel contact fields from the
+    // master. Only a user-driven hotel change repopulates snapshots.
+    lastHotelSnapshot.current = value.hotelId ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing.data, reset]);
+
+  // Guest Information rows are owned by the Adults/Children counts: the
+  // table always holds exactly (adults + children) entries, adults first.
+  // Growing a count appends blank entries of that category; shrinking drops
+  // entries from the end of that category. Kept entries (and every unrelated
+  // field) are never touched, so typed details and quotation prefills survive
+  // count changes, async prefills, and edit-form hydration alike.
+  //
+  // The wanted counts are read fresh from the form (not from render-scope
+  // `watch` values): edit hydration `reset()`s synchronously earlier in the
+  // same commit, so on cached-data navigation the render-scope counts still
+  // hold pre-hydration defaults while `guests` already contains the restored
+  // rows. Syncing to stale counts replaced every restored name but the first
+  // with blanks — the refresh fixed it only because uncached loads hydrate a
+  // commit later. The watched counts below stay as effect dependencies so
+  // user edits to Adults/Children still re-run the sync.
+  const adultCount = watch('adults') ?? 0;
+  const childCount = watch('children') ?? 0;
+  useEffect(() => {
+    const sanitize = (value: unknown): number => {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+      return Math.min(50, Math.max(0, Math.floor(value)));
+    };
+    const live = getValues();
+    const wantAdults = sanitize(live.adults);
+    const wantChildren = sanitize(live.children);
+    const rows = live.guests ?? [];
+    const haveAdults = rows.filter((row) => row.paxType === 'ADULT');
+    const haveChildren = rows.filter((row) => row.paxType !== 'ADULT');
+    if (haveAdults.length === wantAdults && haveChildren.length === wantChildren) return;
+    const blank = (paxType: 'ADULT' | 'CHILD') => ({
+      guestName: '',
+      age: null,
+      sex: 'M' as const,
+      paxType,
+    });
+    const next = [
+      ...haveAdults.slice(0, wantAdults),
+      ...Array.from({ length: Math.max(0, wantAdults - haveAdults.length) }, () => blank('ADULT')),
+      ...haveChildren.slice(0, wantChildren),
+      ...Array.from({ length: Math.max(0, wantChildren - haveChildren.length) }, () =>
+        blank('CHILD'),
+      ),
+    ];
+    guestRows.replace(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adultCount, childCount]);
 
   if (voucherId && existing.isError) return <Navigate to="/hotel-vouchers" replace />;
   // Every voucher is editable regardless of status; the backend authorizes
@@ -485,10 +738,36 @@ export function HotelVoucherFormPage() {
 
   const submit = async (values: FormValues) => {
     setFormError('');
+    // Pricing left the voucher workflow: it is never shown or entered here.
+    // Strip it from the payload so a saved voucher's stored rows are retained
+    // server-side (the update path only touches supplied fields) instead of
+    // being wiped by an empty invisible list.
+    const { pricing: _retainedPricing, ...rest } = values;
+    void _retainedPricing;
+    // Stay rows: only filled entries persist (blank placeholders are
+    // dropped like guest blanks). The legacy scalars mirror the first row
+    // so older readers keep working; the `rooms` total stays exactly as
+    // stated — it is never recomputed from the rows.
+    const stayRooms = (values.stayRooms ?? [])
+      .map(cleanRow)
+      .filter((row) => typeof row.roomType === 'string' && row.roomType.trim().length > 0);
+    const stayMeals = (values.stayMeals ?? [])
+      .map(cleanRow)
+      .filter((row) => typeof row.mealPlan === 'string' && row.mealPlan.trim().length > 0);
     const payload = {
-      ...values,
-      pricing: values.pricing?.map(cleanRow),
-      guests: values.guests?.map(cleanRow),
+      ...rest,
+      roomTypeName:
+        stayRooms[0]?.roomType?.trim() || values.roomTypeName?.trim() || null,
+      mealPlanName:
+        stayMeals[0]?.mealPlan?.trim() || values.mealPlanName?.trim() || null,
+      stayRooms,
+      stayMeals,
+      // Guest rows always mirror the Adults/Children counts in the form;
+      // only named travellers are saved, so blank placeholders never block
+      // submit and never persist as fake guests.
+      guests: values.guests
+        ?.map(cleanRow)
+        .filter((row) => typeof row.guestName === 'string' && row.guestName.trim().length > 0),
       // Blank editor rows carry markup without visible text — drop them so
       // no empty package rows or empty terms blobs can be saved.
       packageIncludes: values.packageIncludes?.filter((item) => !isBlankHtml(item)),
@@ -515,11 +794,50 @@ export function HotelVoucherFormPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="mx-auto w-full max-w-5xl space-y-5 pb-28">
+      <nav aria-label="Breadcrumb">
+        <ol className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <li>
+            <Link to="/" className="hover:underline">
+              Home
+            </Link>
+          </li>
+          <li aria-hidden="true">/</li>
+          <li>
+            <Link to="/hotel-vouchers" className="hover:underline">
+              Hotel
+            </Link>
+          </li>
+        </ol>
+      </nav>
       <PageHeader
         title={isEdit ? 'Edit Hotel Voucher' : 'New Hotel Voucher'}
         description="Service-confirmation document. Saved snapshots update when edited."
       />
+      <nav
+        aria-label="Form sections"
+        className="rounded-xl border bg-card px-4 py-3 shadow-sm"
+      >
+        <ol className="flex flex-wrap items-center gap-x-1 gap-y-2 text-sm">
+          {FORM_STEPS.filter((step) => step.id !== 'voucher-quotation' || canUseQuotations).map(
+            (step, index) => (
+              <li key={step.id} className="flex items-center gap-1">
+                {index > 0 && (
+                  <span aria-hidden="true" className="text-slate-300">
+                    ›
+                  </span>
+                )}
+                <a
+                  href={`#${step.id}`}
+                  className="rounded-full px-2.5 py-1 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                >
+                  {index + 1}. {step.label}
+                </a>
+              </li>
+            ),
+          )}
+        </ol>
+      </nav>
       <form onSubmit={handleSubmit(submit)} className="space-y-5">
         {formError && (
           <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -528,8 +846,11 @@ export function HotelVoucherFormPage() {
         )}
 
         {canUseQuotations && (
-          <section className="rounded-xl border bg-card p-5 shadow-sm">
-            <h2 className="mb-1 text-base font-semibold">From Quotation (optional)</h2>
+          <section
+            id="voucher-quotation"
+            className="scroll-mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-5 shadow-sm"
+          >
+            <SectionHeading icon={FileText} title="From Quotation (optional)" />
             <p className="mb-4 text-sm text-muted-foreground">
               Select a quotation to prefill lead, guest, hotel, and stay details. Every field
               stays editable.
@@ -589,8 +910,13 @@ export function HotelVoucherFormPage() {
           </section>
         )}
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold">Hotel Details</h2>          <div className="grid gap-4 md:grid-cols-2">
+        <section id="voucher-hotel" className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm">
+          <SectionHeading icon={Building2} title="Hotel Details" />
+          <p className="mb-4 text-sm text-muted-foreground">
+            Tinted fields are snapshots from the hotel master — editing them here never changes the
+            master record.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <span className="mb-1 block text-sm font-medium">Hotel *</span>
               <MasterSelect
@@ -600,28 +926,31 @@ export function HotelVoucherFormPage() {
                 value={selectedHotelId}
                 onSelect={(option) => pickHotel(option?.id ?? null)}
                 loading={hotels.isLoading}
+                fallbackLabel={
+                  selectedHotelId ? (existing.data?.hotelName ?? undefined) : undefined
+                }
               />
             </div>
             <FormField label="Hotel Name *" error={errors.hotelName?.message}>
-              <input aria-label="Hotel Name" className={inputClass} {...register('hotelName')} />
+              <input aria-label="Hotel Name" className={snapshotClass} {...register('hotelName')} />
             </FormField>
             <FormField label="City" error={errors.hotelCity?.message}>
-              <input aria-label="Hotel City" className={inputClass} {...register('hotelCity')} />
+              <input aria-label="Hotel City" className={snapshotClass} {...register('hotelCity')} />
             </FormField>
             <div className="md:col-span-2">
               <FormField label="Address" error={errors.hotelAddress?.message}>
                 <input
                   aria-label="Hotel Address"
-                  className={inputClass}
+                  className={snapshotClass}
                   {...register('hotelAddress')}
                 />
               </FormField>
             </div>
             <FormField label="Phone" error={errors.hotelPhone?.message}>
-              <input aria-label="Hotel Phone" className={inputClass} {...register('hotelPhone')} />
+              <input aria-label="Hotel Phone" className={snapshotClass} {...register('hotelPhone')} />
             </FormField>
             <FormField label="Email" error={errors.hotelEmail?.message}>
-              <input aria-label="Hotel Email" className={inputClass} {...register('hotelEmail')} />
+              <input aria-label="Hotel Email" className={snapshotClass} {...register('hotelEmail')} />
             </FormField>
             <div>
               <input
@@ -654,7 +983,7 @@ export function HotelVoucherFormPage() {
               <input
                 aria-label="Booking ID"
                 className={inputClass}
-                placeholder="Optional external booking reference"
+                placeholder=""
                 {...register('bookingId')}
               />
               {errors.bookingIdLabel?.message && (
@@ -667,8 +996,8 @@ export function HotelVoucherFormPage() {
           </div>
         </section>
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold">Guest Details</h2>
+        <section id="voucher-guest" className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm">
+          <SectionHeading icon={Users} title="Guest Details" />
           <div className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <span className="mb-1 block text-sm font-medium">Lead (optional)</span>
@@ -679,6 +1008,9 @@ export function HotelVoucherFormPage() {
                 value={watch('queryId') ?? null}
                 onSelect={(option) => pickLead(option?.id ?? null)}
                 loading={leads.isLoading}
+                fallbackLabel={
+                  watch('queryId') ? (existing.data?.query?.customerName ?? undefined) : undefined
+                }
               />
             </div>
             <FormField label="Guest Name *" error={errors.guestName?.message}>
@@ -722,8 +1054,8 @@ export function HotelVoucherFormPage() {
           </div>
         </section>
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold">Stay Details</h2>
+        <section id="voucher-stay" className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm">
+          <SectionHeading icon={CalendarDays} title="Stay Details" />
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Check-in *" error={errors.checkIn?.message}>
               <input
@@ -741,198 +1073,262 @@ export function HotelVoucherFormPage() {
                 {...register('checkOut')}
               />
             </FormField>
-            <p className="text-sm text-muted-foreground md:col-span-2" aria-live="polite">
+            <p
+              className="w-fit rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700 md:col-span-2"
+              aria-live="polite"
+            >
               Nights: {nights ?? '—'}
             </p>
-            <FormField label="Room Type" error={errors.roomTypeName?.message}>
-              <input aria-label="Room Type" className={inputClass} {...register('roomTypeName')} />
-            </FormField>
-            <FormField label="Meal Plan" error={errors.mealPlanName?.message}>
-              <input aria-label="Meal Plan" className={inputClass} {...register('mealPlanName')} />
-            </FormField>
           </div>
         </section>
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-1 text-base font-semibold">Pricing (Optional)</h2>
+        <section
+          id="voucher-rooms"
+          className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm"
+        >
+          <SectionHeading icon={BedDouble} title="Rooms" />
           <p className="mb-4 text-sm text-muted-foreground">
-            Manually entered per-room pricing. Leave empty when not needed.
+            Every room configuration of the stay, each with its own quantity.
+            Imported from the quotation hotel option when one is selected.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-sm">
+          {stayRoomRows.fields.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/60 px-4 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                No room entries yet. Select a quotation hotel or add the first one below.
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-3"
+                onClick={() =>
+                  stayRoomRows.append({
+                    roomType: '',
+                    rooms: 1,
+                    extraBedQuantity: null,
+                    childWithoutBedQuantity: null,
+                    notes: null,
+                  })
+                }
+              >
+                Add Room
+              </Button>
+            </div>
+          ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[760px] border-collapse bg-card text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase text-muted-foreground">
+                <tr className="bg-slate-100 text-left text-xs uppercase text-muted-foreground">
                   <th className="w-10 px-2 py-2 font-medium">#</th>
                   <th className="min-w-40 px-2 py-2 font-medium">Room Type</th>
-                  <th className="w-20 px-2 py-2 font-medium">Unit</th>
-                  <th className="w-24 px-2 py-2 font-medium">Quantity</th>
-                  <th className="w-20 px-2 py-2 font-medium">GST %</th>
-                  <th className="w-28 px-2 py-2 font-medium">Amount</th>
-                  <th className="w-28 px-2 py-2 font-medium">Taxable Pay</th>
-                  <th className="w-28 px-2 py-2 font-medium">GST + Service</th>
-                  <th className="w-32 px-2 py-2 font-medium">Actions</th>
+                  <th className="w-20 px-2 py-2 text-right font-medium">Rooms</th>
+                  <th className="w-24 px-2 py-2 text-right font-medium">Extra Bed</th>
+                  <th className="w-28 px-2 py-2 text-right font-medium">Child w/o Bed</th>
+                  <th className="min-w-40 px-2 py-2 font-medium">Remark</th>
+                  <th className="w-16 px-2 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {pricingRows.fields.map((field, index) => (
+                {stayRoomRows.fields.map((field, index) => (
                   <tr key={field.id} className="border-t border-border align-top">
                     <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
                     <td className="px-2 py-2">
                       <input
-                        aria-label={`Pricing row ${index + 1} room type`}
+                        aria-label={`Stay room ${index + 1} type`}
                         className={inputClass}
-                        {...register(`pricing.${index}.roomType`)}
+                        {...register(`stayRooms.${index}.roomType`)}
                       />
-                      {errors.pricing?.[index]?.roomType?.message && (
+                      {errors.stayRooms?.[index]?.roomType?.message && (
                         <p className="mt-1 text-xs text-red-600">
-                          {errors.pricing?.[index]?.roomType?.message}
+                          {errors.stayRooms?.[index]?.roomType?.message}
                         </p>
                       )}
                     </td>
                     <td className="px-2 py-2">
                       <input
-                        aria-label={`Pricing row ${index + 1} unit`}
+                        aria-label={`Stay room ${index + 1} rooms`}
                         type="number"
-                        min={0}
+                        min={1}
                         className={inputClass}
-                        {...register(`pricing.${index}.unit`)}
+                        {...register(`stayRooms.${index}.rooms`, { valueAsNumber: true })}
                       />
                     </td>
                     <td className="px-2 py-2">
                       <input
-                        aria-label={`Pricing row ${index + 1} quantity`}
+                        aria-label={`Stay room ${index + 1} extra beds`}
                         type="number"
                         min={0}
                         className={inputClass}
-                        {...register(`pricing.${index}.quantity`)}
+                        {...register(`stayRooms.${index}.extraBedQuantity`, {
+                          valueAsNumber: true,
+                        })}
                       />
                     </td>
                     <td className="px-2 py-2">
                       <input
-                        aria-label={`Pricing row ${index + 1} GST percent`}
+                        aria-label={`Stay room ${index + 1} children without bed`}
                         type="number"
                         min={0}
-                        max={100}
-                        step="any"
                         className={inputClass}
-                        {...register(`pricing.${index}.gst`)}
+                        {...register(`stayRooms.${index}.childWithoutBedQuantity`, {
+                          valueAsNumber: true,
+                        })}
                       />
                     </td>
                     <td className="px-2 py-2">
                       <input
-                        aria-label={`Pricing row ${index + 1} amount`}
-                        type="number"
-                        min={0}
-                        step="any"
+                        aria-label={`Stay room ${index + 1} remark`}
                         className={inputClass}
-                        {...register(`pricing.${index}.amount`)}
+                        placeholder="e.g. high floor"
+                        {...register(`stayRooms.${index}.notes`)}
                       />
                     </td>
                     <td className="px-2 py-2">
-                      <input
-                        aria-label={`Pricing row ${index + 1} taxable pay`}
-                        type="number"
-                        min={0}
-                        step="any"
-                        className={inputClass}
-                        {...register(`pricing.${index}.taxablePay`)}
-                      />
-                    </td>
-                    <td className="px-2 py-2">
-                      <input
-                        aria-label={`Pricing row ${index + 1} GST plus service`}
-                        type="number"
-                        min={0}
-                        step="any"
-                        className={inputClass}
-                        {...register(`pricing.${index}.gstService`)}
-                      />
-                    </td>
-                    <td className="px-2 py-2">
-                      <div className="flex gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Move pricing row ${index + 1} up`}
-                          disabled={index === 0}
-                          onClick={() => pricingRows.move(index, index - 1)}
-                        >
-                          ↑
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Move pricing row ${index + 1} down`}
-                          disabled={index === pricingRows.fields.length - 1}
-                          onClick={() => pricingRows.move(index, index + 1)}
-                        >
-                          ↓
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Remove pricing row ${index + 1}`}
-                          onClick={() => pricingRows.remove(index)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Remove stay room ${index + 1}`}
+                        onClick={() => stayRoomRows.remove(index)}
+                      >
+                        ✕
+                      </Button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {pricingRows.fields.length > 0 && (
-            <p className="mt-3 text-sm font-medium" aria-live="polite">
-              Total Payable Amount: {totalPayable.toLocaleString('en-IN')}
-            </p>
           )}
+          {stayRoomRows.fields.length > 0 && (
           <div className="mt-3">
             <Button
               type="button"
               variant="secondary"
               onClick={() =>
-                pricingRows.append({
+                stayRoomRows.append({
                   roomType: '',
-                  unit: 1,
-                  quantity: 1,
-                  gst: null,
-                  amount: null,
-                  taxablePay: null,
-                  gstService: null,
+                  rooms: 1,
+                  extraBedQuantity: null,
+                  childWithoutBedQuantity: null,
+                  notes: null,
                 })
               }
             >
-              Add Pricing Row
+              Add Room
             </Button>
           </div>
+          )}
         </section>
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-1 text-base font-semibold">Guest Information (Optional)</h2>
+        <section
+          id="voucher-meals"
+          className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm"
+        >
+          <SectionHeading icon={UtensilsCrossed} title="Meal Plans" />
           <p className="mb-4 text-sm text-muted-foreground">
-            Detailed guest list in addition to the guest summary above. Leave empty when not needed.
+            Every meal plan of the stay, in the quotation&apos;s order where imported.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] border-collapse text-sm">
+          {stayMealRows.fields.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/60 px-4 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                No meal plans yet. Select a quotation hotel or add the first one below.
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-3"
+                onClick={() => stayMealRows.append({ mealPlan: '' })}
+              >
+                Add Meal Plan
+              </Button>
+            </div>
+          ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[520px] border-collapse bg-card text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase text-muted-foreground">
+                <tr className="bg-slate-100 text-left text-xs uppercase text-muted-foreground">
                   <th className="w-10 px-2 py-2 font-medium">#</th>
-                  <th className="min-w-44 px-2 py-2 font-medium">Guest Name</th>
-                  <th className="w-20 px-2 py-2 font-medium">Age</th>
-                  <th className="w-20 px-2 py-2 font-medium">Sex</th>
-                  <th className="w-28 px-2 py-2 font-medium">No of Pax</th>
-                  <th className="w-32 px-2 py-2 font-medium">Actions</th>
+                  <th className="min-w-48 px-2 py-2 font-medium">Meal Plan</th>
+                  <th className="w-16 px-2 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {guestRows.fields.map((field, index) => (
+                {stayMealRows.fields.map((field, index) => (
                   <tr key={field.id} className="border-t border-border align-top">
                     <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                    <td className="px-2 py-2">
+                      <input
+                        aria-label={`Stay meal ${index + 1} plan`}
+                        className={inputClass}
+                        {...register(`stayMeals.${index}.mealPlan`)}
+                      />
+                      {errors.stayMeals?.[index]?.mealPlan?.message && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.stayMeals?.[index]?.mealPlan?.message}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-2 py-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Remove stay meal ${index + 1}`}
+                        onClick={() => stayMealRows.remove(index)}
+                      >
+                        ✕
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          )}
+          {stayMealRows.fields.length > 0 && (
+          <div className="mt-3">
+            <Button type="button" variant="secondary" onClick={() => stayMealRows.append({ mealPlan: '' })}>
+              Add Meal Plan
+            </Button>
+          </div>
+          )}
+        </section>
+
+        <section id="voucher-guests" className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm">
+          <SectionHeading icon={ClipboardList} title="Guest Information (Optional)" badge="Optional" />
+          <p className="mb-4 text-sm text-muted-foreground">
+            One entry per traveller, following the Adults and Children counts above. Changing a
+            count adds or removes entries; details you already typed are kept.
+          </p>
+          {guestRows.fields.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/60 px-4 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                No guest entries — set Adults or Children above to generate them.
+              </p>
+            </div>
+          ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[480px] border-collapse bg-card text-sm">
+              <thead>
+                <tr className="bg-slate-100 text-left text-xs uppercase text-muted-foreground">
+                  <th className="px-2 py-2 font-medium">#</th>
+                  <th className="w-28 px-2 py-2 font-medium">Category</th>
+                  <th className="min-w-64 px-2 py-2 font-medium">Guest Name</th>
+                  <th className="w-28 px-2 py-2 font-medium">No of Pax</th>
+                </tr>
+              </thead>
+              <tbody>
+                {guestRows.fields.map((field, index) => {
+                  const pax = field.paxType === 'CHILD' ? 'CHILD' : 'ADULT';
+                  const categoryNumber =
+                    guestRows.fields.slice(0, index).filter((row) => row.paxType === field.paxType)
+                      .length + 1;
+                  return (
+                  <tr key={field.id} className="border-t border-border align-top">
+                    <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                    <td className="px-2 py-2 font-medium">
+                      {pax === 'ADULT' ? `Adult ${categoryNumber}` : `Child ${categoryNumber}`}
+                    </td>
                     <td className="px-2 py-2">
                       <input
                         aria-label={`Guest ${index + 1} name`}
@@ -945,97 +1341,43 @@ export function HotelVoucherFormPage() {
                         </p>
                       )}
                     </td>
-                    <td className="px-2 py-2">
-                      <input
-                        aria-label={`Guest ${index + 1} age`}
-                        type="number"
-                        min={0}
-                        max={120}
-                        className={inputClass}
-                        {...register(`guests.${index}.age`)}
-                      />
-                    </td>
-                    <td className="px-2 py-2">
-                      <select
-                        aria-label={`Guest ${index + 1} sex`}
-                        className={inputClass}
-                        {...register(`guests.${index}.sex`)}
-                      >
-                        <option value="M">M</option>
-                        <option value="F">F</option>
-                      </select>
-                    </td>
-                    <td className="px-2 py-2">
-                      <select
-                        aria-label={`Guest ${index + 1} pax type`}
-                        className={inputClass}
-                        {...register(`guests.${index}.paxType`)}
-                      >
-                        <option value="ADULT">Adult</option>
-                        <option value="CHILD">Child</option>
-                      </select>
-                    </td>
-                    <td className="px-2 py-2">
-                      <div className="flex gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Move guest ${index + 1} up`}
-                          disabled={index === 0}
-                          onClick={() => guestRows.move(index, index - 1)}
-                        >
-                          ↑
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Move guest ${index + 1} down`}
-                          disabled={index === guestRows.fields.length - 1}
-                          onClick={() => guestRows.move(index, index + 1)}
-                        >
-                          ↓
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Remove guest ${index + 1}`}
-                          onClick={() => guestRows.remove(index)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
+                    <td className="px-2 py-2 text-muted-foreground">
+                      {pax === 'ADULT' ? 'Adult' : 'Child'}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          <div className="mt-3">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() =>
-                guestRows.append({ guestName: '', age: null, sex: 'M', paxType: 'ADULT' })
-              }
-            >
-              Add Guest
-            </Button>
-          </div>
+          )}
         </section>
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-1 text-base font-semibold">Package Includes (Optional)</h2>
+        <section id="voucher-includes" className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm">
+          <SectionHeading icon={PackagePlus} title="Package Includes (Optional)" badge="Optional" />
           <p className="mb-4 text-sm text-muted-foreground">
             Items included in the package, shown paired in the voucher PDF. Leave empty when not
             needed.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] border-collapse text-sm">
+          {packageRows.fields.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/60 px-4 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                No inclusions yet. Add the first one below.
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-3"
+                onClick={() => packageRows.append('')}
+              >
+                Add Item
+              </Button>
+            </div>
+          ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[520px] border-collapse bg-card text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase text-muted-foreground">
+                <tr className="bg-slate-100 text-left text-xs uppercase text-muted-foreground">
                   <th className="w-10 px-2 py-2 font-medium">#</th>
                   <th className="min-w-48 px-2 py-2 font-medium">Item</th>
                   <th className="w-32 px-2 py-2 font-medium">Actions</th>
@@ -1101,15 +1443,19 @@ export function HotelVoucherFormPage() {
               </tbody>
             </table>
           </div>
+          )}
+          {packageRows.fields.length > 0 && (
           <div className="mt-3">
             <Button type="button" variant="secondary" onClick={() => packageRows.append('')}>
               Add Item
             </Button>
           </div>
+          )}
         </section>
 
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold">Terms & Conditions</h2>
+        <section id="voucher-terms" className="scroll-mt-4 rounded-xl border bg-card p-5 shadow-sm">
+          <SectionHeading icon={ScrollText} title="Terms & Conditions" />
+          <div className="rounded-lg border border-slate-200 bg-white p-1.5">
           <Controller
             control={control}
             name="termsSnapshot"
@@ -1124,9 +1470,10 @@ export function HotelVoucherFormPage() {
           {errors.termsSnapshot?.message && (
             <p className="mt-1 text-xs text-red-600">{errors.termsSnapshot.message}</p>
           )}
+          </div>
         </section>
 
-        <div className="flex justify-end gap-2">
+        <div className="sticky bottom-0 z-10 -mx-1 flex flex-col gap-2 border-t bg-card/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur sm:flex-row sm:items-center sm:justify-end">
           <Link to={isEdit ? `/hotel-vouchers/${voucherId}` : '/hotel-vouchers'}>
             <Button variant="secondary">Cancel</Button>
           </Link>

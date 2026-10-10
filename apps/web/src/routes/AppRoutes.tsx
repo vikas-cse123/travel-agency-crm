@@ -59,14 +59,6 @@ import { BookingsPage } from '@/pages/bookings/BookingsPage';
 import { NewBookingPage } from '@/pages/bookings/NewBookingPage';
 import { BookingCreateFlow } from '@/pages/bookings/CreateBookingFromLeadPage';
 import { BookingWorkspacePage } from '@/pages/bookings/BookingWorkspacePage';
-import { CustomersPage } from '@/pages/customers/CustomersPage';
-import { CustomerFormPage } from '@/pages/customers/CustomerFormPage';
-import { CustomerWorkspacePage } from '@/pages/customers/CustomerWorkspacePage';
-import { VendorsPage } from '@/pages/vendors/VendorsPage';
-import { VendorFormPage } from '@/pages/vendors/VendorFormPage';
-import { VendorWorkspacePage } from '@/pages/vendors/VendorWorkspacePage';
-import { VendorServicesPage } from '@/pages/vendors/VendorServicesPage';
-import { VendorServiceFormPage } from '@/pages/vendors/VendorServiceFormPage';
 import { CitiesPage } from '@/pages/masters/CitiesPage';
 import { CityDetailsPage } from '@/pages/masters/CityDetailsPage';
 import { CityFormPage } from '@/pages/masters/CityFormPage';
@@ -451,93 +443,33 @@ export function AppRoutes() {
               </PermissionRoute>
             }
           />
-          <Route
-            path="/customers"
-            element={
-              <PermissionRoute permission={PERMISSIONS.CUSTOMERS_VIEW}>
-                <CustomersPage />
-              </PermissionRoute>
-            }
-          />
-          <Route
-            path="/customers/new"
-            element={
-              <PermissionRoute permission={PERMISSIONS.CUSTOMERS_CREATE}>
-                <CustomerFormPage />
-              </PermissionRoute>
-            }
-          />
-          <Route
-            path="/customers/:customerId"
-            element={
-              <PermissionRoute permission={PERMISSIONS.CUSTOMERS_VIEW}>
-                <CustomerWorkspacePage />
-              </PermissionRoute>
-            }
-          />
+          {/* Retired standalone Customers/Vendors UI: keep the paths
+              registered so direct navigation follows the existing
+              redirect convention (like /follow-ups above) instead of
+              rendering the retired pages. Page components, permissions,
+              APIs and data are untouched. */}
+          <Route path="/customers" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/customers/new" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/customers/:customerId" element={<Navigate to="/dashboard" replace />} />
           <Route
             path="/customers/:customerId/edit"
-            element={
-              <PermissionRoute permission={PERMISSIONS.CUSTOMERS_UPDATE}>
-                <CustomerFormPage />
-              </PermissionRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
-          <Route
-            path="/vendors"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_VIEW}>
-                <VendorsPage />
-              </PermissionRoute>
-            }
-          />
-          <Route
-            path="/vendors/new"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_CREATE}>
-                <VendorFormPage />
-              </PermissionRoute>
-            }
-          />
-          <Route
-            path="/vendors/:vendorId"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_VIEW}>
-                <VendorWorkspacePage />
-              </PermissionRoute>
-            }
-          />
-          <Route
-            path="/vendors/:vendorId/edit"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_UPDATE}>
-                <VendorFormPage />
-              </PermissionRoute>
-            }
-          />
+          <Route path="/vendors" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/vendors/new" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/vendors/:vendorId" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/vendors/:vendorId/edit" element={<Navigate to="/dashboard" replace />} />
           <Route
             path="/vendors/:vendorId/services"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_VIEW}>
-                <VendorServicesPage />
-              </PermissionRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/vendors/:vendorId/services/new"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_MANAGE_SERVICES}>
-                <VendorServiceFormPage />
-              </PermissionRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/vendors/:vendorId/services/:serviceId/edit"
-            element={
-              <PermissionRoute permission={PERMISSIONS.VENDORS_MANAGE_SERVICES}>
-                <VendorServiceFormPage />
-              </PermissionRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/queries/:queryId/edit"

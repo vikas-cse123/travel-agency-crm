@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Download, Eye, Pencil, Trash2, ArrowLeft } from 'lucide-react';
 import { PERMISSIONS } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 // Shared plain-or-markup renderer (same helper the editor uses).
@@ -48,6 +49,29 @@ export function HotelVoucherDetailsPage() {
   const pricingRows = value.pricing ?? [];
   const guestRows = value.guests ?? [];
   const packageItems = value.packageIncludes ?? [];
+  // Room/meal rows with a legacy-scalar fallback for vouchers saved before
+  // stay rows existed (single room/meal snapshots).
+  const stayRoomRows =
+    (value.stayRooms ?? []).length > 0
+      ? (value.stayRooms ?? [])
+      : value.roomTypeName
+        ? [
+            {
+              id: 'legacy-room',
+              roomType: value.roomTypeName,
+              rooms: value.rooms,
+              extraBedQuantity: null,
+              childWithoutBedQuantity: null,
+              notes: null,
+            },
+          ]
+        : [];
+  const stayMealRows =
+    (value.stayMeals ?? []).length > 0
+      ? (value.stayMeals ?? [])
+      : value.mealPlanName
+        ? [{ id: 'legacy-meal', mealPlan: value.mealPlanName }]
+        : [];
 
   const run = async (task: () => Promise<unknown>) => {
     setActionError('');
@@ -91,13 +115,6 @@ export function HotelVoucherDetailsPage() {
     }
   };
 
-  const generateAndOpen = () =>
-    openPdfInNewTab(async () => {
-      const document = await generate.mutateAsync();
-      const target = await hotelVoucherDownloadUrl(value.id, document.id);
-      return { url: target.url, title: friendlyTitle(target.fileName) };
-    });
-
   const downloadLatest = () =>
     openPdfInNewTab(async () => {
       const document = await ensurePdf();
@@ -123,7 +140,7 @@ export function HotelVoucherDetailsPage() {
       return;
     }
     if (!document) {
-      setActionError('Hotel voucher PDF could not be generated. Try Generate PDF to retry.');
+      setActionError('Hotel voucher PDF could not be generated. Please try again.');
       return;
     }
     await openPdfInNewTab(async () => {
@@ -156,23 +173,46 @@ export function HotelVoucherDetailsPage() {
         description={`Voucher snapshots stay frozen even if masters change.`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link to="/hotel-vouchers">
+              <Button variant="secondary" title="Back to hotel vouchers">
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+              </Button>
+            </Link>
             {canUpdate && (
               <Link to={`/hotel-vouchers/${value.id}/edit`}>
-                <Button variant="secondary">Edit</Button>
+                <Button variant="secondary" title="Edit voucher">
+                  <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
+                </Button>
               </Link>
             )}
             {canExport && (
-              <Button
-                variant="secondary"
-                isLoading={generate.isPending}
-                onClick={() => void generateAndOpen()}
-              >
-                Generate PDF
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  title="Open the voucher PDF in the browser"
+                  isLoading={generate.isPending}
+                  onClick={() => void openExistingPdf()}
+                >
+                  <Eye className="h-4 w-4" aria-hidden="true" /> Open Voucher
+                </Button>
+                <Button
+                  variant="secondary"
+                  title="Download the voucher PDF"
+                  isLoading={generate.isPending}
+                  onClick={() => void downloadLatest()}
+                >
+                  <Download className="h-4 w-4" aria-hidden="true" /> Download PDF
+                </Button>
+              </>
             )}
             {canDelete && (
-              <Button variant="danger" isLoading={remove.isPending} onClick={deleteVoucher}>
-                Delete
+              <Button
+                variant="danger"
+                title="Delete this voucher"
+                isLoading={remove.isPending}
+                onClick={deleteVoucher}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete
               </Button>
             )}
           </div>
@@ -206,9 +246,7 @@ export function HotelVoucherDetailsPage() {
           <Detail label="Star rating" value={value.hotelStarRating ?? '—'} />
           <Detail label="Check-in" value={value.checkIn} />
           <Detail label="Check-out" value={value.checkOut} />
-          <Detail label="Room type" value={value.roomTypeName ?? '—'} />
           <Detail label="Rooms" value={String(value.rooms)} />
-          <Detail label="Meal plan" value={value.mealPlanName ?? '—'} />
           <Detail
             label={value.confirmationNumberLabel?.trim() || 'Confirmation'}
             value={value.confirmationNumber ?? '—'}
@@ -217,6 +255,56 @@ export function HotelVoucherDetailsPage() {
             label={value.bookingIdLabel?.trim() || 'Booking ID'}
             value={value.bookingId ?? '—'}
           />        </dl>
+        {stayRoomRows.length > 0 && (
+          <div className="mt-5 overflow-x-auto border-t pt-4">
+            <h3 className="mb-2 text-sm font-semibold">Rooms</h3>
+            <table className="w-full min-w-[480px] border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-muted-foreground">
+                  <th className="px-2 py-1 font-medium">#</th>
+                  <th className="px-2 py-1 font-medium">Room Type</th>
+                  <th className="px-2 py-1 font-medium">Rooms</th>
+                  <th className="px-2 py-1 font-medium">Extra Bed</th>
+                  <th className="px-2 py-1 font-medium">Child w/o Bed</th>
+                  <th className="px-2 py-1 font-medium">Remark</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stayRoomRows.map((row, index) => (
+                  <tr key={row.id} className="border-t border-border">
+                    <td className="px-2 py-1 text-muted-foreground">{index + 1}</td>
+                    <td className="px-2 py-1">{row.roomType}</td>
+                    <td className="px-2 py-1">{row.rooms}</td>
+                    <td className="px-2 py-1">{row.extraBedQuantity ?? '—'}</td>
+                    <td className="px-2 py-1">{row.childWithoutBedQuantity ?? '—'}</td>
+                    <td className="px-2 py-1">{row.notes?.trim() ? row.notes : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {stayMealRows.length > 0 && (
+          <div className="mt-5 overflow-x-auto border-t pt-4">
+            <h3 className="mb-2 text-sm font-semibold">Meal Plans</h3>
+            <table className="w-full min-w-[320px] border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-muted-foreground">
+                  <th className="px-2 py-1 font-medium">#</th>
+                  <th className="px-2 py-1 font-medium">Meal Plan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stayMealRows.map((row, index) => (
+                  <tr key={row.id} className="border-t border-border">
+                    <td className="px-2 py-1 text-muted-foreground">{index + 1}</td>
+                    <td className="px-2 py-1">{row.mealPlan}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {pricingRows.length > 0 && (
           <div className="mt-5 overflow-x-auto border-t pt-4">
             <h3 className="mb-2 text-sm font-semibold">Pricing</h3>
@@ -264,8 +352,6 @@ export function HotelVoucherDetailsPage() {
                 <tr className="text-left text-xs uppercase text-muted-foreground">
                   <th className="px-2 py-1 font-medium">#</th>
                   <th className="px-2 py-1 font-medium">Guest Name</th>
-                  <th className="px-2 py-1 font-medium">Age</th>
-                  <th className="px-2 py-1 font-medium">Sex</th>
                   <th className="px-2 py-1 font-medium">No of Pax</th>
                 </tr>
               </thead>
@@ -274,8 +360,6 @@ export function HotelVoucherDetailsPage() {
                   <tr key={row.id} className="border-t border-border">
                     <td className="px-2 py-1 text-muted-foreground">{index + 1}</td>
                     <td className="px-2 py-1">{row.guestName}</td>
-                    <td className="px-2 py-1">{row.age ?? '—'}</td>
-                    <td className="px-2 py-1">{row.sex}</td>
                     <td className="px-2 py-1">{row.paxType === 'ADULT' ? 'Adult' : 'Child'}</td>
                   </tr>
                 ))}
@@ -316,28 +400,6 @@ export function HotelVoucherDetailsPage() {
           </div>
         )}
       </section>
-
-      {canExport && (
-        <section className="rounded-xl border bg-card p-5 shadow-sm">
-          <h2 className="font-semibold">Share</h2>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              isLoading={generate.isPending}
-              onClick={() => void openExistingPdf()}
-            >
-              Open Hotel Voucher
-            </Button>
-            <Button
-              variant="secondary"
-              isLoading={generate.isPending}
-              onClick={() => void downloadLatest()}
-            >
-              Download PDF
-            </Button>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

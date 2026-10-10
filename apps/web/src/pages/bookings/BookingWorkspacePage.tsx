@@ -124,12 +124,9 @@ export function BookingWorkspacePage() {
               {booking.customerName} · {booking.destinationSummary}
             </h1>
             {booking.customer && (
-              <Link
-                className="text-xs font-medium text-brand-700 hover:underline"
-                to={`/customers/${booking.customer.id}`}
-              >
-                View {booking.customer.customerNumber} customer profile
-              </Link>
+              <span className="text-xs font-medium text-slate-500">
+                {booking.customer.customerNumber} customer record
+              </span>
             )}
           </div>
         </div>

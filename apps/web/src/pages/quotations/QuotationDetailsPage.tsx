@@ -481,12 +481,9 @@ export function QuotationDetailsPage() {
               {q.customerName} · {q.destinationSummary}
             </h1>
             {q.customer && (
-              <Link
-                className="text-xs font-medium text-brand-700 hover:underline"
-                to={`/customers/${q.customer.id}`}
-              >
-                View {q.customer.customerNumber} customer profile
-              </Link>
+              <span className="text-xs font-medium text-slate-500">
+                {q.customer.customerNumber} customer record
+              </span>
             )}
           </div>
         </div>

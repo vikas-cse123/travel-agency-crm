@@ -1,0 +1,296 @@
+/* ============================================================================
+ * Hotel Vouchers List — visual parity with the Leads List table.
+ *
+ * Scoped entirely to the Hotel Vouchers page (imported only by
+ * HotelVouchersPage.tsx) so the styling never leaks into other tables.
+ * Reuses the Leads table's proven tokens and density: green header,
+ * compact rows, subtle separators, hover/zebra behavior, toolbar and
+ * horizontal-scroll conventions. No backend, API, or behavior changes.
+ * ==========================================================================*/
+
+.vouchers-page {
+  --vouchers-header-green: #0dbb7a;
+  --vouchers-header-green-dark: #0aa86c;
+  --vouchers-border: #d9e1ec;
+  --vouchers-border-soft: #e4eaf2;
+  --vouchers-row-hover: #f4f8ff;
+  --vouchers-link-blue: #2563eb;
+}
+
+/* ------------------------------ card + toolbar ---------------------------- */
+
+.vouchers-card {
+  background: #ffffff;
+  border: 1px solid var(--vouchers-border, #d9e1ec);
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.vouchers-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--vouchers-border, #d9e1ec);
+}
+
+.vouchers-search {
+  position: relative;
+  flex: 1 1 360px;
+  min-width: 200px;
+}
+
+.vouchers-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.vouchers-search input::placeholder {
+  color: #94a3b8;
+}
+
+.vouchers-search input:focus {
+  outline: none;
+  border-color: var(--vouchers-link-blue, #2563eb);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+}
+
+.vouchers-search .vouchers-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.vouchers-count {
+  font-size: 12.5px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+/* ------------------------------ table scroll ------------------------------ */
+
+.vouchers-table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: #ffffff;
+}
+
+.vouchers-table-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.vouchers-table-scroll::-webkit-scrollbar-track {
+  background: #eef2f7;
+}
+
+.vouchers-table-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 4px;
+}
+
+.vouchers-table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #0dbb7a;
+}
+
+/* ---------------------------------- table --------------------------------- */
+
+.vouchers-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  color: #334155;
+}
+
+.vouchers-thead th {
+  position: relative;
+  height: 40px;
+  padding: 7px 10px;
+  background: var(--vouchers-header-green, #0dbb7a);
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  vertical-align: middle;
+  border-right: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom: 1px solid var(--vouchers-header-green-dark, #0aa86c);
+  white-space: nowrap;
+}
+
+.vouchers-thead th:last-child {
+  border-right: none;
+}
+
+.vouchers-tbody td {
+  padding: 9px 10px;
+  border-right: 1px solid var(--vouchers-border-soft, #e4eaf2);
+  border-bottom: 1px solid var(--vouchers-border-soft, #e4eaf2);
+  vertical-align: top;
+}
+
+.vouchers-tbody td:last-child {
+  border-right: none;
+}
+
+.vouchers-tbody tr {
+  background: #ffffff;
+}
+
+.vouchers-tbody tr:nth-child(even) {
+  background: #fbfcfe;
+}
+
+.vouchers-tbody tr:hover {
+  background: var(--vouchers-row-hover, #f4f8ff);
+}
+
+/* ------------------------------- cell pieces ------------------------------ */
+
+.vouchers-no {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vouchers-guest {
+  font-weight: 600;
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: #1e293b;
+}
+
+.vouchers-guest-link {
+  color: var(--vouchers-link-blue, #2563eb);
+  text-decoration: none;
+}
+
+.vouchers-guest-link:hover {
+  text-decoration: underline;
+}
+
+.vouchers-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 10.5px;
+  color: #7b8aa0;
+  margin-top: 3px;
+}
+
+.vouchers-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.vouchers-stay {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.vouchers-nights {
+  display: inline-flex;
+  align-items: center;
+  height: 21px;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.vouchers-creator {
+  font-size: 11px;
+  color: #334155;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* ----------------------------- compact actions ---------------------------- */
+
+.vouchers-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 140px;
+}
+
+.vouchers-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 12px;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: filter 140ms ease;
+}
+
+.vouchers-action-btn:hover {
+  filter: brightness(0.92);
+}
+
+.vouchers-action-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+}
+
+.vouchers-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vouchers-action-btn--teal {
+  background: #0d9488;
+}
+
+.vouchers-action-btn--blue {
+  background: #2563eb;
+}
+
+.vouchers-action-btn--red {
+  background: #dc2626;
+}
+
+/* --------------------------------- footer --------------------------------- */
+
+.vouchers-footer {
+  border-top: 1px solid var(--vouchers-border, #d9e1ec);
+}
+
+/* --------------------------------- mobile --------------------------------- */
+
+@media (max-width: 767px) {
+  .vouchers-search {
+    min-width: 100%;
+  }
+}

@@ -177,72 +177,16 @@ describe('Phase 18 settings page', () => {
     );
   });
 
-  it('saves a custom hotel voucher colour with live preview and resets to default', async () => {
-    const mock = stub(settings());
+  it('no longer shows the hotel voucher colour control in Branding', async () => {
+    stub(settings());
     renderWithProviders(<SettingsPage />);
     await screen.findByRole('heading', { name: 'Company Settings' });
     await userEvent.click(screen.getByRole('button', { name: 'Branding' }));
-    const hex = await screen.findByLabelText('Hotel voucher primary colour hex');
-    expect(hex).toHaveValue('#3d2352');
-    // No custom color saved yet: no reset control.
-    expect(screen.queryByRole('button', { name: 'Reset to default' })).not.toBeInTheDocument();
-    await userEvent.clear(hex);
-    await userEvent.type(hex, '#2563EB');
-    // Live preview follows the typed color; white text stays readable on blue.
-    const preview = screen.getByLabelText('Hotel voucher colour preview');
-    expect(preview).toHaveStyle({ backgroundColor: '#2563EB' });
-    // A light theme flips the preview text to dark navy for contrast.
-    await userEvent.clear(hex);
-    await userEvent.type(hex, '#FDE68A');
-    expect(preview.firstElementChild).toHaveStyle({ color: '#1f2a5c' });
-    await userEvent.click(screen.getByRole('button', { name: 'Save voucher colour' }));
-    await waitFor(() =>
-      expect(
-        mock.mock.calls.some(([url, o]) => {
-          const body = o?.body ? JSON.parse(String(o.body)) : null;
-          return (
-            String(url).endsWith('/settings/branding') &&
-            o?.method === 'PATCH' &&
-            body?.hotelVoucherPrimaryColor === '#fde68a'
-          );
-        }),
-      ).toBe(true),
-    );
-
-    // A saved custom color offers reset, which clears back to null.
-    expect(await screen.findByText('Hotel voucher PDF')).toBeInTheDocument();
-  });
-
-  it('resets a saved hotel voucher colour back to the default theme', async () => {
-    const mock = stub(
-      settings({
-        branding: {
-          primaryColor: '#2563eb',
-          hasLogo: false,
-          logoMimeType: null,
-          logoFileSize: null,
-          hotelVoucherPrimaryColor: '#15803D',
-        },
-      }),
-    );
-    renderWithProviders(<SettingsPage />);
-    await screen.findByRole('heading', { name: 'Company Settings' });
-    await userEvent.click(screen.getByRole('button', { name: 'Branding' }));
-    const hex = await screen.findByLabelText('Hotel voucher primary colour hex');
-    expect(hex).toHaveValue('#15803D');
-    await userEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
-    await waitFor(() =>
-      expect(
-        mock.mock.calls.some(([url, o]) => {
-          const body = o?.body ? JSON.parse(String(o.body)) : null;
-          return (
-            String(url).endsWith('/settings/branding') &&
-            o?.method === 'PATCH' &&
-            body?.hotelVoucherPrimaryColor === null
-          );
-        }),
-      ).toBe(true),
-    );
+    // The voucher control moved to the Hotel Vouchers page; logo stays.
+    expect(screen.queryByText('Hotel voucher PDF')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Hotel voucher primary colour hex')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Hotel voucher colour preview')).not.toBeInTheDocument();
+    expect(await screen.findByText('Company logo')).toBeInTheDocument();
   });
 
   it('hides the Bank Account section entirely while unrelated settings still work', async () => {

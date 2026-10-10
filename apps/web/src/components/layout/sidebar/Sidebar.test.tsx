@@ -11,6 +11,7 @@ import {
 } from './sidebar-state';
 import { isNavPathActive } from '../navigation';
 import { SHOW_BOOKINGS_NAVIGATION, SHOW_QUOTATION_TEMPLATES_NAVIGATION } from '../navigation';
+import { SHOW_CUSTOMERS_NAVIGATION, SHOW_VENDORS_NAVIGATION } from '../navigation';
 import { SHOW_REMINDERS_NAVIGATION } from '../navigation';
 
 const auth = vi.hoisted(() => ({
@@ -83,16 +84,22 @@ describe('Sidebar expanded state', () => {
   it('renders the labels of every permitted module', () => {
     renderSidebar();
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Customers' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Quotations' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Masters' })).toBeInTheDocument();
+  });
+
+  it('does not render the retired Customers or Vendors modules', () => {
+    renderSidebar();
+    expect(screen.queryByRole('link', { name: 'Customers' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Vendors' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Customers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vendors')).not.toBeInTheDocument();
   });
 
   it('renders the section headings', () => {
     renderSidebar();
     expect(screen.getByText('General')).toBeInTheDocument();
     expect(screen.getByText('Sales')).toBeInTheDocument();
-    expect(screen.getByText('Operations')).toBeInTheDocument();
     expect(screen.getByText('Administration')).toBeInTheDocument();
     // "Masters" is both a heading and the group button label.
     expect(screen.getAllByText('Masters').length).toBeGreaterThan(0);
@@ -120,14 +127,21 @@ describe('Temporarily hidden sidebar modules', () => {
     expect(screen.queryByText('Bookings')).not.toBeInTheDocument();
   });
 
-  it('keeps the remaining Sales and Operations entries unchanged', () => {
+  it('keeps the remaining Sales entries unchanged and retires Operations', () => {
     renderSidebar();
     expect(screen.getByRole('link', { name: 'Quotations' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Customers' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Vendors' })).toBeInTheDocument();
-    // Both sections still render because their other items remain.
+    expect(screen.queryByRole('link', { name: 'Customers' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Vendors' })).not.toBeInTheDocument();
+    // Sales still renders because Quotations remains; Operations is gone because
+    // Bookings, Customers and Vendors are all retired/hidden (empty sections
+    // are never rendered).
     expect(screen.getByText('Sales')).toBeInTheDocument();
-    expect(screen.getByText('Operations')).toBeInTheDocument();
+    expect(screen.queryByText('Operations')).not.toBeInTheDocument();
+  });
+
+  it('retires Customers and Vendors through explicit, reversible visibility flags', () => {
+    expect(SHOW_CUSTOMERS_NAVIGATION).toBe(false);
+    expect(SHOW_VENDORS_NAVIGATION).toBe(false);
   });
 
   it('hides the dead Reminders group, including Booking Reminders', () => {
@@ -162,40 +176,40 @@ describe('Sidebar collapsed state', () => {
   it('hides labels on the collapsed rail', () => {
     renderSidebar({ collapsed: true });
     // Labels stay in the DOM for the mobile drawer but are hidden on the rail.
-    const label = screen.getByText('Customers');
+    const label = screen.getByText('Quotations');
     expect(label.className).toContain('lg:hidden');
   });
 
   it('still exposes an accessible name for icon-only links', () => {
     renderSidebar({ collapsed: true });
     expect(screen.getByRole('link', { name: 'Quotations' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Customers' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Leads' })).toBeInTheDocument();
   });
 
   it('shows a tooltip on hover with a small delay', async () => {
     renderSidebar({ collapsed: true });
-    const customers = screen.getByRole('link', { name: 'Customers' });
-    fireEvent.mouseEnter(customers);
+    const quotations = screen.getByRole('link', { name: 'Quotations' });
+    fireEvent.mouseEnter(quotations);
     await screen.findByRole('tooltip');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Customers');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Quotations');
   });
 
   it('hides the tooltip on pointer leave', async () => {
     renderSidebar({ collapsed: true });
-    const customers = screen.getByRole('link', { name: 'Customers' });
-    fireEvent.mouseEnter(customers);
+    const quotations = screen.getByRole('link', { name: 'Quotations' });
+    fireEvent.mouseEnter(quotations);
     await screen.findByRole('tooltip');
-    fireEvent.mouseLeave(customers);
+    fireEvent.mouseLeave(quotations);
     await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
   });
 
   it('opens the tooltip on keyboard focus', async () => {
     renderSidebar({ collapsed: true });
-    const vendors = screen.getByRole('link', { name: 'Vendors' });
-    vendors.focus();
-    fireEvent.focus(vendors);
+    const leads = screen.getByRole('link', { name: 'Leads' });
+    leads.focus();
+    fireEvent.focus(leads);
     await screen.findByRole('tooltip');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Vendors');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Leads');
   });
 
   it('expands the sidebar and opens a group when its icon is clicked', () => {
@@ -237,8 +251,8 @@ describe('Collapse preference persistence', () => {
 
 describe('Active route detection', () => {
   it('sets aria-current="page" on the active flat item', () => {
-    renderSidebar({ route: '/customers/123' });
-    expect(screen.getByRole('link', { name: 'Customers' })).toHaveAttribute('aria-current', 'page');
+    renderSidebar({ route: '/queries/123' });
+    expect(screen.getByRole('link', { name: 'Leads' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('does not activate Quotations from a Quotation Templates route', () => {

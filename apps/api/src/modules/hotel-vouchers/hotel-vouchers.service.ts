@@ -8,7 +8,7 @@ import {
 import { prisma } from '../../config/prisma.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import {
-  hotelVoucherObjectKey,
+  hotelVoucherCurrentObjectKey,
   sanitizeFileName,
   storageService,
 } from '../../services/storage/storage.service.js';
@@ -56,6 +56,19 @@ const PRESIGN_TTL_SECONDS = 300;
 const dateOnly = (value: Date | null | undefined): string | null =>
   value ? value.toISOString().slice(0, 10) : null;
 
+/**
+ * Date-only `YYYY-MM-DD` form/API value → instant for a DATE column.
+ *
+ * The form, contracts, and snapshots all carry calendar days, never moments
+ * in time. Parsing as server-local midnight (`T00:00:00`) lands on the
+ * previous UTC day east of Greenwich, and Postgres casts that instant to
+ * DATE in the session timezone — silently storing the wrong day
+ * (e.g. `2026-11-01` became `2026-10-31`). Noon UTC keeps the calendar day
+ * for every realistic server/session timezone pairing, so saves, re-edits,
+ * list filters, and night counts all stay on the selected day.
+ */
+const voucherDateOnly = (value: string): Date => new Date(`${value}T12:00:00Z`);
+
 const money = (value: unknown): number | null => {
   if (value === null || value === undefined) return null;
   const num =
@@ -70,6 +83,107 @@ const nightsBetween = (checkIn: Date | null, checkOut: Date | null): number | nu
   return Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000);
 };
 
+/**
+ * Mirror the first stay row onto the legacy scalar columns (`roomTypeName`,
+ * `mealPlanName`) when rows are supplied but the scalars are absent — the
+ * same first-line-mirror convention quotations use for older readers (list
+ * fallbacks, exports, any code path still reading the scalars). An
+ * explicitly supplied scalar (including null) is never overwritten, and the
+ * `rooms` total is always the caller's stated document total, never a
+ * recomputed sum.
+ */
+function withStayScalarMirror<
+  T extends {
+    stayRooms?: Array<{ roomType?: string | null }> | undefined;
+    stayMeals?: Array<{ mealPlan?: string | null }> | undefined;
+    roomTypeName?: string | null | undefined;
+    mealPlanName?: string | null | undefined;
+  },
+>(input: T): T {
+  const rooms = Array.isArray(input.stayRooms) ? input.stayRooms : null;
+  const meals = Array.isArray(input.stayMeals) ? input.stayMeals : null;
+  const firstRoom = rooms && rooms.length > 0 ? rooms[0]?.roomType?.trim() : '';
+  const firstMeal = meals && meals.length > 0 ? meals[0]?.mealPlan?.trim() : '';
+  return {
+    ...input,
+    ...(rooms && rooms.length > 0 && input.roomTypeName === undefined
+      ? { roomTypeName: firstRoom ? firstRoom : null }
+      : {}),
+    ...(meals && meals.length > 0 && input.mealPlanName === undefined
+      ? { mealPlanName: firstMeal ? firstMeal : null }
+      : {}),
+  };
+}
+
+/** Mirror of the voucher form's star label: category wins, else rating. */
+function voucherHotelStarLabel(
+  starCategory: number | null | undefined,
+  starRating: unknown,
+): string | null {
+  if (starCategory) return `${starCategory} Star`;
+  const numeric =
+    typeof starRating === 'object' && starRating !== null && 'toNumber' in starRating
+      ? (starRating as { toNumber: () => number }).toNumber()
+      : Number(starRating);
+  if (starRating !== null && starRating !== undefined && Number.isFinite(numeric)) {
+    return `${numeric} Star`;
+  }
+  return null;
+}
+
+type LinkedHotel = {
+  companyId: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  starCategory: number | null;
+  starRating: unknown;
+  city: { name: string } | null;
+  company: { isSystem: boolean };
+} | null;
+
+/**
+ * Live-linked hotel data for display and PDF generation.
+ *
+ * When a voucher links a hotel master visible to the caller's company (own
+ * record or system-global), contact fields resolve from that current record
+ * so legitimate master updates are reflected without a new voucher version.
+ * Standalone vouchers (no link) and links whose master is missing, moved to
+ * another tenant, or deleted keep their stored snapshot values, so existing
+ * vouchers always stay usable. Voucher-owned fields (guests, stay dates,
+ * confirmation/booking refs and labels, inclusions, terms) are never
+ * overlaid — they have no authoritative external source.
+ */
+function applyLiveHotel<
+  T extends {
+    hotelId: string | null;
+    hotelName: string;
+    hotelAddress: string | null;
+    hotelCity: string | null;
+    hotelPhone: string | null;
+    hotelEmail: string | null;
+    hotelStarRating: string | null;
+    hotel: LinkedHotel;
+  },
+>(row: T, authCompanyId: string): T {
+  const hotel = row.hotelId ? row.hotel : null;
+  if (!hotel) return row;
+  const visible = hotel.companyId === authCompanyId || hotel.company.isSystem;
+  // An invisible link (e.g. a foreign key set outside validation) must not
+  // leak the other tenant's master through the joined relation either.
+  if (!visible) return { ...row, hotel: null };
+  return {
+    ...row,
+    hotelName: hotel.name,
+    hotelAddress: hotel.address,
+    hotelCity: hotel.city?.name ?? row.hotelCity,
+    hotelPhone: hotel.phone,
+    hotelEmail: hotel.email,
+    hotelStarRating: voucherHotelStarLabel(hotel.starCategory, hotel.starRating),
+  };
+}
+
 function presentVoucher(row: Record<string, unknown>) {
   const {
     companyId,
@@ -82,6 +196,8 @@ function presentVoucher(row: Record<string, unknown>) {
     pricing,
     guests,
     packageIncludes,
+    stayRooms,
+    stayMeals,
     checkIn,
     checkOut,
     ...safe
@@ -116,6 +232,18 @@ function presentVoucher(row: Record<string, unknown>) {
       ? (packageIncludes as Record<string, unknown>[])
           .map((entry) => (typeof entry.item === 'string' ? entry.item : ''))
           .filter((item) => item.length > 0)
+      : [],
+    stayRooms: Array.isArray(stayRooms)
+      ? (stayRooms as Record<string, unknown>[]).map((entry) => {
+          const { companyId: _companyId, voucherId: _voucherId, ...safeEntry } = entry;
+          return safeEntry;
+        })
+      : [],
+    stayMeals: Array.isArray(stayMeals)
+      ? (stayMeals as Record<string, unknown>[]).map((entry) => {
+          const { companyId: _companyId, voucherId: _voucherId, ...safeEntry } = entry;
+          return safeEntry;
+        })
       : [],
     documents: Array.isArray(documents)
       ? (documents as Record<string, unknown>[]).map((document) => {
@@ -158,12 +286,16 @@ async function getVoucher(auth: AuthContext, voucherId: string) {
       hotel: {
         select: {
           id: true,
+          companyId: true,
           name: true,
           address: true,
           phone: true,
           email: true,
           starCategory: true,
+          starRating: true,
           status: true,
+          city: { select: { name: true } },
+          company: { select: { isSystem: true } },
         },
       },
       documents: {
@@ -173,6 +305,8 @@ async function getVoucher(auth: AuthContext, voucherId: string) {
       pricing: { orderBy: { sequence: 'asc' as const } },
       guests: { orderBy: { sequence: 'asc' as const } },
       packageIncludes: { orderBy: { sequence: 'asc' as const } },
+      stayRooms: { orderBy: { sequence: 'asc' as const } },
+      stayMeals: { orderBy: { sequence: 'asc' as const } },
       createdBy: { select: userSelect },
       updatedBy: { select: userSelect },
     },
@@ -279,13 +413,15 @@ export const hotelVouchersService = {
   async list(auth: AuthContext, query: Record<string, unknown>) {
     const pagination = resolvePagination({
       page: Number(query.page) || undefined,
-      pageSize: Number(query.pageSize) || 10,
+      // No explicit default: resolvePagination falls back to the shared
+      // DEFAULT_PAGE_SIZE (20), matching every other server-paginated list.
+      pageSize: Number(query.pageSize) || undefined,
     });
     const search = typeof query.search === 'string' ? query.search.trim() : '';
     const hotelId = typeof query.hotelId === 'string' && query.hotelId ? query.hotelId : undefined;
     const from =
-      typeof query.from === 'string' && query.from ? new Date(`${query.from}T00:00:00`) : null;
-    const to = typeof query.to === 'string' && query.to ? new Date(`${query.to}T00:00:00`) : null;
+      typeof query.from === 'string' && query.from ? voucherDateOnly(query.from) : null;
+    const to = typeof query.to === 'string' && query.to ? voucherDateOnly(query.to) : null;
     const sortBy = String(query.sortBy ?? 'createdAt');
     const order: 'asc' | 'desc' = query.sortOrder === 'asc' ? 'asc' : 'desc';
     const orderBy: Prisma.HotelVoucherOrderByWithRelationInput =
@@ -325,25 +461,40 @@ export const hotelVouchersService = {
         orderBy,
         include: {
           _count: { select: { documents: { where: { deletedAt: null } } } },
+          createdBy: { select: userSelect },
+          hotel: {
+            select: {
+              companyId: true,
+              name: true,
+              address: true,
+              phone: true,
+              email: true,
+              starCategory: true,
+              starRating: true,
+              city: { select: { name: true } },
+              company: { select: { isSystem: true } },
+            },
+          },
         },
       }),
       prisma.hotelVoucher.count({ where }),
     ]);
     return {
-      data: rows.map((row) => presentVoucher(row as unknown as Record<string, unknown>)),
+      data: rows.map((row) => presentVoucher(applyLiveHotel(row, auth.companyId))),
       pagination: buildPaginationMeta(pagination, total),
     };
   },
 
   async details(auth: AuthContext, voucherId: string) {
-    return presentVoucher(
-      (await getVoucher(auth, voucherId)) as unknown as Record<string, unknown>,
-    );
+    return presentVoucher(applyLiveHotel(await getVoucher(auth, voucherId), auth.companyId));
   },
 
   async create(auth: AuthContext, input: HotelVoucherInput, context: HotelVoucherRequestContext) {
     await validateVoucherRefs(auth, input);
     await validateQuotationRefs(auth, input);
+    // First stay row mirrors onto the legacy scalar columns when the caller
+    // supplies rows without scalars (see withStayScalarMirror).
+    const stay = withStayScalarMirror(input);
     // Vouchers are created directly usable: there is no draft step. The
     // input schema already enforces issuance readiness (guest/hotel names,
     // valid date order), mirroring the old issue() guards.
@@ -371,11 +522,11 @@ export const hotelVouchersService = {
             hotelPhone: input.hotelPhone?.trim() || null,
             hotelEmail: input.hotelEmail?.trim() || null,
             hotelStarRating: input.hotelStarRating?.trim() || null,
-            checkIn: new Date(`${input.checkIn}T00:00:00`),
-            checkOut: new Date(`${input.checkOut}T00:00:00`),
-            roomTypeName: input.roomTypeName?.trim() || null,
+            checkIn: voucherDateOnly(input.checkIn),
+            checkOut: voucherDateOnly(input.checkOut),
+            roomTypeName: stay.roomTypeName?.trim() || null,
             rooms: input.rooms ?? 1,
-            mealPlanName: input.mealPlanName?.trim() || null,
+            mealPlanName: stay.mealPlanName?.trim() || null,
             confirmationNumber: input.confirmationNumber?.trim() || null,
             bookingId: input.bookingId?.trim() || null,
             confirmationNumberLabel: input.confirmationNumberLabel?.trim() || null,
@@ -412,6 +563,24 @@ export const hotelVouchersService = {
                 companyId: auth.companyId,
                 sequence: index,
                 item: item.trim(),
+              })),
+            },
+            stayRooms: {
+              create: (input.stayRooms ?? []).map((row, index) => ({
+                companyId: auth.companyId,
+                sequence: index,
+                roomType: row.roomType.trim(),
+                rooms: row.rooms ?? 1,
+                extraBedQuantity: row.extraBedQuantity ?? null,
+                childWithoutBedQuantity: row.childWithoutBedQuantity ?? null,
+                notes: row.notes?.trim() || null,
+              })),
+            },
+            stayMeals: {
+              create: (input.stayMeals ?? []).map((row, index) => ({
+                companyId: auth.companyId,
+                sequence: index,
+                mealPlan: row.mealPlan.trim(),
               })),
             },
           },
@@ -459,9 +628,11 @@ export const hotelVouchersService = {
       quotationHotelOptionId:
         'quotationHotelOptionId' in input ? (input.quotationHotelOptionId ?? null) : undefined,
     });
-    const checkIn = input.checkIn ? new Date(`${input.checkIn}T00:00:00`) : current.checkIn;
-    const checkOut = input.checkOut ? new Date(`${input.checkOut}T00:00:00`) : current.checkOut;
+    const checkIn = input.checkIn ? voucherDateOnly(input.checkIn) : current.checkIn;
+    const checkOut = input.checkOut ? voucherDateOnly(input.checkOut) : current.checkOut;
     if (checkOut <= checkIn) throw new ValidationError('Check-out must be after check-in.');
+    // Same first-row scalar mirror as create; explicit scalars still win.
+    const stay = withStayScalarMirror(input);
     // Relation-backed ids must be written through relation operations:
     // Prisma accepts only `customer`/`query`/`hotel` (never the scalar
     // `customerId`/`queryId`/`hotelId`) in a checked update. Passing the
@@ -503,12 +674,12 @@ export const hotelVouchersService = {
         : {}),
       ...(input.checkIn ? { checkIn } : {}),
       ...(input.checkOut ? { checkOut } : {}),
-      ...(input.roomTypeName !== undefined
-        ? { roomTypeName: input.roomTypeName?.trim() || null }
+      ...(stay.roomTypeName !== undefined
+        ? { roomTypeName: stay.roomTypeName?.trim() || null }
         : {}),
       ...(input.rooms !== undefined ? { rooms: input.rooms } : {}),
-      ...(input.mealPlanName !== undefined
-        ? { mealPlanName: input.mealPlanName?.trim() || null }
+      ...(stay.mealPlanName !== undefined
+        ? { mealPlanName: stay.mealPlanName?.trim() || null }
         : {}),
       ...(input.confirmationNumber !== undefined
         ? { confirmationNumber: input.confirmationNumber?.trim() || null }
@@ -583,16 +754,62 @@ export const hotelVouchersService = {
           });
         }
       }
+      if (input.stayRooms !== undefined) {
+        await tx.hotelVoucherStayRoom.deleteMany({ where: { voucherId: current.id } });
+        if (input.stayRooms.length > 0) {
+          await tx.hotelVoucherStayRoom.createMany({
+            data: input.stayRooms.map((stayRow, index) => ({
+              companyId: auth.companyId,
+              voucherId: current.id,
+              sequence: index,
+              roomType: stayRow.roomType.trim(),
+              rooms: stayRow.rooms ?? 1,
+              extraBedQuantity: stayRow.extraBedQuantity ?? null,
+              childWithoutBedQuantity: stayRow.childWithoutBedQuantity ?? null,
+              notes: stayRow.notes?.trim() || null,
+            })),
+          });
+        }
+      }
+      if (input.stayMeals !== undefined) {
+        await tx.hotelVoucherStayMeal.deleteMany({ where: { voucherId: current.id } });
+        if (input.stayMeals.length > 0) {
+          await tx.hotelVoucherStayMeal.createMany({
+            data: input.stayMeals.map((stayRow, index) => ({
+              companyId: auth.companyId,
+              voucherId: current.id,
+              sequence: index,
+              mealPlan: stayRow.mealPlan.trim(),
+            })),
+          });
+        }
+      }
       await tx.activityLog.create({
         data: audit(auth, 'HOTEL_VOUCHER_UPDATED', 'HotelVoucher', current.id, context, {
           voucherNumber: current.voucherNumber,
           changedFields: Object.keys(input),
         }),
       });
+      // The stored PDF would otherwise keep showing pre-edit content: retire
+      // the voucher's live documents so the next Open/Download regenerates
+      // from the just-saved data into the single current object.
+      await tx.hotelVoucherDocument.updateMany({
+        where: { voucherId: current.id, companyId: auth.companyId, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
       return row;
     });
+    // Drop retired bytes after commit (voucher-scoped keys only), so at most
+    // one stored PDF exists per voucher and a failed save never loses the PDF.
+    for (const stale of current.documents) {
+      try {
+        await storageService.deleteObject(stale.objectKey);
+      } catch {
+        // Storage already missing the key: the database row is already gone.
+      }
+    }
     return presentVoucher(
-      (await getVoucher(auth, updated.id)) as unknown as Record<string, unknown>,
+      applyLiveHotel(await getVoucher(auth, updated.id), auth.companyId),
     );
   },
 
@@ -613,16 +830,27 @@ export const hotelVouchersService = {
         }),
       });
     });
+    // No stored PDF may outlive its voucher: drop the retired bytes
+    // (voucher-scoped keys only) after the delete commits.
+    for (const stale of current.documents) {
+      try {
+        await storageService.deleteObject(stale.objectKey);
+      } catch {
+        // Storage already missing the key: the database row is already gone.
+      }
+    }
     return { id: current.id, deleted: true };
   },
 
   /**
-   * Render the voucher PDF from its stored snapshot and persist it as a
-   * reusable HotelVoucherDocument (matched by exact file name). Never reads
-   * live Hotel Master rows — issued vouchers stay historically accurate.
+   * Render the voucher PDF from current data and persist it as the voucher's
+   * single current document. Linked hotel fields resolve live (see
+   * applyLiveHotel); voucher-owned fields come from the stored snapshot.
+   * Regenerations overwrite one stable object and one live database row, so
+   * no historical PDF copies accumulate.
    */
   async generatePdf(auth: AuthContext, voucherId: string, context: HotelVoucherRequestContext) {
-    const current = await getVoucher(auth, voucherId);
+    const current = applyLiveHotel(await getVoucher(auth, voucherId), auth.companyId);
     const company = await loadCompanyBranding(auth.companyId);
     const pdf = await renderHotelVoucherPdf({
       company,
@@ -646,6 +874,34 @@ export const hotelVouchersService = {
         roomTypeName: current.roomTypeName,
         rooms: current.rooms,
         mealPlanName: current.mealPlanName,
+        // Room/meal rows, falling back to the legacy scalars for vouchers
+        // saved before stay rows existed (single room/meal snapshots).
+        stayRooms:
+          current.stayRooms.length > 0
+            ? current.stayRooms.map((row) => ({
+                roomType: row.roomType,
+                rooms: row.rooms,
+                extraBedQuantity: row.extraBedQuantity,
+                childWithoutBedQuantity: row.childWithoutBedQuantity,
+                notes: row.notes,
+              }))
+            : current.roomTypeName
+              ? [
+                  {
+                    roomType: current.roomTypeName,
+                    rooms: current.rooms,
+                    extraBedQuantity: null,
+                    childWithoutBedQuantity: null,
+                    notes: null,
+                  },
+                ]
+              : [],
+        stayMeals:
+          current.stayMeals.length > 0
+            ? current.stayMeals.map((row) => ({ mealPlan: row.mealPlan }))
+            : current.mealPlanName
+              ? [{ mealPlan: current.mealPlanName }]
+              : [],
         pricing: current.pricing.map((row) => ({
           roomType: row.roomType,
           unit: Number(row.unit),
@@ -669,24 +925,18 @@ export const hotelVouchersService = {
       },
     });
     const fileName = hotelVoucherFileName(current.voucherNumber);
-    const existing = current.documents.find(
-      (document) =>
-        document.fileName === fileName &&
-        document.mimeType === 'application/pdf' &&
-        document.uploadStatus === 'AVAILABLE',
-    );
-    if (existing && (await storageService.headObject(existing.objectKey))) {
-      const { objectKey: _objectKey, bucket: _bucket, companyId: _companyId, ...safe } = existing;
-      return { ...safe, reused: true };
-    }
-    const checksum = crypto.createHash('sha256').update(pdf).digest('hex');
-    const documentId = crypto.randomUUID();
-    const objectKey = hotelVoucherObjectKey({
+    // Single current PDF: every generation renders fresh (live linked data)
+    // into one stable object. The live database row for that key is revived
+    // in place (stable id); every other row for the voucher — current or
+    // retired, including legacy version-specific keys — is hard-deleted, so
+    // exactly one live document exists afterwards. Unique constraints count
+    // soft-deleted rows, so resurrecting the keeper (rather than creating
+    // alongside it) is what keeps the key collision-free.
+    const objectKey = hotelVoucherCurrentObjectKey({
       companyId: auth.companyId,
       voucherId: current.id,
-      documentId,
-      fileName,
     });
+    const checksum = crypto.createHash('sha256').update(pdf).digest('hex');
     await storageService.putObject({
       key: objectKey,
       body: pdf,
@@ -694,30 +944,53 @@ export const hotelVouchersService = {
       checksum,
     });
     const document = await prisma.$transaction(async (tx) => {
-      const row = await tx.hotelVoucherDocument.create({
-        data: {
-          id: documentId,
-          companyId: auth.companyId,
-          voucherId: current.id,
-          documentType: 'VOUCHER',
-          storageProvider: storageService.provider,
-          bucket: storageService.bucket,
-          objectKey,
-          fileName,
-          mimeType: 'application/pdf',
-          fileSize: pdf.length,
-          checksum,
-          uploadStatus: 'AVAILABLE',
-          visibility: 'CUSTOMER_VISIBLE',
-          uploadedById: auth.userId,
-        },
+      const prior = await tx.hotelVoucherDocument.findMany({
+        where: { voucherId: current.id, companyId: auth.companyId },
       });
+      const keeper = prior.find((row) => row.objectKey === objectKey) ?? null;
+      const stale = prior.filter((row) => (keeper ? row.id !== keeper.id : true));
+      if (stale.length > 0) {
+        await tx.hotelVoucherDocument.deleteMany({
+          where: { id: { in: stale.map((row) => row.id) } },
+        });
+      }
+      const row = keeper
+        ? await tx.hotelVoucherDocument.update({
+            where: { id: keeper.id },
+            data: {
+              deletedAt: null,
+              fileName,
+              mimeType: 'application/pdf',
+              fileSize: pdf.length,
+              checksum,
+              uploadStatus: 'AVAILABLE',
+              visibility: 'CUSTOMER_VISIBLE',
+              uploadedById: auth.userId,
+            },
+          })
+        : await tx.hotelVoucherDocument.create({
+            data: {
+              companyId: auth.companyId,
+              voucherId: current.id,
+              documentType: 'VOUCHER',
+              storageProvider: storageService.provider,
+              bucket: storageService.bucket,
+              objectKey,
+              fileName,
+              mimeType: 'application/pdf',
+              fileSize: pdf.length,
+              checksum,
+              uploadStatus: 'AVAILABLE',
+              visibility: 'CUSTOMER_VISIBLE',
+              uploadedById: auth.userId,
+            },
+          });
       await tx.activityLog.create({
         data: audit(
           auth,
           'HOTEL_VOUCHER_PDF_GENERATED',
           'HotelVoucherDocument',
-          documentId,
+          row.id,
           context,
           {
             voucherId: current.id,
@@ -725,14 +998,25 @@ export const hotelVouchersService = {
           },
         ),
       });
-      return row;
+      return { row, staleKeys: stale.map((entry) => entry.objectKey) };
     });
-    const { objectKey: _objectKey, bucket: _bucket, companyId: _companyId, ...safe } = document;
+    // Remove superseded bytes only after the new object and row commit, so a
+    // failed generation never leaves the voucher without a PDF. Scoped to
+    // this voucher's own retired keys — never bucket-wide, never the live key.
+    for (const key of document.staleKeys) {
+      if (key === objectKey) continue;
+      try {
+        await storageService.deleteObject(key);
+      } catch {
+        // Storage already missing the key: the database row is already gone.
+      }
+    }
+    const { objectKey: _objectKey, bucket: _bucket, companyId: _companyId, ...safe } = document.row;
     return { ...safe, reused: false };
   },
 
   async downloadUrl(auth: AuthContext, voucherId: string, documentId: string) {
-    const current = await getVoucher(auth, voucherId);
+    const current = applyLiveHotel(await getVoucher(auth, voucherId), auth.companyId);
     const document = current.documents.find(
       (row) =>
         row.id === documentId &&

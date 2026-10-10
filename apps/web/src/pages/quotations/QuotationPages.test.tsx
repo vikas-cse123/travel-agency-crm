@@ -10019,7 +10019,7 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Deluxe Room');
     expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(2);
     expect(screen.getByLabelText('Meal plan 1 master')).toHaveValue('Breakfast');
-    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue('2');
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(2);
 
     // + Add Room creates Room 2; + Add Meal Plan creates Meal Plan 2.
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
@@ -10049,6 +10049,209 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     ]);
     expect(body.hotels[0].rooms).toBe(5);
     expect(body.hotels[0].roomType).toBe('Deluxe Room');
+  });
+
+  it('keeps a manually edited total, syncs automatic totals, and resets', async () => {
+    vi.stubGlobal('fetch', masterFetch(baseQuotation([legacyHotel])));
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    // Initial total follows the single allocation.
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(2);
+    expect(screen.queryByRole('button', { name: 'Reset total rooms to calculated total' })).not.toBeInTheDocument();
+    // Adding an allocation updates the automatic total (2 + 3).
+    await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 2 number of rooms'), '3');
+    expect(await screen.findByDisplayValue('5')).toBeInTheDocument();
+    // Manual override sticks, even when allocations change afterwards.
+    const total = screen.getByLabelText('Hotel total rooms');
+    await userEvent.clear(total);
+    await userEvent.type(total, '8');
+    expect(total).toHaveValue(8);
+    expect(
+      screen.getByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText('Room 1 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 1 number of rooms'), '1');
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(8);
+    // Reset restores the live sum (1 + 3) and resumes automatic updates.
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Reset total rooms to calculated total' }),
+    );
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(4);
+    await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 2 number of rooms'), '4');
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(5);
+  });
+
+  it('saves the manual total instead of recomputing it', async () => {
+    vi.stubGlobal('fetch', masterFetch(baseQuotation([legacyHotel])));
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
+    await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 2 number of rooms'), '3');
+    const total = await screen.findByDisplayValue('5');
+    expect(total).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText('Hotel total rooms'));
+    await userEvent.type(screen.getByLabelText('Hotel total rooms'), '8');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const fetchMock = vi.mocked(fetch);
+    const body = await getSavedQuotationBody(fetchMock as never);
+    expect(body.hotels).toHaveLength(1);
+    expect(body.hotels[0].rooms).toBe(8);
+  });
+
+  it('restores a saved manual override after save and reload', async () => {
+    vi.stubGlobal('fetch', masterFetch(baseQuotation([legacyHotel])));
+    const first = renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
+    await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 2 number of rooms'), '3');
+    const total = await screen.findByDisplayValue('5');
+    expect(total).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText('Hotel total rooms'));
+    await userEvent.type(screen.getByLabelText('Hotel total rooms'), '8');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const fetchMock = vi.mocked(fetch);
+    const body = await getSavedQuotationBody(fetchMock as never);
+    expect(body.hotels[0].rooms).toBe(8);
+    expect(body.hotels[0].roomsOverride).toBe(8);
+    // Reload with the server state: the manual override restores as manual.
+    first.unmount();
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(
+        baseQuotation([
+          {
+            ...legacyHotel,
+            rooms: 8,
+            roomsOverride: 8,
+            roomLines: [
+              { hotelRoomTypeId: null, roomType: 'Deluxe Room', rooms: 2 },
+              { hotelRoomTypeId: null, roomType: 'Executive Suite', rooms: 3 },
+            ],
+          },
+        ]),
+      ),
+    );
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(8);
+    expect(
+      screen.getByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).toBeInTheDocument();
+  });
+
+  it('treats a loaded custom total as a manual override', async () => {
+    const customHotel = {
+      ...legacyHotel,
+      rooms: 8,
+      roomsOverride: 8,
+      roomLines: [
+        { hotelRoomTypeId: null, roomType: 'Room A', rooms: 1 },
+        { hotelRoomTypeId: null, roomType: 'Room B', rooms: 2 },
+      ],
+    };
+    vi.stubGlobal('fetch', masterFetch(baseQuotation([customHotel])));
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    // Saved 8 differs from the allocation sum 3: shown as-is with reset available.
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(8);
+    expect(
+      screen.getByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the manual override through unrelated form changes and saves allocations untouched', async () => {
+    vi.stubGlobal('fetch', masterFetch(baseQuotation([legacyHotel])));
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
+    await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
+    await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 2 number of rooms'), '3');
+    expect(await screen.findByDisplayValue('5')).toBeInTheDocument();
+    // Manual override, then unrelated edits (remark text + room-type text).
+    await userEvent.clear(screen.getByLabelText('Hotel total rooms'));
+    await userEvent.type(screen.getByLabelText('Hotel total rooms'), '8');
+    await userEvent.type(screen.getByLabelText('Hotel remark'), 'Sea view requested');
+    await userEvent.clear(screen.getByLabelText('Room 1 number of rooms'));
+    await userEvent.type(screen.getByLabelText('Room 1 number of rooms'), '1');
+    // The custom total survives re-renders and allocation edits alike.
+    expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(8);
+    expect(
+      screen.getByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const fetchMock = vi.mocked(fetch);
+    const body = await getSavedQuotationBody(fetchMock as never);
+    expect(body.hotels).toHaveLength(1);
+    expect(body.hotels[0].rooms).toBe(8);
+    expect(body.hotels[0].roomsOverride).toBe(8);
+    // Individual allocations are never rewritten to match the custom total.
+    expect(body.hotels[0].roomLines.map((l: { rooms: number }) => l.rooms)).toEqual([1, 3]);
+  });
+
+  it('keeps manual overrides independent across hotel stays', async () => {
+    const secondHotel = {
+      ...legacyHotel,
+      hotelName: 'Marina Bay Hotel',
+      roomType: 'Suite',
+      rooms: 4,
+      sequence: 2,
+    };
+    vi.stubGlobal('fetch', masterFetch(baseQuotation([legacyHotel, secondHotel])));
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 2' }));
+    const stays = screen
+      .getAllByRole('button', { name: /(Expand|Collapse) hotel stay/ })
+      .map((button) => button.closest('article') as HTMLElement);
+    expect(stays).toHaveLength(2);
+    const [firstStay, secondStay] = [stays[0]!, stays[1]!];
+    // Stay 2 starts automatic (4) with no reset action.
+    expect(within(secondStay).getByLabelText('Hotel total rooms')).toHaveValue(4);
+    expect(
+      within(secondStay).queryByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).not.toBeInTheDocument();
+    // Override stay 1 only: 2 + 3 allocations, manual total 8.
+    await userEvent.click(within(firstStay).getByRole('button', { name: 'Add room' }));
+    await userEvent.type(within(firstStay).getByLabelText('Room 2 type master'), 'Executive Suite');
+    await userEvent.clear(within(firstStay).getByLabelText('Room 2 number of rooms'));
+    await userEvent.type(within(firstStay).getByLabelText('Room 2 number of rooms'), '3');
+    expect(within(firstStay).getByLabelText('Hotel total rooms')).toHaveValue(5);
+    await userEvent.clear(within(firstStay).getByLabelText('Hotel total rooms'));
+    await userEvent.type(within(firstStay).getByLabelText('Hotel total rooms'), '8');
+    // Editing stay 2's allocation updates only stay 2; stay 1 keeps its override.
+    await userEvent.clear(within(secondStay).getByLabelText('Room 1 number of rooms'));
+    await userEvent.type(within(secondStay).getByLabelText('Room 1 number of rooms'), '1');
+    expect(within(secondStay).getByLabelText('Hotel total rooms')).toHaveValue(1);
+    expect(within(firstStay).getByLabelText('Hotel total rooms')).toHaveValue(8);
+    expect(
+      within(firstStay).getByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).toBeInTheDocument();
+    expect(
+      within(secondStay).queryByRole('button', { name: 'Reset total rooms to calculated total' }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const fetchMock = vi.mocked(fetch);
+    const body = await getSavedQuotationBody(fetchMock as never);
+    expect(body.hotels).toHaveLength(2);
+    expect(body.hotels[0].rooms).toBe(8);
+    expect(body.hotels[0].roomsOverride).toBe(8);
+    expect(body.hotels[1].rooms).toBe(1);
+    expect(body.hotels[1].roomsOverride ?? null).toBeNull();
   });
 
   it('removes a room allocation and keeps the remaining line intact', async () => {

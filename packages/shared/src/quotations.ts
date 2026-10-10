@@ -403,6 +403,15 @@ export const quotationHotelSchema = z
       (value) => (value === '' ? null : value),
       z.coerce.number().int().min(1).max(100).nullable().optional(),
     ),
+    /**
+     * Staff-entered TOTAL ROOMS override. NULL/undefined means automatic: the
+     * total is the live sum of the room allocations. A non-null value wins
+     * over the sum and is preserved verbatim across saves and reloads.
+     */
+    roomsOverride: z.preprocess(
+      (value) => (value === '' ? null : value),
+      z.coerce.number().int().min(1).max(100).nullable().optional(),
+    ),
     nights: z.preprocess(
       (value) => (value === '' || value === null || value === undefined ? null : value),
       z.coerce.number().int().min(1).max(365).nullable().optional(),

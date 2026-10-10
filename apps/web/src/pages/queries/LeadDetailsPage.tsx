@@ -193,12 +193,9 @@ export function LeadDetailsPage() {
               </span>
             </div>
             {q.customer && (
-              <Link
-                className="mt-2 inline-block text-xs font-medium text-brand-700 hover:underline"
-                to={`/customers/${q.customer.id}`}
-              >
-                View {q.customer.customerNumber} customer profile
-              </Link>
+              <span className="mt-2 inline-block text-xs font-medium text-slate-500">
+                {q.customer.customerNumber} customer record
+              </span>
             )}
           </div>
         </div>

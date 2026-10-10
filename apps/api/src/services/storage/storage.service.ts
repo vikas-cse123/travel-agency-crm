@@ -195,6 +195,18 @@ export function hotelVoucherObjectKey(input: {
   return `companies/${input.companyId}/hotel-vouchers/${input.voucherId}/documents/${input.documentId}/${sanitizeFileName(input.fileName)}`;
 }
 
+/**
+ * Stable storage key for a voucher's single current PDF. Regenerations
+ * overwrite this key instead of minting version-specific objects, so no
+ * historical PDF copies accumulate in application-managed storage.
+ */
+export function hotelVoucherCurrentObjectKey(input: {
+  companyId: string;
+  voucherId: string;
+}): string {
+  return `companies/${input.companyId}/hotel-vouchers/${input.voucherId}/hotel-voucher.pdf`;
+}
+
 export function paymentVoucherObjectKey(input: {
   companyId: string;
   paymentId: string;

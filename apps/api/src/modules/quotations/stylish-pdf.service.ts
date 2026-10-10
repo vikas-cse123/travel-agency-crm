@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import sharp from 'sharp';
 import {
   formatAgeList,
+  hotelStayNights,
   isItineraryActivityTitleDuplicate,
   normalizeFaqs,
   resolveCruiseRoomLines,
@@ -1952,6 +1953,11 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           // box at all (no "-", "N/A" or other placeholder). Remaining boxes
           // reflow into the vacated columns. In list mode (multiple rooms or
           // meal plans) the boxes are replaced by the full list block below.
+          // Stay dates are optional: a dateless option carries NULL nights, so
+          // the "N Nights" sub-line is left blank instead of inventing a
+          // duration (empty sub-lines are the established empty rendering).
+          const stayNights = hotelStayNights(hotel.checkInDate, hotel.checkOutDate) ?? hotel.nights;
+          const nightsSub = stayNights != null ? `${stayNights} Nights` : '';
           const roomType = listMode ? undefined : (hotel.roomType?.trim() ?? undefined);
           if (roomType) {
             hotelFacts.push([
@@ -1962,16 +1968,16 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
           }
           const mealPlan = listMode ? undefined : (hotel.mealPlan?.trim() ?? undefined);
           if (mealPlan) {
-            hotelFacts.push(['MEAL PLAN', mealPlan, `${hotel.nights} Nights`]);
+            hotelFacts.push(['MEAL PLAN', mealPlan, nightsSub]);
           }
           const extraBedQty = (hotel as unknown as { extraBedQuantity?: number | null }).extraBedQuantity;
           if (!listMode && extraBedQty) {
             // Counts only — no per-item prices on the customer-facing PDF.
-            hotelFacts.push(['EXTRA BED', `${extraBedQty}`, `${hotel.nights} Nights`]);
+            hotelFacts.push(['EXTRA BED', `${extraBedQty}`, nightsSub]);
           }
           const childQty = (hotel as unknown as { childWithoutBedQuantity?: number | null }).childWithoutBedQuantity;
           if (!listMode && childQty) {
-            hotelFacts.push(['CHILD W/O BED', `${childQty}`, `${hotel.nights} Nights`]);
+            hotelFacts.push(['CHILD W/O BED', `${childQty}`, nightsSub]);
           }
           hotelFacts.forEach(([label, value, sub], factIndex) => {
             const left = infoX + factIndex * 88;

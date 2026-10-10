@@ -37,6 +37,18 @@ export interface HotelVoucherPdfGuestRow {
   paxType: string;
 }
 
+export interface HotelVoucherPdfStayRoomRow {
+  roomType: string;
+  rooms: number;
+  extraBedQuantity: number | null;
+  childWithoutBedQuantity: number | null;
+  notes: string | null;
+}
+
+export interface HotelVoucherPdfStayMealRow {
+  mealPlan: string;
+}
+
 export interface HotelVoucherPdfVoucher {
   guestName: string;
   guestPhone: string | null;
@@ -59,6 +71,8 @@ export interface HotelVoucherPdfVoucher {
   roomTypeName: string | null;
   rooms: number;
   mealPlanName: string | null;
+  stayRooms: HotelVoucherPdfStayRoomRow[];
+  stayMeals: HotelVoucherPdfStayMealRow[];
   pricing: HotelVoucherPdfPricingRow[];
   guests: HotelVoucherPdfGuestRow[];
   termsSnapshot: string | null;
@@ -153,22 +167,29 @@ function fmtDate(value: Date): string {
   return `${String(value.getUTCDate()).padStart(2, '0')} ${month} ${value.getUTCFullYear()}`;
 }
 
-function fmtMoney(value: number): string {
-  return value.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-}
-
-function fmtGst(value: number | null): string {
-  return value === null ? '—' : `${Number(value)}%`;
-}
-
-function fmtAmount(value: number | null): string {
-  return value === null ? '—' : fmtMoney(value);
+/** Minimal HTML entity decoding for Terms lines (mirrors the PDF helper). */
+function decodeTermsText(value: string): string {
+  return value
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_: string, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([\da-f]+);/gi, (_: string, code: string) =>
+      String.fromCodePoint(Number.parseInt(code, 16)),
+    );
 }
 
 /**
  * Terms lines for the PDF. Editor HTML is flattened to plain lines;
  * legacy plain text keeps its exact newline structure (htmlToLines would
  * collapse newlines, so it is only used when markup is present).
+ *
+ * Real `<ol>` items keep sequential `1.` numbering, `<ul>` items keep their
+ * `•` bullet, and ordinary paragraphs stay unnumbered — the renderer never
+ * invents numbers (see the `numbered=false` Terms call below).
  */
 function voucherTextLines(value: string): string[] {
   if (!value.includes('<')) {
@@ -177,7 +198,65 @@ function voucherTextLines(value: string): string[] {
       .map((line) => line.trim())
       .filter(Boolean);
   }
-  return htmlToLines(value);
+  const lines: string[] = [];
+  let current = '';
+  let pendingPrefix = '';
+  const listStack: Array<{ ordered: boolean; counter: number }> = [];
+  const flush = () => {
+    const text = `${pendingPrefix}${current}`.replace(/\s+/g, ' ').trim();
+    pendingPrefix = '';
+    current = '';
+    if (text) lines.push(text);
+  };
+  for (const token of value.match(/<[^>]*>|[^<]+/g) ?? []) {
+    if (!token.startsWith('<')) {
+      current += decodeTermsText(token).replace(/\s+/g, ' ');
+      continue;
+    }
+    const closing = /^<\s*\//.test(token);
+    const tag = token.match(/^<\s*\/?\s*([\w-]+)/)?.[1]?.toLowerCase();
+    if (!tag) continue;
+    if (tag === 'ol' || tag === 'ul') {
+      if (closing) listStack.pop();
+      else listStack.push({ ordered: tag === 'ol', counter: 1 });
+      continue;
+    }
+    if (tag === 'li') {
+      if (closing) {
+        flush();
+      } else {
+        flush();
+        const top = listStack[listStack.length - 1];
+        if (top?.ordered) {
+          pendingPrefix = `${top.counter}. `;
+          top.counter += 1;
+        } else {
+          // Bare `<li>` or unordered item: bullet, never a number.
+          pendingPrefix = '• ';
+        }
+      }
+      continue;
+    }
+    if (
+      tag === 'br' ||
+      tag === 'p' ||
+      tag === 'div' ||
+      tag === 'h1' ||
+      tag === 'h2' ||
+      tag === 'h3' ||
+      tag === 'h4' ||
+      tag === 'h5' ||
+      tag === 'h6' ||
+      tag === 'blockquote' ||
+      tag === 'pre' ||
+      tag === 'tr'
+    ) {
+      flush();
+    }
+    // Inline tags (strong/b/i/em/u/s/a/span/font) carry no line structure.
+  }
+  flush();
+  return lines;
 }
 
 /** One package item per row: editor HTML flattens to a single line. */
@@ -513,11 +592,14 @@ export async function renderHotelVoucherPdf(input: {
    * per page — content never slides under the footer furniture. When `bar`
    * is given, the section bar is drawn only once room for the bar plus the
    * first row exists, so the bar is never stranded alone at a page bottom.
+   * Terms & Conditions passes `numbered: false` so plain editor lines are
+   * rendered verbatim instead of gaining automatic "1." prefixes.
    */
   const numberedCard = (
     items: string[],
     paired: boolean,
     bar?: { title: string; icon: SectionIcon },
+    numbered = true,
   ) => {
     const innerPad = 12;
     const gap = 20;
@@ -543,7 +625,7 @@ export async function renderHotelVoucherPdf(input: {
       }
     } else {
       items.forEach((item, index) => {
-        const left = `${index + 1}. ${item}`;
+        const left = numbered ? `${index + 1}. ${item}` : item;
         rows.push({ left, right: '', height: measure(left, fullW - 16, 'Helvetica', 9.5) + 6 });
       });
     }
@@ -551,10 +633,12 @@ export async function renderHotelVoucherPdf(input: {
     // fresh page) — content never slides under the footer furniture.
     // Bar lookahead: the bar (28 + 10 gap) plus the first row must fit,
     // otherwise the whole section starts on the next page — no orphan bars.
+    // The trailing +4 reserves the inter-section gap so the first chunk can
+    // never trip its own ensure below and strand the just-drawn bar.
     const pageBody = BOTTOM_LIMIT - MARGIN;
     if (bar && rows.length > 0) {
       const firstH = innerPad * 2 + (rows[0]?.height ?? 0);
-      if (firstH > BOTTOM_LIMIT - y - (28 + 10)) nextPage();
+      if (firstH + 4 > BOTTOM_LIMIT - y - (28 + 10)) nextPage();
       sectionBar(bar.title, bar.icon);
     }
     const chunks: Row[][] = [];
@@ -577,7 +661,11 @@ export async function renderHotelVoucherPdf(input: {
       const chunkH = chunk.reduce((sum, row) => sum + row.height, 0) + innerPad * 2;
       if (chunkIndex > 0) {
         nextPage();
-      } else {
+      } else if (!bar) {
+        // Bar-less cards keep the old fit check. With a bar, the lookahead
+        // above already reserved bar + first row + gap and rows were chunked
+        // against the space left after the bar — moving the chunk here would
+        // strand the just-drawn bar alone at the page bottom.
         ensure(chunkH + 4);
       }
       const top = y;
@@ -781,18 +869,29 @@ export async function renderHotelVoucherPdf(input: {
   }
 
   // Stay Details: five stat blocks with icons, dates without weekday names.
+  // Room types and meal plans live in the tables below (every saved entry,
+  // never just the first); the cards carry the document totals.
   sectionBar('STAY DETAILS', 'calendar');
   {
     const nights = Math.max(
       0,
       Math.round((voucher.checkOut.getTime() - voucher.checkIn.getTime()) / 86_400_000),
     );
+    const mealCount = voucher.stayMeals.length;
     const stats: Array<{ label: string; value: string; icon: SectionIcon }> = [
       { label: 'Check-in', value: fmtDate(voucher.checkIn), icon: 'calendar' },
       { label: 'Check-out', value: fmtDate(voucher.checkOut), icon: 'calendar' },
       { label: 'Nights', value: String(nights), icon: 'moon' },
-      { label: 'Room Type', value: voucher.roomTypeName ?? '—', icon: 'bed' },
-      { label: 'Meal Plan', value: voucher.mealPlanName ?? '—', icon: 'list' },
+      {
+        label: 'Total Rooms',
+        value: `${voucher.rooms} Room${voucher.rooms === 1 ? '' : 's'}`,
+        icon: 'bed',
+      },
+      {
+        label: 'Meal Plans',
+        value: mealCount === 0 ? '—' : `${mealCount} Plan${mealCount === 1 ? '' : 's'}`,
+        icon: 'list',
+      },
     ];
     const colW = CONTENT_W / stats.length;
     const height = 66;
@@ -816,8 +915,8 @@ export async function renderHotelVoucherPdf(input: {
         width: colW - 8,
         align: 'center',
       });
-      // Single line with ellipsis: long room-type/meal-plan names must never
-      // spill out of the card.
+      // Single line with ellipsis: long values must never spill out of the
+      // card.
       doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10.5).text(stat.value, x + 4, top + 40, {
         width: colW - 8,
         height: 14,
@@ -828,6 +927,49 @@ export async function renderHotelVoucherPdf(input: {
     y = top + height + 4;
   }
 
+  // Room configurations: every saved entry with its quantity and extras.
+  if (voucher.stayRooms.length > 0) {
+    // Keep the bar together with the table header plus one body row.
+    sectionBar('ROOM DETAILS', 'bed', 24 + 32);
+    // Column widths sum exactly to CONTENT_W so the purple header, zebra
+    // stripes, and grid share one right edge.
+    const remarkW = CONTENT_W - (32 + 180 + 55 + 65 + 80);
+    table(
+      [
+        { header: '#', width: 32, align: 'center' as const },
+        { header: 'Room Type', width: 180, align: 'left' as const },
+        { header: 'Rooms', width: 55, align: 'center' as const },
+        { header: 'Extra Bed', width: 65, align: 'center' as const },
+        { header: 'Child w/o Bed', width: 80, align: 'center' as const },
+        { header: 'Remark', width: remarkW, align: 'left' as const },
+      ],
+      voucher.stayRooms.map((row, index) => [
+        String(index + 1),
+        row.roomType,
+        String(row.rooms),
+        row.extraBedQuantity === null ? '—' : String(row.extraBedQuantity),
+        row.childWithoutBedQuantity === null ? '—' : String(row.childWithoutBedQuantity),
+        row.notes?.trim() ? row.notes.trim() : '—',
+      ]),
+    );
+    y += 8;
+  }
+
+  // Meal plans: every saved selection in its stored order.
+  if (voucher.stayMeals.length > 0) {
+    // Keep the bar together with the table header plus one body row.
+    sectionBar('MEAL PLANS', 'list', 24 + 32);
+    const mealW = CONTENT_W - 36;
+    table(
+      [
+        { header: '#', width: 36, align: 'center' as const },
+        { header: 'Meal Plan', width: mealW, align: 'left' as const },
+      ],
+      voucher.stayMeals.map((row, index) => [String(index + 1), row.mealPlan]),
+    );
+    y += 8;
+  }
+
   // ------------------------------------------------------------------
   // Remaining sections flow onto the current page (or the next one when
   // they genuinely do not fit). Sections keep their fixed order; tables
@@ -835,73 +977,19 @@ export async function renderHotelVoucherPdf(input: {
   // near-empty trailing page would violate the bottom-whitespace rule.
   // ------------------------------------------------------------------
   {
-    if (voucher.pricing.length > 0) {
-      // Keep the bar together with the table header plus one body row.
-      sectionBar('PRICING', 'coins', 24 + 32);
-      // Column widths sum exactly to CONTENT_W so the purple header, zebra
-      // stripes, and grid share one right edge.
-      const lastW = CONTENT_W - (131 + 40 + 55 + 40 + 62 + 75);
-      const columns = [
-        { header: 'Room Type', width: 131, align: 'left' as const },
-        { header: 'Unit', width: 40, align: 'center' as const },
-        { header: 'Quantity', width: 55, align: 'center' as const },
-        { header: 'GST', width: 40, align: 'center' as const },
-        { header: 'Amount', width: 62, align: 'center' as const },
-        { header: 'Taxable Pay', width: 75, align: 'center' as const },
-        { header: 'GST + Service', width: lastW, align: 'center' as const },
-      ];
-      const rows = voucher.pricing.map((row) => [
-        row.roomType,
-        String(row.unit),
-        String(row.quantity),
-        fmtGst(row.gst),
-        fmtAmount(row.amount),
-        fmtAmount(row.taxablePay),
-        fmtAmount(row.gstService),
-      ]);
-      table(columns, rows);
-      // Beige total row: label right-aligned over the leading columns so it
-      // never wraps, value centred under GST + Service.
-      const total = voucher.pricing.reduce((sum, row) => sum + (row.gstService ?? 0), 0);
-      const totalH = 24;
-      ensure(totalH);
-      doc.save().fillColor(BEIGE).rect(MARGIN, y, CONTENT_W, totalH).fill().restore();
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9.5);
-      doc.text('Total Payable Amount', MARGIN + PAD, y + 7, {
-        width: CONTENT_W - lastW - PAD * 2,
-        align: 'right',
-      });
-      doc.text(fmtMoney(total), MARGIN + CONTENT_W - lastW + PAD, y + 7, {
-        width: lastW - PAD * 2,
-        align: 'center',
-      });
-      doc
-        .save()
-        .strokeColor(BEIGE_BORDER)
-        .lineWidth(0.7)
-        .rect(MARGIN, y, CONTENT_W, totalH)
-        .stroke()
-        .restore();
-      y += totalH + 8;
-    }
-
     if (voucher.guests.length > 0) {
       // Keep the bar together with the table header plus one body row.
       sectionBar('GUEST INFORMATION', 'person', 24 + 32);
-      const guestLastW = CONTENT_W - (36 + 200 + 55 + 55);
+      const guestLastW = CONTENT_W - (36 + 310);
       table(
         [
           { header: '#', width: 36, align: 'center' as const },
-          { header: 'Guest Name', width: 200, align: 'left' as const },
-          { header: 'Age', width: 55, align: 'center' as const },
-          { header: 'Sex', width: 55, align: 'center' as const },
+          { header: 'Guest Name', width: 310, align: 'left' as const },
           { header: 'No of Pax', width: guestLastW, align: 'center' as const },
         ],
         voucher.guests.map((guest, index) => [
           String(index + 1),
           guest.guestName,
-          guest.age === null ? '—' : String(guest.age),
-          guest.sex,
           guest.paxType === 'ADULT' ? 'Adult' : 'Child',
         ]),
       );
@@ -919,7 +1007,7 @@ export async function renderHotelVoucherPdf(input: {
 
     const terms = voucherTextLines(voucher.termsSnapshot ?? '');
     if (terms.length > 0) {
-      numberedCard(terms, false, { title: 'TERMS & CONDITIONS', icon: 'doc' });
+      numberedCard(terms, false, { title: 'TERMS & CONDITIONS', icon: 'doc' }, false);
     }
   }
 

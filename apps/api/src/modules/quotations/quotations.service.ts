@@ -756,8 +756,9 @@ type HotelRowInput = QuotationVersionInput['hotels'][number];
  * Mirror the first room/meal line of a multi-room hotel option onto the legacy
  * scalar columns (roomType, hotelRoomTypeId, rooms, extraBed*, childWithoutBed*,
  * mealPlan, hotelMealPlanId) so older readers — booking import, exports, any
- * code path still reading the scalars — keep working unchanged. The row's
- * `rooms` total becomes the sum of every room allocation. Rows without lines
+ * code path still reading the scalars — keep working unchanged. An explicit
+ * `roomsOverride` (a staff manual total from the builder) always wins; without
+ * one, the total is the live sum of every room allocation. Rows without lines
  * (legacy writers) pass through untouched.
  */
 function syncHotelLineScalars<T extends Pick<HotelRowInput, 'roomLines' | 'mealPlanLines'> & Record<string, unknown>>(
@@ -768,13 +769,15 @@ function syncHotelLineScalars<T extends Pick<HotelRowInput, 'roomLines' | 'mealP
   if (!roomLines.length && !mealPlanLines.length) return hotel;
   const firstRoom = roomLines[0];
   const firstMeal = mealPlanLines[0];
+  const allocationSum = roomLines.reduce((sum, line) => sum + (Number(line.rooms) || 1), 0);
+  const override = typeof hotel.roomsOverride === 'number' ? hotel.roomsOverride : null;
   return {
     ...hotel,
     ...(roomLines.length
       ? {
           hotelRoomTypeId: firstRoom?.hotelRoomTypeId ?? null,
           roomType: firstRoom?.roomType ?? null,
-          rooms: roomLines.reduce((sum, line) => sum + (Number(line.rooms) || 1), 0),
+          rooms: override ?? allocationSum,
           extraBedQuantity: firstRoom?.extraBedQuantity ?? null,
           extraBedPrice: firstRoom?.extraBedPrice ?? null,
           childWithoutBedQuantity: firstRoom?.childWithoutBedQuantity ?? null,
