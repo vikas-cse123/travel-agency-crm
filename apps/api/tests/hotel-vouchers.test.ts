@@ -6,6 +6,11 @@ import { createTestPrismaClient, truncateAll } from './helpers/test-database.js'
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { storageService } from '../src/services/storage/storage.service.js';
+import {
+  resolveVoucherPrimary,
+  resolveVoucherTheme,
+  voucherPrimaryForeground,
+} from '../src/modules/hotel-vouchers/hotel-voucher-pdf.service.js';
 
 let app: Express;
 let db: PrismaClient;
@@ -1048,7 +1053,129 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     // Age and Sex are gone from the Guest Information table entirely.
     expect(text).not.toContain('Age');
     expect(text).not.toContain('Sex');
-    expect(text).toContain('No of Pax');
+    expect(text).toContain('Adult / Child');
+    expect(text).not.toContain('No of Pax');
+  });
+
+  it('renders room details without Child w/o Bed and Remark columns', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      stayRooms: [
+        {
+          roomType: 'Superior Room',
+          rooms: 2,
+          extraBedQuantity: 1,
+          childWithoutBedQuantity: 1,
+          notes: 'High floor',
+        },
+        {
+          roomType: 'Premier Room',
+          rooms: 4,
+          extraBedQuantity: 0,
+          childWithoutBedQuantity: 2,
+          notes: null,
+        },
+      ],
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    // Kept headers and values render in order.
+    for (const expected of ['ROOM DETAILS', '#', 'Room Type', 'Rooms', 'Extra Bed']) {
+      expect(text, `missing ${expected}`).toContain(expected);
+    }
+    expect(text).toContain('Superior Room');
+    expect(text).toContain('Premier Room');
+    // Removed columns never render — headings, values, or remarks.
+    expect(text).not.toContain('Child w/o Bed');
+    expect(text).not.toContain('Remark');
+    expect(text).not.toContain('High floor');
+    // The underlying data stays saved and editable.
+    const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(details.stayRooms).toMatchObject([
+      { roomType: 'Superior Room', rooms: 2, extraBedQuantity: 1 },
+      { roomType: 'Premier Room', rooms: 4, extraBedQuantity: 0 },
+    ]);
+    const persisted = await db.hotelVoucherStayRoom.findMany({
+      where: { voucherId: created.id },
+      orderBy: { sequence: 'asc' },
+    });
+    expect(persisted.map((row) => row.childWithoutBedQuantity)).toEqual([1, 2]);
+    expect(persisted.map((row) => row.notes)).toEqual(['High floor', null]);
+    const edited = await client.patch(`/api/hotel-vouchers/${created.id}`, {
+      stayRooms: [
+        { roomType: 'Superior Room', rooms: 3, childWithoutBedQuantity: 0, notes: 'Sea view' },
+        { roomType: 'Premier Room', rooms: 4 },
+      ],
+    });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    const reloaded = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
+    expect(reloaded.stayRooms[0]).toMatchObject({
+      rooms: 3,
+      childWithoutBedQuantity: 0,
+      notes: 'Sea view',
+    });
+  });
+
+  it('omits the confirmation card when no confirmation number is saved', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, { confirmationNumber: null });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('HOTEL VOUCHER');
+    expect(text).not.toContain('Confirmation No.');
+  });
+
+  it('folds a city already contained in the address instead of repeating it', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      hotelName: 'Seaside Resort',
+      hotelAddress: '12 Marine Drive, Mumbai 400020',
+      hotelCity: 'Mumbai',
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('Seaside Resort');
+    // Once inside the address line, never again as a separate line.
+    expect(text.split('Mumbai').length - 1).toBe(1);
+  });
+
+  it('resolves the voucher theme from the saved branding with safe fallbacks', () => {
+    // Built-in purple default when nothing (or garbage) is configured.
+    expect(resolveVoucherTheme(null)).toEqual({ primary: '#3d2352', onPrimary: '#ffffff' });
+    expect(resolveVoucherTheme('not-a-color')).toEqual({
+      primary: '#3d2352',
+      onPrimary: '#ffffff',
+    });
+    // Company override wins, normalized to lowercase.
+    expect(resolveVoucherTheme('#B4232A')).toEqual({ primary: '#b4232a', onPrimary: '#ffffff' });
+    // Light themes get dark-navy foreground so headings stay readable.
+    expect(resolveVoucherPrimary('#F5E9A8')).toBe('#f5e9a8');
+    expect(voucherPrimaryForeground('#f5e9a8')).toBe('#1f2a5c');
+    expect(voucherPrimaryForeground('#1e40af')).toBe('#ffffff');
   });
 
   it('creates vouchers with multiple stay rooms and meals in order', async () => {

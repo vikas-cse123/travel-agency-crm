@@ -6,9 +6,9 @@ import { drawHeaderLogo, type CompanyBranding } from '../../services/pdf/company
  * Hotel Voucher PDF — premium branded document matching the approved mockup
  * (A4 portrait; deep purple / dark navy / muted gold / pale lavender).
  *
- * Content-driven pagination: sections flow across as many pages as they need
- * (tables and lists break row by row; overflow pages carry the compact agency
- * header), and content may run to 30pt above the page edge, so no page ever
+   * Content-driven pagination: sections flow across as many pages as they need
+   * (tables and lists break row by row; overflow pages carry a restrained
+   * name-only agency header), and content may run to 30pt above the page
  * leaves more than 30 units of bottom whitespace.
  *
  * Rendered exclusively from the voucher's stored snapshot; live Hotel Master
@@ -294,9 +294,9 @@ export async function renderHotelVoucherPdf(input: {
   };
 
   /**
-   * Fresh continuation page with the compact agency header, so overflow
-   * pages stay branded exactly like the previous design's page two.
-   * Must be called only when more content follows on the new page.
+   * Fresh continuation page with the restrained name-only agency header, so
+   * overflow pages stay branded without repeating the logo. Must be called
+   * only when more content follows on the new page.
    */
   const nextPage = () => {
     doc.addPage();
@@ -408,7 +408,7 @@ export async function renderHotelVoucherPdf(input: {
     doc.restore();
   };
   const iconBed = (x: number, cy: number, s: number, color: string) => {
-    doc.save().strokeColor(color).lineWidth(1.8).lineCap('round');
+    doc.save().strokeColor(color).lineWidth(1.5).lineCap('round');
     // Headboard + base frame.
     doc.moveTo(x + s * 0.1, cy - s * 0.34).lineTo(x + s * 0.1, cy + s * 0.34).stroke();
     doc
@@ -696,11 +696,12 @@ export async function renderHotelVoucherPdf(input: {
   /**
    * Agency header. Full variant (page 1): logo + name + contact lines on the
    * left, address + phone on the right, then the purple/gold divider.
-   * Compact variant (page 2): smaller logo, name, single contact line.
+   * Compact variant (continuation pages): company name plus the divider only
+   * — the logo and contact lines never repeat past page 1.
    */
   const agencyHeader = (compact: boolean) => {
-    const logoSize = compact ? 38 : 56;
-    const logoDrawn = drawHeaderLogo(doc, company.logo ?? null, {
+    const logoSize = compact ? 0 : 56;
+    const logoDrawn = !compact && drawHeaderLogo(doc, company.logo ?? null, {
       x: MARGIN,
       y,
       width: logoSize,
@@ -747,21 +748,14 @@ export async function renderHotelVoucherPdf(input: {
       }
       y = Math.max(lineY, rightY, y + logoSize) + 6;
     } else {
+      // Continuation pages stay branded through the footer band, section
+      // bars and page furniture — no repeated logo or contact block.
       const nameW = CONTENT_W - (textX - MARGIN);
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(14.5).text(company.name, textX, y + 1, {
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(11).text(company.name, textX, y + 1, {
         width: nameW,
       });
-      const nameH = measure(company.name, nameW, 'Helvetica-Bold', 14.5);
-      const contactLine = [company.email, company.website].filter(
-        (line): line is string => Boolean(line),
-      ).join('   •   ');
-      if (contactLine) {
-        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5).text(contactLine, textX, y + 5 + nameH, {
-          width: nameW,
-          ellipsis: true,
-        });
-      }
-      y = Math.max(y + logoSize, y + 5 + nameH + (contactLine ? 14 : 0)) + 8;
+      const nameH = measure(company.name, nameW, 'Helvetica-Bold', 11);
+      y = y + 1 + nameH + 6;
     }
     y = divider(y);
   };
@@ -772,10 +766,13 @@ export async function renderHotelVoucherPdf(input: {
   agencyHeader(false);
 
   // Title row: purple bed icon, HOTEL VOUCHER heading, confirmation card.
+  // The confirmation card renders only when a confirmation number is saved;
+  // a missing reference leaves no card and no placeholder behind.
   {
-    const cardW = 150;
+    const hasConfirmation = Boolean(voucher.confirmationNumber?.trim());
+    const cardW = hasConfirmation ? 150 : 0;
     const cardH = 54;
-    const titleW = CONTENT_W - cardW - 16;
+    const titleW = CONTENT_W - (hasConfirmation ? cardW + 16 : 0);
     const sub = 'Please present this voucher at the hotel upon arrival.';
     const titleH = Math.max(cardH, 46 + measure(sub, titleW, 'Helvetica', 9.5) + 4);
     ensure(titleH + 6);
@@ -791,49 +788,60 @@ export async function renderHotelVoucherPdf(input: {
     doc.fillColor(MUTED).font('Helvetica').fontSize(9.5).text(sub, MARGIN + iconBox + 10, top + 30, {
       width: titleW - iconBox - 10,
     });
-    // Confirmation card (actual voucher confirmation number only).
-    const cardX = MARGIN + CONTENT_W - cardW;
-    doc
-      .save()
-      .fillColor(BEIGE)
-      .strokeColor(BEIGE_BORDER)
-      .lineWidth(1)
-      .roundedRect(cardX, top, cardW, cardH, 7)
-      .fillAndStroke()
-      .restore();
-    drawIcon('doc', cardX + 10, top + cardH / 2, 16, PURPLE);
-    // Small label stays navy so it reads on the beige card in any theme.
-    // Uses the staff-customized label when set, else the default.
-    doc
-      .fillColor(NAVY)
-      .font('Helvetica')
-      .fontSize(8.5)
-      .text(voucher.confirmationNumberLabel?.trim() || 'Confirmation No.', cardX + 30, top + 10, {
-        width: cardW - 38,
-      });
-    doc
-      .fillColor(NAVY)
-      .font('Helvetica-Bold')
-      .fontSize(16)
-      .text(voucher.confirmationNumber ?? '—', cardX + 30, top + 24, {
-        width: cardW - 38,
-        ellipsis: true,
-      });
+    // Confirmation card (actual voucher confirmation number only; omitted
+    // entirely when none is saved).
+    if (hasConfirmation) {
+      const cardX = MARGIN + CONTENT_W - cardW;
+      doc
+        .save()
+        .fillColor(BEIGE)
+        .strokeColor(BEIGE_BORDER)
+        .lineWidth(1)
+        .roundedRect(cardX, top, cardW, cardH, 7)
+        .fillAndStroke()
+        .restore();
+      drawIcon('doc', cardX + 10, top + cardH / 2, 16, PURPLE);
+      // Small label stays navy so it reads on the beige card in any theme.
+      // Uses the staff-customized label when set, else the default.
+      doc
+        .fillColor(NAVY)
+        .font('Helvetica')
+        .fontSize(8.5)
+        .text(voucher.confirmationNumberLabel?.trim() || 'Confirmation No.', cardX + 30, top + 10, {
+          width: cardW - 38,
+        });
+      doc
+        .fillColor(NAVY)
+        .font('Helvetica-Bold')
+        .fontSize(16)
+        .text(voucher.confirmationNumber ?? '—', cardX + 30, top + 24, {
+          width: cardW - 38,
+          ellipsis: true,
+        });
+    }
     y = top + titleH + 6;
   }
 
   // Hotel Details (first content section; no star rating ever).
   sectionBar('HOTEL DETAILS', 'building');
   {
+    // A city already contained in the address text adds no value as a
+    // separate line, so it is folded away (the address itself is untouched).
+    const addressText = voucher.hotelAddress?.trim() ? voucher.hotelAddress.trim() : null;
+    const cityText = voucher.hotelCity?.trim() ? voucher.hotelCity.trim() : null;
+    const cityRedundant =
+      addressText !== null &&
+      cityText !== null &&
+      addressText.toLowerCase().includes(cityText.toLowerCase());
     const left: FieldItem[] = [];
-    if (voucher.hotelAddress) {
+    if (addressText) {
       left.push({
         label: 'Address',
-        value: voucher.hotelCity ? `${voucher.hotelAddress}\n${voucher.hotelCity}` : voucher.hotelAddress,
+        value: !cityRedundant && cityText ? `${addressText}\n${cityText}` : addressText,
         boldValue: false,
       });
-    } else if (voucher.hotelCity) {
-      left.push({ label: 'Address', value: voucher.hotelCity, boldValue: false });
+    } else if (cityText) {
+      left.push({ label: 'Address', value: cityText, boldValue: false });
     }
     const right: FieldItem[] = [];
     if (voucher.hotelPhone) right.push({ label: 'Phone', value: voucher.hotelPhone, boldValue: false });
@@ -843,15 +851,9 @@ export async function renderHotelVoucherPdf(input: {
     // Omitted entirely when absent — never a placeholder or a guess.
     if (voucher.bookingId)
       right.push({ label: voucher.bookingIdLabel?.trim() || 'Booking ID', value: voucher.bookingId });
-    if (left.length > 0 || right.length > 0) {
-      profileBlock(voucher.hotelName, left, right);
-    } else {
-      ensure(30);
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(13.5).text(voucher.hotelName, MARGIN, y, {
-        width: CONTENT_W,
-      });
-      y = doc.y + 8;
-    }
+    // The hotel identity always sits in the standard profile card so the
+    // section keeps one unified shape with or without contact details.
+    profileBlock(voucher.hotelName, left, right);
   }
 
   // Guest Details (room count lives here, never in Stay Details).
@@ -928,28 +930,28 @@ export async function renderHotelVoucherPdf(input: {
   }
 
   // Room configurations: every saved entry with its quantity and extras.
+  // Customer-facing columns only: row number, room type, room count and
+  // extra beds. Child-without-bed quantities and room remarks stay stored
+  // and editable but are never printed on the voucher.
   if (voucher.stayRooms.length > 0) {
     // Keep the bar together with the table header plus one body row.
     sectionBar('ROOM DETAILS', 'bed', 24 + 32);
     // Column widths sum exactly to CONTENT_W so the purple header, zebra
-    // stripes, and grid share one right edge.
-    const remarkW = CONTENT_W - (32 + 180 + 55 + 65 + 80);
+    // stripes, and grid share one right edge. Room Type absorbs the width
+    // freed by the removed columns so long names keep room to wrap.
+    const roomTypeW = CONTENT_W - (32 + 55 + 65);
     table(
       [
         { header: '#', width: 32, align: 'center' as const },
-        { header: 'Room Type', width: 180, align: 'left' as const },
+        { header: 'Room Type', width: roomTypeW, align: 'left' as const },
         { header: 'Rooms', width: 55, align: 'center' as const },
         { header: 'Extra Bed', width: 65, align: 'center' as const },
-        { header: 'Child w/o Bed', width: 80, align: 'center' as const },
-        { header: 'Remark', width: remarkW, align: 'left' as const },
       ],
       voucher.stayRooms.map((row, index) => [
         String(index + 1),
         row.roomType,
         String(row.rooms),
         row.extraBedQuantity === null ? '—' : String(row.extraBedQuantity),
-        row.childWithoutBedQuantity === null ? '—' : String(row.childWithoutBedQuantity),
-        row.notes?.trim() ? row.notes.trim() : '—',
       ]),
     );
     y += 8;
@@ -979,13 +981,15 @@ export async function renderHotelVoucherPdf(input: {
   {
     if (voucher.guests.length > 0) {
       // Keep the bar together with the table header plus one body row.
+      // The third column carries Adult/Child values, so it is headed
+      // exactly that — never the misleading "No of Pax".
       sectionBar('GUEST INFORMATION', 'person', 24 + 32);
       const guestLastW = CONTENT_W - (36 + 310);
       table(
         [
           { header: '#', width: 36, align: 'center' as const },
           { header: 'Guest Name', width: 310, align: 'left' as const },
-          { header: 'No of Pax', width: guestLastW, align: 'center' as const },
+          { header: 'Adult / Child', width: guestLastW, align: 'center' as const },
         ],
         voucher.guests.map((guest, index) => [
           String(index + 1),
