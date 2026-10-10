@@ -682,9 +682,11 @@ describe('Booking confirmed amount by destination', () => {
     expect(await revenueOf(client)).toEqual([]);
   });
 
-  it('ignores a quotation amount with no real net cost, falls back to expected', async () => {
-    // Mirrors the list rule: a quotation placeholder total (net 0) is not a
-    // real amount, so the chart uses the lead's expectedAmount instead.
+  it('uses the quotation amount regardless of net cost, like the leads list', async () => {
+    // Mirrors the Amount column rule (LeadsPage quotationAmountFor): a
+    // positive final amount counts even with zero recorded net cost.
+    // Regression: the old netAmount > 0 gate dropped exactly these leads,
+    // emptying the chart while the table showed their amounts.
     const client = await owner();
     const lead = await seedLead(client, {
       expectedAmount: 50000,
@@ -698,7 +700,68 @@ describe('Booking confirmed amount by destination', () => {
       where: { id: quotation.versions[0]!.id },
       data: { finalAmount: 3000, netAmount: 0 },
     });
+    expect(await revenueOf(client)).toEqual([{ destination: 'Goa', totalAmount: '3000.00' }]);
+  });
+
+  it('falls back to expected amount only when no positive quotation amount exists', async () => {
+    const client = await owner();
+    const lead = await seedLead(client, {
+      expectedAmount: 50000,
+      itinerary: [{ country: 'India', destination: 'Goa', nights: 2, sequence: 1 }],
+    });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    const quotation = (
+      await client.post('/api/quotations', { queryId: lead.id })
+    ).body.data as { id: string; versions: { id: string }[] };
+    // Zero/negative quoted totals are not amounts — expectedAmount applies.
+    await db.quotationVersion.update({
+      where: { id: quotation.versions[0]!.id },
+      data: { finalAmount: 0, netAmount: 0 },
+    });
     expect(await revenueOf(client)).toEqual([{ destination: 'Goa', totalAmount: '50000.00' }]);
+  });
+
+  it('aggregates quotation-only confirmed leads by destination', async () => {
+    // Reported scenario: several Booking Confirmed leads whose amounts live
+    // only on their quotations (no expectedAmount, no recorded net cost),
+    // sharing destinations — every row and total must appear.
+    const client = await owner();
+    const seedConfirmedWithQuote = async (
+      destination: string,
+      nights: number,
+      finalAmount: number,
+      customerName: string,
+    ) => {
+      const lead = await seedLead(client, {
+        customerName,
+        itinerary: [{ country: 'India', destination, nights, sequence: 1 }],
+      });
+      await setStage(lead.id, 'BOOKING_CONFIRMED');
+      const quotation = (
+        await client.post('/api/quotations', { queryId: lead.id })
+      ).body.data as { id: string; versions: { id: string }[] };
+      await db.quotationVersion.update({
+        where: { id: quotation.versions[0]!.id },
+        data: { finalAmount, netAmount: 0 },
+      });
+    };
+    await seedConfirmedWithQuote('Kerala', 8, 90000, 'Brenda Dsouza');
+    await seedConfirmedWithQuote('Kerala', 8, 50000, 'Shweta');
+    await seedConfirmedWithQuote('Goa', 4, 88000, 'Rajat Yadav');
+    await seedConfirmedWithQuote('Kerala', 6, 66000, 'Shri P Mahajan');
+    // Non-qualifying stages and amount-less rows stay out.
+    const other = await seedLead(client, {
+      customerName: 'Browsing Bob',
+      expectedAmount: 40000,
+      itinerary: [{ country: 'India', destination: 'Kerala', nights: 2, sequence: 1 }],
+    });
+    await setStage(other.id, 'NEW_LEAD');
+    const blank = await seedLead(client, { customerName: 'No Amount', itinerary: [] });
+    await setStage(blank.id, 'BOOKING_CONFIRMED');
+    expect(await revenueOf(client)).toEqual([
+      { destination: 'Kerala', totalAmount: '206000.00' },
+      { destination: 'Goa', totalAmount: '88000.00' },
+    ]);
   });
 
   it('aggregates destination totals sorted descending', async () => {

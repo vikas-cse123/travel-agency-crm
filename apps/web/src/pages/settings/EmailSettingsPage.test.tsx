@@ -128,4 +128,117 @@ describe('Email settings page', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send Test Email' }));
     expect(await screen.findByText('Authentication failed.')).toBeInTheDocument();
   });
+
+  it('hides removal and disables the test email when nothing is configured', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'No email configuration exists.' },
+        }),
+      }) as Response),
+    );
+    renderPage();
+    await screen.findByText('Email Configuration');
+    await waitFor(() =>
+      expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue(''),
+    );
+    expect(screen.queryByRole('button', { name: 'Remove Configuration' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send Test Email' })).toBeDisabled();
+  });
+
+  it('confirms before removing and resets the form on success', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (init?.method === 'DELETE' && url.endsWith('/email-settings'))
+        return response({ removed: true });
+      return response(savedSettings);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage();
+    await screen.findByDisplayValue('smtp.example.com');
+
+    // Opening the dialog sends nothing yet.
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Configuration' }));
+    expect(
+      await screen.findByText(
+        'Remove the configured sending email account? The CRM will no longer be able to send emails using these settings.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) => String(url).endsWith('/email-settings') && options?.method === 'DELETE',
+      ),
+    ).toBe(false);
+
+    // Cancel keeps the configuration.
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) => String(url).endsWith('/email-settings') && options?.method === 'DELETE',
+      ),
+    ).toBe(false);
+
+    // Confirming removes and resets to the unconfigured state.
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Configuration' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(
+      (await screen.findAllByRole('button', { name: 'Remove Configuration' })).find((button) =>
+        dialog.contains(button),
+      )!,
+    );
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, options]) =>
+            String(url).endsWith('/email-settings') && options?.method === 'DELETE',
+        ),
+      ).toBe(true);
+    });
+    expect(await screen.findByText('Email configuration removed.')).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue('');
+    expect(screen.getByLabelText('SMTP username') as HTMLInputElement).toHaveValue('');
+    expect(screen.getByLabelText('From email') as HTMLInputElement).toHaveValue('');
+    // Password indicator cleared and test email disabled until reconfigured.
+    expect(screen.getByLabelText('SMTP password').getAttribute('placeholder')).toBe('••••••••');
+    expect(screen.queryByRole('button', { name: 'Remove Configuration' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send Test Email' })).toBeDisabled();
+    expect(document.body.textContent).not.toContain('s3cret');
+  });
+
+  it('shows an error and keeps the configuration when removal fails', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (init?.method === 'DELETE' && url.endsWith('/email-settings')) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({
+            success: false,
+            error: { code: 'INTERNAL_ERROR', message: 'database exploded' },
+          }),
+        } as Response;
+      }
+      return response(savedSettings);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage();
+    await screen.findByDisplayValue('smtp.example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Configuration' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(
+      (await screen.findAllByRole('button', { name: 'Remove Configuration' })).find((button) =>
+        dialog.contains(button),
+      )!,
+    );
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    // Configuration retained: values still filled, dialog stays open for retry.
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue('smtp.example.com');
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
 });

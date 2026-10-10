@@ -273,21 +273,52 @@ describe('Hotel booking emails (Phase 1)', () => {
     versions: [{ id: 'c0ffee00-0000-4000-8000-000000000023', hotels: [] }],
   };
 
+  const leadDetailId = '11111111-1111-4222-8222-111111111111';
+  const quotationNamed = {
+    ...quotationOne,
+    id: 'c0ffee00-0000-4000-8000-000000000004',
+    quotationNumber: 'QT-000124',
+    queryId: leadDetailId,
+    adultNames: ['Rahul Sharma', 'Priya Sharma'],
+    childWithBedNames: ['Aarav Sharma'],
+    childWithoutBedNames: ['', 'Anaya Sharma'],
+    infantNames: ['Ira Sharma'],
+  };
+  const quotationBare = {
+    ...quotationOne,
+    id: 'c0ffee00-0000-4000-8000-000000000005',
+    quotationNumber: 'QT-000125',
+    queryId: leadDetailId,
+  };
+  const leadNamed = {
+    id: leadDetailId,
+    adultNames: ['Lead Adult'],
+    childWithBedNames: [],
+    childWithoutBedNames: [],
+    infantNames: [],
+  };
+  const leadBare = { id: leadDetailId };
+
   function stubHotelFlow({
     list = [quotationOne],
     details = { [quotationOne.id]: quotationOne },
     master = hotelMaster,
     sent = sentRow,
+    lead = null as Record<string, unknown> | null,
   }: {
     list?: unknown[];
     details?: Record<string, unknown>;
     master?: unknown;
     sent?: unknown;
+    lead?: Record<string, unknown> | null;
   } = {}) {
     return vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (init?.method === 'POST' && url.endsWith('/emails')) return response(sent);
       if (/\/masters\/hotels\/[^/?]+$/.test(url)) return response(master);
+      const leadMatch = url.match(/\/queries\/([^/?]+)(?:[?]|$)/);
+      if (leadMatch && !url.includes('/queries?'))
+        return response(lead?.[leadMatch[1]!] ?? null);
       const detailMatch = url.match(/\/quotations\/([^/?]+)(?:[?]|$)/);
       if (detailMatch && !url.includes('/quotations?'))
         return response(details[detailMatch[1]!] ?? null);
@@ -384,14 +415,15 @@ describe('Hotel booking emails (Phase 1)', () => {
       ),
     );
     expect(screen.getByLabelText('Email subject')).toHaveValue(
-      'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10-11-2026 to 14-11-2026',
+      'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10 November 2026 to 14 November 2026',
     );
     const message = screen.getByLabelText('Email message').textContent ?? '';
     expect(message).toContain('Dear Reservations Team');
     expect(message).toContain('Mohan Kumar');
     expect(message).toContain('+91 91111 11111');
     expect(message).toContain('Palace Road, Jaipur');
-    expect(message).toContain('10-11-2026');
+    expect(message).toContain('Check-in date: 10 November 2026');
+    expect(message).toContain('Check-out date: 14 November 2026');
     expect(message).toContain('Number of nights: 4');
     // Every room configuration and every meal plan, not just the first.
     expect(message).toContain('Deluxe Room × 3');
@@ -438,7 +470,7 @@ describe('Hotel booking emails (Phase 1)', () => {
     expect(screen.getByLabelText('Email recipients')).toHaveValue('');
     // The draft still prepares subject and body for manual addressing.
     expect(screen.getByLabelText('Email subject')).toHaveValue(
-      'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10-11-2026 to 14-11-2026',
+      'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10 November 2026 to 14 November 2026',
     );
   });
 
@@ -571,9 +603,83 @@ describe('Hotel booking emails (Phase 1)', () => {
     );
     expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
       to: ['reservations@shahpalace.test'],
-      subject: 'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10-11-2026 to 14-11-2026',
+      subject:
+        'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10 November 2026 to 14 November 2026',
     });
     expect(await screen.findByText(/Email sent to reservations@shahpalace.test/)).toBeInTheDocument();
+  });
+
+  it('includes quotation traveller names in the hotel draft', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubHotelFlow({
+        list: [quotationNamed],
+        details: { [quotationNamed.id]: quotationNamed },
+        lead: { [leadDetailId]: leadNamed },
+      }),
+    );
+    renderPage();
+    await screen.findByText('Compose Email');
+    await searchAndPickQuotation('QT-000124');
+    await screen.findByLabelText('Select Hotel');
+    pickHotel('Shah Palace Hotel');
+
+    const message = () => screen.getByLabelText('Email message').textContent ?? '';
+    await waitFor(() => expect(message()).toContain('Traveller Details'));
+    // Quotation's own names win over the lead fallback.
+    expect(message()).toContain('Adult 1: Rahul Sharma');
+    expect(message()).toContain('Adult 2: Priya Sharma');
+    expect(message()).toContain('Child With Bed 1: Aarav Sharma');
+    expect(message()).toContain('Child Without Bed 2: Anaya Sharma');
+    expect(message()).toContain('Infant 1: Ira Sharma');
+    // The blank first Child Without Bed slot is skipped, never invented.
+    expect(message()).not.toContain('Child Without Bed 1:');
+    expect(message()).not.toContain('Lead Adult');
+  });
+
+  it('falls back to lead names when the quotation has none', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubHotelFlow({
+        list: [quotationBare],
+        details: { [quotationBare.id]: quotationBare },
+        lead: { [leadDetailId]: leadNamed },
+      }),
+    );
+    renderPage();
+    await screen.findByText('Compose Email');
+    await searchAndPickQuotation('QT-000125');
+    await screen.findByLabelText('Select Hotel');
+    pickHotel('Shah Palace Hotel');
+
+    const message = () => screen.getByLabelText('Email message').textContent ?? '';
+    await waitFor(() => expect(message()).toContain('Traveller Details'));
+    expect(message()).toContain('Adult 1: Lead Adult');
+  });
+
+  it('omits Traveller Details when no names exist anywhere', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubHotelFlow({
+        list: [quotationBare],
+        details: { [quotationBare.id]: quotationBare },
+        lead: { [leadDetailId]: leadBare },
+      }),
+    );
+    renderPage();
+    await screen.findByText('Compose Email');
+    await searchAndPickQuotation('QT-000125');
+    await screen.findByLabelText('Select Hotel');
+    pickHotel('Shah Palace Hotel');
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email recipients')).toHaveValue(
+        'reservations@shahpalace.test',
+      ),
+    );
+    expect(screen.getByLabelText('Email message').textContent ?? '').not.toContain(
+      'Traveller Details',
+    );
   });
 
   it('still composes standalone email without touching the hotel workflow', async () => {
@@ -594,12 +700,25 @@ describe('Hotel booking emails (Phase 1)', () => {
 
 describe('Hotel booking email content builders', () => {
   it('escapes interpolated values and formats stay dates without shifts', async () => {
-    const { buildHotelBookingBody, buildHotelBookingSubject, escapeHtml, formatStayDate } =
-      await import('./HotelBookingEmail');
+    const {
+      buildHotelBookingBody,
+      buildHotelBookingSubject,
+      escapeHtml,
+      formatStayDate,
+      formatStayDateLong,
+    } = await import('./HotelBookingEmail');
     expect(escapeHtml('<b>&"evil"</b>')).toBe('&lt;b&gt;&amp;&quot;evil&quot;&lt;/b&gt;');
     expect(formatStayDate('2026-11-10T00:00:00.000Z')).toBe('10-11-2026');
     expect(formatStayDate(null)).toBeNull();
     expect(formatStayDate('garbage')).toBeNull();
+    // Month-name format for generated subjects and bodies: no timezone
+    // shift (the UTC instant keeps its calendar day) and no placeholders.
+    expect(formatStayDateLong('2026-11-10T00:00:00.000Z')).toBe('10 November 2026');
+    expect(formatStayDateLong('2026-11-01')).toBe('1 November 2026');
+    expect(formatStayDateLong('2026-10-18T00:00:00.000Z')).toBe('18 October 2026');
+    expect(formatStayDateLong(null)).toBeNull();
+    expect(formatStayDateLong('garbage')).toBeNull();
+    expect(formatStayDateLong('2026-13-01')).toBeNull();
     expect(
       buildHotelBookingSubject({
         customerName: 'Mohan Kumar',
@@ -607,7 +726,9 @@ describe('Hotel booking email content builders', () => {
         checkInDate: '2026-11-10T00:00:00.000Z',
         checkOutDate: '2026-11-14T00:00:00.000Z',
       }),
-    ).toBe('Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10-11-2026 to 14-11-2026');
+    ).toBe(
+      'Hotel Booking Request – Mohan Kumar – Shah Palace Hotel – 10 November 2026 to 14 November 2026',
+    );
     expect(
       buildHotelBookingSubject({ customerName: null, hotelName: 'Lakeview Resort' }),
     ).toBe('Hotel Booking Request – Lakeview Resort');
@@ -628,6 +749,40 @@ describe('Hotel booking email content builders', () => {
     expect(body).not.toContain('<Mohan>');
     expect(body).toContain('&lt;Mohan&gt;');
     expect(body).not.toContain('undefined');
+  });
+});
+
+describe('Traveller name resolution helpers', () => {
+  it('orders entries by category, numbers per category, and skips blanks', async () => {
+    const { travellerNameEntries, resolveTravellerNames, travellerNameItems } = await import(
+      './travellerNames'
+    );
+    expect(
+      travellerNameEntries({
+        adultNames: ['Rahul Sharma', '  '],
+        childWithBedNames: ['Aarav Sharma'],
+        childWithoutBedNames: ['', 'Anaya Sharma'],
+        infantNames: [null, 'Ira Sharma'],
+      }),
+    ).toEqual([
+      { label: 'Adult 1', name: 'Rahul Sharma' },
+      { label: 'Child With Bed 1', name: 'Aarav Sharma' },
+      { label: 'Child Without Bed 2', name: 'Anaya Sharma' },
+      { label: 'Infant 2', name: 'Ira Sharma' },
+    ]);
+    expect(travellerNameEntries(null)).toEqual([]);
+    expect(travellerNameEntries({})).toEqual([]);
+
+    // Quotation wins; an all-blank quotation falls back to the lead; empty is empty.
+    const quotation = { adultNames: ['Q Adult'] };
+    const lead = { adultNames: ['Lead Adult'] };
+    expect(resolveTravellerNames(quotation, lead).source).toBe('quotation');
+    expect(resolveTravellerNames({ adultNames: ['  '] }, lead).source).toBe('lead');
+    expect(resolveTravellerNames(null, null)).toEqual({ source: null, entries: [] });
+
+    const items = travellerNameItems([{ label: 'Adult 1', name: '<Rahul>&' }]).join('');
+    expect(items).toContain('&lt;Rahul&gt;&amp;');
+    expect(items).not.toContain('<Rahul>');
   });
 });
 
@@ -834,6 +989,17 @@ describe('Itinerary vendor emails (Phase 2)', () => {
     ],
   };
 
+  const quotationItinNamed = {
+    ...quotationItin,
+    id: 'c0ffee00-0000-4000-8000-000000000064',
+    quotationNumber: 'QT-000322',
+    queryId: '22222222-2222-4222-8222-222222222222',
+    adultNames: ['Rahul Sharma', 'Priya Sharma'],
+    childWithBedNames: ['Aarav Sharma'],
+    childWithoutBedNames: [],
+    infantNames: [],
+  };
+
   function stubItineraryFlow({
     list = [quotationItin],
     details = { [quotationItin.id]: quotationItin },
@@ -962,6 +1128,9 @@ describe('Itinerary vendor emails (Phase 2)', () => {
   });
 
   it('resolves the destination email and prepares a destination-specific draft', async () => {
+    const { buildWhatsAppSummary, whatsappMarkdownToHtml } = await import(
+      '@/features/quotations/whatsappSummary'
+    );
     const fetchMock = stubItineraryFlow();
     vi.stubGlobal('fetch', fetchMock);
     renderPage();
@@ -975,30 +1144,119 @@ describe('Itinerary vendor emails (Phase 2)', () => {
       expect(screen.getByLabelText('Email recipients')).toHaveValue('vendor-sg@example.test'),
     );
     expect(screen.getByLabelText('Email subject')).toHaveValue(
-      'Itinerary Details – Mohan Kumar – Singapore – 01-11-2026 to 02-11-2026',
+      'Itinerary Details – Mohan Kumar – Singapore – 1 November 2026 to 2 November 2026',
     );
+    // The body is the shared WhatsApp template over the whole version —
+    // identical for every destination of the quotation.
+    const expectedHtml = whatsappMarkdownToHtml(
+      buildWhatsAppSummary({
+        quotation: quotationItin as never,
+        version: versionMulti as never,
+        weblinkUrl: null,
+        companyName: 'Travel Agency CRM',
+        preparedByName: null,
+      }),
+      { wrap: false },
+    );
+    const probe = document.createElement('div');
+    probe.innerHTML = expectedHtml;
     const message = screen.getByLabelText('Email message').textContent ?? '';
-    expect(message).toContain('Dear Team');
-    expect(message).toContain('QT-000321');
-    expect(message).toContain('Arrival in Singapore');
-    expect(message).toContain('Sentosa day');
+    expect(message).toBe(probe.textContent);
+    expect(message).toContain('Greetings from');
+    expect(message).toContain('Travel Date:');
+    expect(message).toContain('Travelers:');
+    expect(message).toContain('2 Adults, 1 Child');
+    expect(message).toContain('Destinations:');
+    expect(message).toContain('Singapore · Kuala Lumpur');
+    expect(message).toContain('ITINERARY');
+    expect(message).toContain('City highlights');
     expect(message).toContain('Gardens by the Bay');
-    expect(message).toContain('09:00');
-    expect(message).toContain('Airport pickup');
-    expect(message).toContain('2 adults, 1 child with bed');
-    // Excluded: other destinations, unrelated cities, hotel content, internals.
-    expect(message).not.toContain('Travel to KL');
-    expect(message).not.toContain('Far away tour');
-    expect(message).not.toContain('Hotel stay charge');
+    // Whole-version content: the other destination's sightseeing is included,
+    // and the old email-only sections are gone.
+    expect(message).toContain('Other city day');
+    expect(message).toContain('Far away tour');
+    expect(message).not.toContain('Trip Overview');
+    expect(message).not.toContain('Traveller Details');
+    expect(message).not.toContain('Day-by-Day Itinerary');
+    // Pricing internals never leak into the vendor draft.
     expect(message).not.toContain('15000');
     expect(message).not.toContain('Travel insurance');
-    expect(message).not.toMatch(/confirm(ed|ation of your booking)/i);
+    expect(message).not.toContain('Hotel stay charge');
+    // A request, never a confirmation.
+    expect(message).not.toMatch(/confirm(ed|ation of your booking)|booking is confirmed/i);
     // Selecting never sends automatically.
     expect(
       fetchMock.mock.calls.some(
         ([url, options]) => String(url).endsWith('/emails') && options?.method === 'POST',
       ),
     ).toBe(false);
+  });
+
+  it('excludes per-guest names like the WhatsApp message does', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubItineraryFlow({
+        list: [quotationItinNamed],
+        details: { [quotationItinNamed.id]: quotationItinNamed },
+      }),
+    );
+    renderPage();
+    await screen.findByText('Compose Email');
+    await pickPurposeItinerary();
+    await searchAndPickQuotation('QT-000322');
+    await screen.findByLabelText('Select Destination');
+    pickDestination('Singapore');
+
+    const message = () => screen.getByLabelText('Email message').textContent ?? '';
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email recipients')).toHaveValue('vendor-sg@example.test'),
+    );
+    // Quotation traveller names exist but the shared template carries only
+    // counts — never individual names.
+    expect(message()).toContain('2 Adults, 1 Child');
+    expect(message()).not.toContain('Traveller Details');
+    expect(message()).not.toContain('Rahul Sharma');
+    expect(message()).not.toContain('Priya Sharma');
+    expect(message()).not.toContain('Aarav Sharma');
+  });
+
+  it('keeps the same shared body when the destination changes', async () => {
+    vi.stubGlobal('fetch', stubItineraryFlow());
+    renderPage();
+    await screen.findByText('Compose Email');
+    await pickPurposeItinerary();
+    await searchAndPickQuotation('QT-000321');
+    await screen.findByLabelText('Select Destination');
+    pickDestination('Singapore');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email recipients')).toHaveValue('vendor-sg@example.test'),
+    );
+    const singaporeBody = screen.getByLabelText('Email message').textContent ?? '';
+
+    // Recipient and subject follow the new selection; the shared body does not.
+    pickDestination('Kuala Lumpur');
+    await waitFor(() => expect(screen.getByLabelText('Email recipients')).toHaveValue(''));
+    expect(screen.getByLabelText('Email subject')).toHaveValue(
+      'Itinerary Details – Mohan Kumar – Kuala Lumpur – 3 November 2026 to 4 November 2026',
+    );
+    expect(screen.getByLabelText('Email message').textContent ?? '').toBe(singaporeBody);
+  });
+
+  it('omits Traveller Details from the itinerary draft when no names exist', async () => {
+    vi.stubGlobal('fetch', stubItineraryFlow());
+    renderPage();
+    await screen.findByText('Compose Email');
+    await pickPurposeItinerary();
+    await searchAndPickQuotation('QT-000321');
+    await screen.findByLabelText('Select Destination');
+    pickDestination('Singapore');
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email recipients')).toHaveValue('vendor-sg@example.test'),
+    );
+    expect(screen.getByLabelText('Email message').textContent ?? '').not.toContain(
+      'Traveller Details',
+    );
   });
 
   it('never reuses another destination email and warns when none is configured', async () => {
@@ -1016,12 +1274,13 @@ describe('Itinerary vendor emails (Phase 2)', () => {
     await waitFor(() => expect(screen.getByLabelText('Email recipients')).toHaveValue(''));
     expect(await screen.findByText(/has no email address/)).toBeInTheDocument();
     expect(screen.getByLabelText('Email subject')).toHaveValue(
-      'Itinerary Details – Mohan Kumar – Kuala Lumpur – 03-11-2026 to 04-11-2026',
+      'Itinerary Details – Mohan Kumar – Kuala Lumpur – 3 November 2026 to 4 November 2026',
     );
     const message = screen.getByLabelText('Email message').textContent ?? '';
-    expect(message).toContain('Travel to KL');
-    expect(message).toContain('KL tower visit');
-    expect(message).not.toContain('Arrival in Singapore');
+    // The shared body covers the whole version regardless of destination.
+    expect(message).toContain('ITINERARY');
+    expect(message).toContain('City highlights');
+    expect(message).toContain('Other city day');
   });
 
   it('warns when the destination has no configured master record', async () => {
@@ -1134,9 +1393,12 @@ describe('Itinerary vendor emails (Phase 2)', () => {
     const body = JSON.parse(String(post?.[1]?.body));
     expect(body).toMatchObject({
       to: ['vendor-sg@example.test'],
-      subject: 'Itinerary Details – Mohan Kumar – Singapore – 01-11-2026 to 02-11-2026',
+      subject: 'Itinerary Details – Mohan Kumar – Singapore – 1 November 2026 to 2 November 2026',
     });
-    expect(body.bodyHtml).toContain('Arrival in Singapore');
+    // Posted body is the shared WhatsApp template, not the old format.
+    expect(body.bodyHtml).toContain('ITINERARY');
+    expect(body.bodyHtml).toContain('City highlights');
+    expect(body.bodyHtml).not.toContain('Trip Overview');
     expect(body.bodyHtml).not.toContain('Hotel stay charge');
     expect(await screen.findByText(/Email sent to vendor-sg@example.test/)).toBeInTheDocument();
   });
@@ -1146,7 +1408,6 @@ describe('Itinerary vendor email content builders', () => {
   it('groups days, matches masters exactly, and omits absent data', async () => {
     const {
       associationNames,
-      buildItineraryBody,
       buildItinerarySubject,
       destinationDateRange,
       itineraryDestinationOptions,
@@ -1195,62 +1456,144 @@ describe('Itinerary vendor email content builders', () => {
     ).toEqual(['VEHICLE_TRANSFER']);
 
     expect(destinationDateRange([{ date: '2026-11-02' }, { date: '2026-11-01' }], null, null)).toBe(
-      '01-11-2026 to 02-11-2026',
+      '1 November 2026 to 2 November 2026',
     );
-    expect(destinationDateRange([], '2026-11-01', '2026-11-05')).toBe('01-11-2026 to 05-11-2026');
+    // Double-digit days order chronologically, not alphabetically.
+    expect(
+      destinationDateRange([{ date: '2026-11-10' }, { date: '2026-11-02' }], null, null),
+    ).toBe('2 November 2026 to 10 November 2026');
+    expect(destinationDateRange([], '2026-11-01', '2026-11-05')).toBe(
+      '1 November 2026 to 5 November 2026',
+    );
     expect(destinationDateRange([], null, null)).toBeNull();
     expect(
       buildItinerarySubject({ customerName: 'Mohan', destination: 'Goa', dateRange: null }),
     ).toBe('Itinerary Details – Mohan – Goa');
+  });
 
-    const body = buildItineraryBody({
-      quotation: {
-        customerName: '<Mohan>',
-        customerPhone: null,
-        customerEmail: null,
-        adults: 2,
-        childrenWithBed: 0,
-        childrenWithoutBed: 0,
-        infants: 0,
+  it('builds the email body from the shared WhatsApp generator without its own format', async () => {
+    const { buildItineraryEmailBody } = await import('./ItineraryBookingEmail');
+    const { buildWhatsAppSummary, whatsappMarkdownToHtml } = await import(
+      '@/features/quotations/whatsappSummary'
+    );
+    const quotation = {
+      customerName: 'Mohan Kumar',
+      customerPhone: '+91 91111 11111',
+      customerEmail: 'mohan@example.test',
+      destinationSummary: 'Singapore · Kuala Lumpur',
+      adults: 2,
+      childrenWithBed: 1,
+      childrenWithoutBed: 0,
+      infants: 0,
+    };
+    const version = {
+      travelStartDate: '2026-11-01',
+      travelEndDate: '2026-11-05',
+      destinationSummary: 'Singapore · Kuala Lumpur',
+      hotels: [{ hotelName: 'Paid <tour>', category: '5-Star', sequence: 1 }],
+      sightseeingDetails: {
+        include: true,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'City highlights',
+            city: 'Singapore',
+            date: '2026-11-01',
+            dailyTransfer: 'PRIVATE',
+            activities: [{ name: 'Gardens by the Bay', startTime: '09:00', description: null }],
+          },
+        ],
       },
-      destinationName: 'Goa',
-      dateRange: null,
-      days: [
-        {
-          id: 'd-1',
-          dayNumber: 1,
-          date: null,
-          title: 'Arrival',
-          destination: 'Goa',
-          description: '',
-          meals: null,
-          overnightLocation: null,
-          activities: null,
-          transfers: null,
-          notes: null,
-          sequence: 1,
-        },
-      ],
-      sightseeingDays: [],
+      itinerary: [],
       services: [
         {
           serviceType: 'SIGHTSEEING',
-          name: 'Paid <tour>',
+          name: 'KL tower visit',
           description: null,
-          dayNumber: null,
-          city: 'Goa',
-          quantity: '1',
-          sellingPrice: '9999',
-          internalCost: '1111',
+          dayNumber: 3,
+          city: 'Kuala Lumpur',
+          quantity: '2',
+          sellingPrice: '4000',
+          internalCost: '2500',
         },
-      ] as never,
-    });
-    expect(body).not.toContain('<Mohan>');
-    expect(body).toContain('&lt;Mohan&gt;');
+      ],
+      flightDetails: {
+        include: true,
+        entryMode: 'MANUAL',
+        journeyType: 'ONEWAY_RETURN',
+        outbound: { segments: [] },
+        returnJourney: {
+          segments: [
+            {
+              airlineName: 'Air India',
+              flightNumber: 'AI 380',
+              from: 'SIN',
+              to: 'DEL',
+              departureTime: '18:00',
+              arrivalTime: '21:00',
+              departureDate: '2026-11-05',
+            },
+          ],
+        },
+      },
+    };
+
+    const input = {
+      quotation: quotation as never,
+      version: version as never,
+      companyName: 'ABC Travels',
+      preparedByName: 'Priya Nair',
+    };
+    // Byte parity with a direct composition of the shared pieces (same
+    // unwrapped variant the email composer renders).
+    expect(buildItineraryEmailBody(input)).toBe(
+      whatsappMarkdownToHtml(
+        buildWhatsAppSummary({
+          quotation: quotation as never,
+          version: version as never,
+          weblinkUrl: null,
+          companyName: 'ABC Travels',
+          preparedByName: 'Priya Nair',
+        }),
+        { wrap: false },
+      ),
+    );
+
+    const body = buildItineraryEmailBody(input);
+    // Same wording, sections, hotels, sightseeing, dates, travellers.
+    expect(body).toContain('Greetings from');
+    expect(body).toContain('ABC Travels');
+    expect(body).toContain('Travel Date:');
+    expect(body).toContain('Travelers:');
+    expect(body).toContain('2 Adults, 1 Child');
+    expect(body).toContain('HOTELS');
     expect(body).toContain('Paid &lt;tour&gt;');
-    expect(body).not.toContain('9999');
-    expect(body).not.toContain('1111');
+    expect(body).toContain('ITINERARY');
+    expect(body).toContain('City highlights');
+    expect(body).toContain('Gardens by the Bay');
+    expect(body).toContain('Prepared by:');
+    expect(body).toContain('Priya Nair');
+    expect(body).not.toContain('<tour>');
+    // Optional flight/cruise/vehicle sections stay off; service pricing and
+    // non-cruise/vehicle services never leak into the vendor draft.
+    expect(body).not.toContain('FLIGHT DETAILS');
+    expect(body).not.toContain('Air India');
+    expect(body).not.toContain('KL tower visit');
+    expect(body).not.toContain('4000');
+    expect(body).not.toContain('2500');
     expect(body).not.toContain('undefined');
+
+    // Missing dates and empty sections are omitted gracefully.
+    const bare = buildItineraryEmailBody({
+      quotation: { ...quotation, adults: 0, childrenWithBed: 0 } as never,
+      version: { travelStartDate: null, itinerary: [], sightseeingDetails: null, services: [] } as never,
+      companyName: null,
+      preparedByName: null,
+    });
+    expect(bare).not.toContain('Travel Date:');
+    expect(bare).not.toContain('Travelers:');
+    expect(bare).not.toContain('ITINERARY');
+    expect(bare).toContain('Travel Agency CRM');
   });
 });
 

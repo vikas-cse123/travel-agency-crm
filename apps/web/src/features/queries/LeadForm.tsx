@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray, useForm, type UseFormRegister } from 'react-hook-form';
 import {
   Car,
   FileText,
@@ -80,6 +80,10 @@ interface FormValues {
   childrenWithBedAges: Array<number | null>;
   childrenWithoutBedAges: Array<number | null>;
   infantAges: Array<number | null>;
+  adultNames: string[];
+  childWithBedNames: string[];
+  childWithoutBedNames: string[];
+  infantNames: string[];
 }
 const emptyRow = (sequence = 1): ItineraryForm => ({
   country: '',
@@ -91,6 +95,20 @@ const emptyRow = (sequence = 1): ItineraryForm => ({
   notes: '',
 });
 const dateValue = (value?: string | null) => (value ? value.slice(0, 10) : '');
+
+/**
+ * Normalize a traveller-name list to exactly `count` entries: retained names
+ * keep their positions, removed trailing rows are dropped, new rows start
+ * blank. Values are trimmed to the shared max length.
+ */
+function namesFor(value: unknown, count: number): string[] {
+  const size = Math.max(0, Math.min(200, Math.floor(Number(count) || 0)));
+  const list = Array.isArray(value) ? value : [];
+  return Array.from({ length: size }, (_, index) => {
+    const entry = list[index];
+    return typeof entry === 'string' ? entry.trim().slice(0, 120) : '';
+  });
+}
 
 /** Month/year selects state loaded independently from the stored pair only.
  * An exact travelStartDate never populates these selects: Travel Date and
@@ -167,6 +185,10 @@ function defaults(lead?: Lead): FormValues {
     childrenWithBedAges: lead?.childrenWithBedAges ?? [],
     childrenWithoutBedAges: lead?.childrenWithoutBedAges ?? [],
     infantAges: lead?.infantAges ?? [],
+    adultNames: lead?.adultNames ?? [],
+    childWithBedNames: lead?.childWithBedNames ?? [],
+    childWithoutBedNames: lead?.childWithoutBedNames ?? [],
+    infantNames: lead?.infantNames ?? [],
     itinerary: lead?.itinerary.map((r) => ({
       ...r,
       arrivalDate: dateValue(r.arrivalDate),
@@ -184,6 +206,41 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 const inputClass = 'w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm';
+
+/** Optional per-traveller name inputs for one passenger category. */
+function TravellerNameInputs({
+  count,
+  field,
+  label,
+  register,
+}: {
+  count: number;
+  field: (
+    index: number,
+  ) =>
+    | `adultNames.${number}`
+    | `childWithBedNames.${number}`
+    | `childWithoutBedNames.${number}`
+    | `infantNames.${number}`;
+  label: (index: number) => string;
+  register: UseFormRegister<FormValues>;
+}) {
+  if (count <= 0) return null;
+  return (
+    <div className="mb-2 grid grid-cols-1 gap-4 md:grid-cols-3">
+      {Array.from({ length: count }, (_, index) => (
+        <Field key={field(index)} label={label(index)}>
+          <input
+            className={inputClass}
+            placeholder="Full name (optional)"
+            maxLength={120}
+            {...register(field(index))}
+          />
+        </Field>
+      ))}
+    </div>
+  );
+}
 const sectionTones = {
   blue: 'bg-blue-600 text-white',
   teal: 'bg-teal-600 text-white',
@@ -407,6 +464,7 @@ export function LeadForm({
   const childrenWithBedCount = Math.max(0, Math.min(100, Number(counts[2]) || 0));
   const childrenWithoutBedCount = Math.max(0, Math.min(100, Number(counts[3]) || 0));
   const infantCount = Math.max(0, Math.min(100, Number(counts[4]) || 0));
+  const adultCount = Math.max(0, Math.min(200, Number(counts[1]) || 0));
   const summary = [
     `${counts[1] || 0} Adult${counts[1] === 1 ? '' : 's'}`,
     counts[2] ? `${counts[2]} Child With Bed` : '',
@@ -476,6 +534,13 @@ export function LeadForm({
       infantAges: (v.infantAges ?? []).filter(
         (age): age is number => age != null && Number.isFinite(age),
       ),
+      // Per-traveller names: sized exactly to the passenger counts so each
+      // entry keeps its position (blanks preserved); shrinking a count drops
+      // only the removed trailing rows, growing appends blanks.
+      adultNames: namesFor(v.adultNames, v.adults),
+      childWithBedNames: namesFor(v.childWithBedNames, v.childrenWithBed),
+      childWithoutBedNames: namesFor(v.childWithoutBedNames, v.childrenWithoutBed),
+      infantNames: namesFor(v.infantNames, v.infants),
       expectedAmount: v.expectedAmount ? Number(v.expectedAmount) : null,
       budgetMin: v.budgetMin ? Number(v.budgetMin) : null,
       budgetMax: v.budgetMax ? Number(v.budgetMax) : null,
@@ -780,6 +845,38 @@ export function LeadForm({
                 ))}
               </div>
             )}
+            <div className="mt-4">
+              <p className="mb-1 text-sm font-semibold text-slate-800">
+                Traveller names <span className="font-normal text-slate-500">(optional)</span>
+              </p>
+              <p className="mb-2 text-xs text-slate-500">
+                One optional name per traveller, carried into quotations and email drafts.
+              </p>
+              <TravellerNameInputs
+                count={adultCount}
+                field={(index) => `adultNames.${index}` as const}
+                label={(index) => `Adult ${index + 1} — Name`}
+                register={register}
+              />
+              <TravellerNameInputs
+                count={childrenWithBedCount}
+                field={(index) => `childWithBedNames.${index}` as const}
+                label={(index) => `Child With Bed ${index + 1} — Name`}
+                register={register}
+              />
+              <TravellerNameInputs
+                count={childrenWithoutBedCount}
+                field={(index) => `childWithoutBedNames.${index}` as const}
+                label={(index) => `Child Without Bed ${index + 1} — Name`}
+                register={register}
+              />
+              <TravellerNameInputs
+                count={infantCount}
+                field={(index) => `infantNames.${index}` as const}
+                label={(index) => `Infant ${index + 1} — Name`}
+                register={register}
+              />
+            </div>
             <div className="mt-4 bg-slate-100 p-3">
               <p className="mb-2 text-sm font-semibold text-slate-800">Travelers:</p>
               <div className="rounded border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">

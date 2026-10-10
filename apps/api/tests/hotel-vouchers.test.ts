@@ -1057,22 +1057,18 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     expect(text).not.toContain('No of Pax');
   });
 
-  it('renders room details without Child w/o Bed and Remark columns', async () => {
+  it('renders room details with Room Type, Rooms and conditional Remark columns', async () => {
     const client = await owner();
     const created = await createVoucher(client, {
       stayRooms: [
         {
           roomType: 'Superior Room',
           rooms: 2,
-          extraBedQuantity: 1,
-          childWithoutBedQuantity: 1,
           notes: 'High floor',
         },
         {
           roomType: 'Premier Room',
           rooms: 4,
-          extraBedQuantity: 0,
-          childWithoutBedQuantity: 2,
           notes: null,
         },
       ],
@@ -1087,31 +1083,37 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
       }
     ).read(stored.objectKey);
     const text = pdfText(object ?? Buffer.alloc(0));
-    // Kept headers and values render in order.
-    for (const expected of ['ROOM DETAILS', '#', 'Room Type', 'Rooms', 'Extra Bed']) {
+    // Kept headers and values render in order; Remark shows because one
+    // room carries a remark.
+    for (const expected of ['ROOM DETAILS', '#', 'Room Type', 'Rooms', 'Remark']) {
       expect(text, `missing ${expected}`).toContain(expected);
     }
     expect(text).toContain('Superior Room');
     expect(text).toContain('Premier Room');
-    // Removed columns never render — headings, values, or remarks.
+    expect(text).toContain('High floor');
+    // Removed columns never render — headings or values.
+    expect(text).not.toContain('Extra Bed');
     expect(text).not.toContain('Child w/o Bed');
-    expect(text).not.toContain('Remark');
-    expect(text).not.toContain('High floor');
-    // The underlying data stays saved and editable.
+    // The underlying data stays saved and editable, without the removed keys.
     const details = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
     expect(details.stayRooms).toMatchObject([
-      { roomType: 'Superior Room', rooms: 2, extraBedQuantity: 1 },
-      { roomType: 'Premier Room', rooms: 4, extraBedQuantity: 0 },
+      { roomType: 'Superior Room', rooms: 2, notes: 'High floor' },
+      { roomType: 'Premier Room', rooms: 4, notes: null },
     ]);
+    for (const row of details.stayRooms) {
+      expect(row).not.toHaveProperty('extraBedQuantity');
+      expect(row).not.toHaveProperty('childWithoutBedQuantity');
+    }
     const persisted = await db.hotelVoucherStayRoom.findMany({
       where: { voucherId: created.id },
       orderBy: { sequence: 'asc' },
     });
-    expect(persisted.map((row) => row.childWithoutBedQuantity)).toEqual([1, 2]);
+    expect(persisted.map((row) => row.roomType)).toEqual(['Superior Room', 'Premier Room']);
+    expect(persisted.map((row) => row.rooms)).toEqual([2, 4]);
     expect(persisted.map((row) => row.notes)).toEqual(['High floor', null]);
     const edited = await client.patch(`/api/hotel-vouchers/${created.id}`, {
       stayRooms: [
-        { roomType: 'Superior Room', rooms: 3, childWithoutBedQuantity: 0, notes: 'Sea view' },
+        { roomType: 'Superior Room', rooms: 3, notes: 'Sea view' },
         { roomType: 'Premier Room', rooms: 4 },
       ],
     });
@@ -1119,9 +1121,63 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     const reloaded = (await client.get(`/api/hotel-vouchers/${created.id}`)).body.data;
     expect(reloaded.stayRooms[0]).toMatchObject({
       rooms: 3,
-      childWithoutBedQuantity: 0,
       notes: 'Sea view',
     });
+  });
+
+  it('omits the Remark column when every room remark is blank', async () => {
+    const client = await owner();
+    const created = await createVoucher(client, {
+      stayRooms: [
+        { roomType: 'Superior Room', rooms: 2, notes: null },
+        { roomType: 'Premier Room', rooms: 4, notes: '  ' },
+      ],
+    });
+    await client.post(`/api/hotel-vouchers/${created.id}/generate-pdf`, {});
+    const stored = await db.hotelVoucherDocument.findFirstOrThrow({
+      where: { voucherId: created.id },
+    });
+    const object = (
+      storageService as unknown as {
+        read: (key: string) => Buffer | undefined;
+      }
+    ).read(stored.objectKey);
+    const text = pdfText(object ?? Buffer.alloc(0));
+    expect(text).toContain('ROOM DETAILS');
+    expect(text).toContain('Superior Room');
+    expect(text).toContain('Premier Room');
+    expect(text).not.toContain('Remark');
+    expect(text).not.toContain('Extra Bed');
+    expect(text).not.toContain('Child w/o Bed');
+  });
+
+  it('ignores legacy extra-bed and child-without-bed values instead of failing', async () => {
+    const client = await owner();
+    // Payloads saved before the removal still carry the old keys: unknown
+    // keys are stripped by the request schema, never required, never stored.
+    const res = await client.post(
+      '/api/hotel-vouchers',
+      voucherPayload({
+        stayRooms: [
+          {
+            roomType: 'Superior Room',
+            rooms: 2,
+            extraBedQuantity: 1,
+            childWithoutBedQuantity: 1,
+            notes: 'High floor',
+          },
+        ],
+      }),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.data.stayRooms).toHaveLength(1);
+    expect(res.body.data.stayRooms[0]).toMatchObject({
+      roomType: 'Superior Room',
+      rooms: 2,
+      notes: 'High floor',
+    });
+    expect(res.body.data.stayRooms[0]).not.toHaveProperty('extraBedQuantity');
+    expect(res.body.data.stayRooms[0]).not.toHaveProperty('childWithoutBedQuantity');
   });
 
   it('omits the confirmation card when no confirmation number is saved', async () => {
@@ -1190,15 +1246,11 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
         {
           roomType: 'Superior Room',
           rooms: 2,
-          extraBedQuantity: 1,
-          childWithoutBedQuantity: 0,
           notes: 'High floor',
         },
         {
           roomType: 'Premier Room',
           rooms: 4,
-          extraBedQuantity: 0,
-          childWithoutBedQuantity: 1,
           notes: null,
         },
       ],
@@ -1211,16 +1263,16 @@ describe('Hotel Vouchers (standalone, no Booking dependency)', () => {
     ]);
     expect(details.stayRooms[0]).toMatchObject({
       rooms: 2,
-      extraBedQuantity: 1,
-      childWithoutBedQuantity: 0,
       notes: 'High floor',
     });
     expect(details.stayRooms[1]).toMatchObject({
       rooms: 4,
-      extraBedQuantity: 0,
-      childWithoutBedQuantity: 1,
       notes: null,
     });
+    for (const row of details.stayRooms) {
+      expect(row).not.toHaveProperty('extraBedQuantity');
+      expect(row).not.toHaveProperty('childWithoutBedQuantity');
+    }
     expect(details.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
       'Breakfast only',
       'Dinner',

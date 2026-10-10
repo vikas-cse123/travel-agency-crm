@@ -2511,14 +2511,27 @@ export const quotationsService = {
           // agree. Explicit input overrides the Lead snapshot.
           ...((() => {
             const leadRow = lead as typeof lead & Record<string, unknown>;
-            const pick = (key: 'childrenWithBedAges' | 'childrenWithoutBedAges' | 'infantAges') => {
-              const value = (input[key] ?? (leadRow[key] as number[] | null | undefined)) ?? null;
+            const pick = (
+              key:
+                | 'childrenWithBedAges'
+                | 'childrenWithoutBedAges'
+                | 'infantAges'
+                | 'adultNames'
+                | 'childWithBedNames'
+                | 'childWithoutBedNames'
+                | 'infantNames',
+            ) => {
+              const value = (input[key] ?? (leadRow[key] as unknown[] | null | undefined)) ?? null;
               return Array.isArray(value) && value.length ? { [key]: value } : {};
             };
             return {
               ...pick('childrenWithBedAges'),
               ...pick('childrenWithoutBedAges'),
               ...pick('infantAges'),
+              ...pick('adultNames'),
+              ...pick('childWithBedNames'),
+              ...pick('childWithoutBedNames'),
+              ...pick('infantNames'),
             };
           })()),
           currency: input.currency ?? lead.currency,
@@ -2606,6 +2619,14 @@ export const quotationsService = {
           ? { childrenWithoutBedAges: input.childrenWithoutBedAges }
           : {}),
         ...(input.infantAges !== undefined ? { infantAges: input.infantAges } : {}),
+        ...(input.adultNames !== undefined ? { adultNames: input.adultNames } : {}),
+        ...(input.childWithBedNames !== undefined
+          ? { childWithBedNames: input.childWithBedNames }
+          : {}),
+        ...(input.childWithoutBedNames !== undefined
+          ? { childWithoutBedNames: input.childWithoutBedNames }
+          : {}),
+        ...(input.infantNames !== undefined ? { infantNames: input.infantNames } : {}),
         ...(input.rooms !== undefined ? { rooms: input.rooms } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
         ...(input.validUntil !== undefined ? { validUntil: input.validUntil } : {}),

@@ -1841,6 +1841,13 @@ export const quotationInputSchema = z.object({
   childrenWithBedAges: z.array(z.coerce.number().int().min(0).max(30)).max(100).optional(),
   childrenWithoutBedAges: z.array(z.coerce.number().int().min(0).max(30)).max(100).optional(),
   infantAges: z.array(z.coerce.number().int().min(0).max(30)).max(100).optional(),
+  // Optional traveller names carried from the Lead (or edited on the
+  // quotation) for email drafts. Positional string arrays parallel to the
+  // passenger counts; blanks are preserved.
+  adultNames: z.array(z.string().trim().max(120)).max(200).optional(),
+  childWithBedNames: z.array(z.string().trim().max(120)).max(200).optional(),
+  childWithoutBedNames: z.array(z.string().trim().max(120)).max(200).optional(),
+  infantNames: z.array(z.string().trim().max(120)).max(200).optional(),
   rooms: z.coerce.number().int().min(1).max(100).optional(),
   currency: z
     .string()

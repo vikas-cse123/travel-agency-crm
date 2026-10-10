@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PERMISSIONS, labelForLookup } from '@interscale/shared';
+import { PERMISSIONS } from '@interscale/shared';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useDestinations, type Destination } from '@/features/masters/masters.api';
 import {
@@ -13,10 +13,13 @@ import {
 } from '@/features/quotations/quotations.api';
 import { QuotationSelector } from './QuotationSelector';
 import {
-  escapeHtml,
-  formatStayDate,
+  formatStayDateLong,
   type HotelEmailDraft,
 } from './HotelBookingEmail';
+import {
+  buildWhatsAppSummary,
+  whatsappMarkdownToHtml,
+} from '@/features/quotations/whatsappSummary';
 
 export interface ItineraryDestinationOption {
   /** Display name as saved on the itinerary rows. */
@@ -114,23 +117,25 @@ export function servicesFor(
   );
 }
 
-/** DD-MM-YYYY range over dated itinerary days, else the version window, else null. */
+/** Month-name range over dated itinerary days, else the version window, else null. */
 export function destinationDateRange(
   days: Pick<TemplateItinerary, 'date'>[],
   travelStartDate: string | null | undefined,
   travelEndDate: string | null | undefined,
 ): string | null {
+  // Order by the raw ISO value: formatted month names do not sort
+  // chronologically as plain strings ('10 November' < '2 November').
   const dated = days
-    .map((row) => formatStayDate(row.date))
-    .filter((value): value is string => value !== null)
-    .sort();
+    .map((row) => ({ raw: (row.date ?? '').slice(0, 10), text: formatStayDateLong(row.date) }))
+    .filter((entry): entry is { raw: string; text: string } => entry.text !== null)
+    .sort((a, b) => (a.raw < b.raw ? -1 : a.raw > b.raw ? 1 : 0));
   if (dated.length > 0) {
-    const first = dated[0]!;
-    const last = dated[dated.length - 1]!;
+    const first = dated[0]!.text;
+    const last = dated[dated.length - 1]!.text;
     return first === last ? first : `${first} to ${last}`;
   }
-  const start = formatStayDate(travelStartDate);
-  const end = formatStayDate(travelEndDate);
+  const start = formatStayDateLong(travelStartDate);
+  const end = formatStayDateLong(travelEndDate);
   if (start && end) return start === end ? start : `${start} to ${end}`;
   return start ?? end;
 }
@@ -147,128 +152,32 @@ export function buildItinerarySubject(input: {
   return parts.join(' – ');
 }
 
-interface ItineraryBodyInput {
-  quotation: {
-    quotationNumber?: string | null;
-    customerName: string;
-    customerPhone?: string | null;
-    customerEmail?: string | null;
-    adults?: number | null;
-    childrenWithBed?: number | null;
-    childrenWithoutBed?: number | null;
-    infants?: number | null;
-  };
-  destinationName: string;
-  dateRange: string | null;
-  days: TemplateItinerary[];
-  sightseeingDays: SightseeingDay[];
-  services: TemplateService[];
-}
-
 /**
- * Destination-specific vendor draft from persisted records only. Sections
- * without values are omitted; pricing internals, margins and hotel-booking
- * content are never included.
+ * Itinerary email body, byte-for-byte the existing WhatsApp itinerary
+ * message converted to email HTML. The whole applicable version feeds the
+ * shared generator (no destination filtering, no email-specific format), so
+ * both channels always carry the same wording, sections, dates, hotels,
+ * sightseeing, and services. Optional flight/cruise/vehicle sections stay
+ * off (the WhatsApp default); no weblink is provisioned here, so that
+ * conditional section is omitted exactly as in a link-less WhatsApp share.
+ * The shared display wrapper is omitted: the composer editor edge-trims it
+ * as a blank block (it contains `<br>` spacers), which would wipe the draft.
  */
-export function buildItineraryBody(input: ItineraryBodyInput): string {
-  const { quotation, destinationName, dateRange, days, sightseeingDays, services } = input;
-  const lines: string[] = [];
-  lines.push('<p>Dear Team,</p>');
-  lines.push(
-    '<p>Please find below the itinerary details for your review and confirmation of arrangements.</p>',
-  );
-
-  const overview: string[] = [];
-  if (quotation.quotationNumber?.trim())
-    overview.push(`<li>Quotation reference: ${escapeHtml(quotation.quotationNumber)}</li>`);
-  overview.push(`<li>Destination: ${escapeHtml(destinationName)}</li>`);
-  if (dateRange) overview.push(`<li>Travel dates: ${escapeHtml(dateRange)}</li>`);
-  if (days.length > 0)
-    overview.push(`<li>Duration: ${days.length} day${days.length === 1 ? '' : 's'}</li>`);
-  lines.push(`<p><strong>Trip Overview</strong></p><ul>${overview.join('')}</ul>`);
-
-  const travellerItems: string[] = [];
-  if (quotation.customerName.trim())
-    travellerItems.push(`<li>Lead guest: ${escapeHtml(quotation.customerName)}</li>`);
-  const counts: string[] = [];
-  const count = (value: number | null | undefined, singular: string) =>
-    typeof value === 'number' && value > 0 ? `${value} ${singular}${value === 1 ? '' : 's'}` : null;
-  for (const entry of [
-    count(quotation.adults, 'adult'),
-    count(quotation.childrenWithBed, 'child with bed'),
-    count(quotation.childrenWithoutBed, 'child without bed'),
-    count(quotation.infants, 'infant'),
-  ]) {
-    if (entry) counts.push(entry);
-  }
-  if (counts.length > 0) travellerItems.push(`<li>Travellers: ${escapeHtml(counts.join(', '))}</li>`);
-  if (quotation.customerPhone?.trim())
-    travellerItems.push(`<li>Contact phone: ${escapeHtml(quotation.customerPhone)}</li>`);
-  if (quotation.customerEmail?.trim())
-    travellerItems.push(`<li>Contact email: ${escapeHtml(quotation.customerEmail)}</li>`);
-  if (travellerItems.length > 0)
-    lines.push(`<p><strong>Traveller Information</strong></p><ul>${travellerItems.join('')}</ul>`);
-
-  if (days.length > 0) {
-    const items = days.map((row) => {
-      const head = [`Day ${row.dayNumber}`];
-      const dayDate = formatStayDate(row.date);
-      if (dayDate) head.push(dayDate);
-      if (row.title?.trim()) head.push(escapeHtml(row.title));
-      const details: string[] = [`<strong>${head.join(' · ')}</strong>`];
-      if (row.description?.trim()) details.push(escapeHtml(row.description));
-      if (row.activities?.trim()) details.push(`Activities: ${escapeHtml(row.activities)}`);
-      if (row.transfers?.trim()) details.push(`Transfers: ${escapeHtml(row.transfers)}`);
-      if (row.meals?.trim()) details.push(`Meals: ${escapeHtml(row.meals)}`);
-      if (row.overnightLocation?.trim())
-        details.push(`Overnight: ${escapeHtml(row.overnightLocation)}`);
-      if (row.notes?.trim()) details.push(`Notes: ${escapeHtml(row.notes)}`);
-      return `<li>${details.join('<br>')}</li>`;
-    });
-    lines.push(`<p><strong>Day-by-Day Itinerary</strong></p><ul>${items.join('')}</ul>`);
-  }
-
-  const sightItems: string[] = [];
-  for (const day of sightseeingDays) {
-    const head = [`Day ${day.dayNumber}`];
-    const dayDate = formatStayDate(day.date);
-    if (dayDate) head.push(dayDate);
-    if (day.title?.trim()) head.push(escapeHtml(day.title));
-    const bits: string[] = [`<strong>${head.join(' · ')}</strong>`];
-    if (day.dailyTransfer && day.dailyTransfer !== 'NO_TRANSFER')
-      bits.push(`Transfer: ${escapeHtml(labelForLookup(day.dailyTransfer))}`);
-    for (const activity of day.activities ?? []) {
-      const activityBits: string[] = [];
-      if (activity.name?.trim()) activityBits.push(escapeHtml(activity.name));
-      if (activity.startTime?.trim()) activityBits.push(escapeHtml(activity.startTime));
-      if (activity.description?.trim()) activityBits.push(escapeHtml(activity.description));
-      if (activityBits.length > 0) bits.push(`Sightseeing: ${activityBits.join(' · ')}`);
-    }
-    if (bits.length > 1) sightItems.push(`<li>${bits.join('<br>')}</li>`);
-  }
-  if (sightItems.length > 0)
-    lines.push(`<p><strong>Sightseeing</strong></p><ul>${sightItems.join('')}</ul>`);
-
-  if (services.length > 0) {
-    const items = services.map((row) => {
-      const bits: string[] = [`<strong>${escapeHtml(row.name)}</strong>`];
-      const meta: string[] = [];
-      if (row.serviceType) meta.push(escapeHtml(labelForLookup(row.serviceType)));
-      if (row.dayNumber != null) meta.push(`Day ${row.dayNumber}`);
-      if (row.city?.trim()) meta.push(escapeHtml(row.city));
-      if (row.quantity?.trim()) meta.push(`Qty ${escapeHtml(row.quantity)}`);
-      if (meta.length > 0) bits.push(meta.join(' · '));
-      if (row.description?.trim()) bits.push(escapeHtml(row.description));
-      return `<li>${bits.join('<br>')}</li>`;
-    });
-    lines.push(`<p><strong>Relevant Travel Services</strong></p><ul>${items.join('')}</ul>`);
-  }
-
-  lines.push(
-    '<p>Kindly review the itinerary and confirm availability and arrangements at your earliest convenience.</p>',
-  );
-  lines.push('<p>Best regards</p>');
-  return lines.join('');
+export function buildItineraryEmailBody(input: {
+  quotation: Quotation;
+  version: QuotationVersion;
+  companyName?: string | null;
+  preparedByName?: string | null;
+}): string {
+  const markdown = buildWhatsAppSummary({
+    quotation: input.quotation,
+    version: input.version,
+    weblinkUrl: null,
+    companyName: (input.companyName ?? '').trim() || 'Travel Agency CRM',
+    preparedByName: (input.preparedByName ?? '').trim() || null,
+    options: { includeFlights: false, includeCruises: false, includeVehicles: false },
+  });
+  return whatsappMarkdownToHtml(markdown, { wrap: false });
 }
 
 /** Applicable version mirrors the server rule: current, else latest. */
@@ -290,7 +199,7 @@ export function ItineraryEmailFlow({
   onGenerate: (draft: HotelEmailDraft) => void;
   onClear: () => void;
 }) {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canViewQuotations = hasPermission(PERMISSIONS.QUOTATIONS_VIEW);
   const [quotationId, setQuotationId] = useState<string | null>(null);
   const [destinationKey, setDestinationKey] = useState<string | null>(null);
@@ -301,6 +210,15 @@ export function ItineraryEmailFlow({
   const version = useMemo(() => applicableVersion(quotation), [quotation]);
   const options = useMemo(() => itineraryDestinationOptions(version), [version]);
   const selectedOption = options.find((row) => normalizePlaceName(row.name) === destinationKey) ?? null;
+
+  // Email identity for the shared WhatsApp template (same precedence as the
+  // quotation share dialog): stored preparer first, signed-in user last.
+  const companyName = user?.company?.name ?? null;
+  const preparedByName =
+    quotation?.createdBy?.fullName ??
+    version?.createdBy?.fullName ??
+    user?.fullName ??
+    null;
 
   // Resolve the authoritative master through the authorized list lookup and
   // match it exactly — never a fuzzy substitute, never another destination.
@@ -338,14 +256,6 @@ export function ItineraryEmailFlow({
     () => (selectedOption ? itineraryDaysFor(version?.itinerary ?? [], names) : []),
     [selectedOption, version, names],
   );
-  const sightDays = useMemo(
-    () => (selectedOption ? sightseeingDaysFor(version?.sightseeingDetails?.days ?? [], names) : []),
-    [selectedOption, version, names],
-  );
-  const relatedServices = useMemo(
-    () => (selectedOption ? servicesFor(version?.services ?? [], names) : []),
-    [selectedOption, version, names],
-  );
   const dateRange = useMemo(
     () =>
       selectedOption
@@ -375,29 +285,36 @@ export function ItineraryEmailFlow({
   }, [quotationId, singleKey, destinationKey]);
 
   // Regenerate whenever the selected destination (or its resolved master
-  // email) changes. The composer keeps fields the user edited meanwhile.
+  // email) changes. The body comes from the shared WhatsApp template over
+  // the whole version, so it also regenerates when the quotation's content,
+  // counts, or preparer change. The composer keeps fields the user edited.
   const draftKey = useMemo(
     () =>
-      selectedOption
+      selectedOption && version
         ? JSON.stringify({
             destination: selectedOption.name,
             email: masterEmail,
-            days,
-            sightseeing: sightDays,
-            services: relatedServices,
+            version,
             guest: quotation
-              ? [quotation.customerName, quotation.customerPhone, quotation.customerEmail]
+              ? [
+                  quotation.customerName,
+                  quotation.adults,
+                  quotation.childrenWithBed,
+                  quotation.childrenWithoutBed,
+                  quotation.infants,
+                ]
               : null,
+            preparedBy: preparedByName,
           })
         : null,
-    [selectedOption, masterEmail, days, sightDays, relatedServices, quotation],
+    [selectedOption, masterEmail, version, quotation, preparedByName],
   );
   const lastApplied = useRef<{ quotationId: string | null; key: string | null }>({
     quotationId: null,
     key: null,
   });
   useEffect(() => {
-    if (!selectedOption || !quotation) return;
+    if (!selectedOption || !quotation || !version) return;
     if (lastApplied.current.quotationId === quotation.id && lastApplied.current.key === draftKey)
       return;
     lastApplied.current = { quotationId: quotation.id, key: draftKey };
@@ -408,17 +325,15 @@ export function ItineraryEmailFlow({
         destination: selectedOption.name,
         dateRange,
       }),
-      bodyHtml: buildItineraryBody({
+      bodyHtml: buildItineraryEmailBody({
         quotation,
-        destinationName: selectedOption.name,
-        dateRange,
-        days,
-        sightseeingDays: sightDays,
-        services: relatedServices,
+        version,
+        companyName,
+        preparedByName,
       }),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, selectedOption, quotation, masterEmail, dateRange]);
+  }, [draftKey, selectedOption, quotation, version, masterEmail, dateRange, companyName, preparedByName]);
 
   if (!canViewQuotations) return null;
 

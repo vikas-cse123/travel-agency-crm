@@ -67,6 +67,7 @@ import {
   quotationDocumentInlineUrl,
   uploadQuotationAttachment,
   useQuotation,
+  useUpdateQuotation,
   useUpdateQuotationVersion,
   useUpdateQuotationWeblinkName,
   useUpdateQuotationWeblinkSettings,
@@ -2241,6 +2242,162 @@ function PersistInitialQuotationSnapshot({
     return () => window.clearTimeout(timer);
   }, [enabled, ready]);
   return null;
+}
+
+/** Traveller-name lists carried on the quotation (positional, blanks kept). */
+interface QuotationTravellerNamesValue {
+  adultNames: string[];
+  childWithBedNames: string[];
+  childWithoutBedNames: string[];
+  infantNames: string[];
+}
+
+const TRAVELLER_NAME_GROUPS = [
+  { key: 'adultNames', singular: 'Adult', countKey: 'adults' },
+  { key: 'childWithBedNames', singular: 'Child With Bed', countKey: 'childrenWithBed' },
+  { key: 'childWithoutBedNames', singular: 'Child Without Bed', countKey: 'childrenWithoutBed' },
+  { key: 'infantNames', singular: 'Infant', countKey: 'infants' },
+] as const;
+
+/**
+ * Optional traveller names for the quotation, carried from the lead at
+ * creation and editable here through the quotation update endpoint
+ * (versions are untouched).
+ *
+ * Precedence is explicit: the quotation's own lists are the source of truth.
+ * The linked lead is only a creation-time source (carried server-side) and is
+ * never re-read here, so quotation edits can never be overwritten by stale
+ * lead data. Background refetches likewise never clobber in-progress edits:
+ * local state hydrates once per quotation and on quotation change only.
+ */
+function QuotationTravellerNames({
+  quotationId,
+  counts,
+  initial,
+  canEdit,
+}: {
+  quotationId: string;
+  counts: { adults: number; childrenWithBed: number; childrenWithoutBed: number; infants: number };
+  initial: QuotationTravellerNamesValue;
+  canEdit: boolean;
+}) {
+  const update = useUpdateQuotation(quotationId);
+  const [values, setValues] = useState<QuotationTravellerNamesValue | null>(null);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  // Hydrate once per quotation; user state (possibly edited) always wins
+  // over later refetches of the same record.
+  useEffect(() => {
+    setValues(null);
+  }, [quotationId]);
+  useEffect(() => {
+    if (values !== null) return;
+    setValues(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values, quotationId]);
+
+  const setName = (key: keyof QuotationTravellerNamesValue, index: number, name: string) => {
+    setSaved(false);
+    setValues((current) => {
+      if (!current) return current;
+      const next = [...current[key]];
+      next[index] = name;
+      return { ...current, [key]: next };
+    });
+  };
+
+  const save = () => {
+    if (!values) return;
+    setError('');
+    setSaved(false);
+    const sized = (list: string[], count: number) =>
+      Array.from({ length: Math.max(0, count) }, (_, index) =>
+        typeof list[index] === 'string' ? list[index].slice(0, 120) : '',
+      );
+    update.mutate(
+      {
+        adultNames: sized(values.adultNames, counts.adults),
+        childWithBedNames: sized(values.childWithBedNames, counts.childrenWithBed),
+        childWithoutBedNames: sized(values.childWithoutBedNames, counts.childrenWithoutBed),
+        infantNames: sized(values.infantNames, counts.infants),
+      },
+      {
+        onSuccess: () => setSaved(true),
+        onError: (failure) =>
+          setError(failure instanceof Error ? failure.message : String(failure)),
+      },
+    );
+  };
+
+  const totalSeats =
+    Math.max(0, counts.adults) +
+    Math.max(0, counts.childrenWithBed) +
+    Math.max(0, counts.childrenWithoutBed) +
+    Math.max(0, counts.infants);
+
+  return (
+    <section className="overflow-hidden rounded-xl border bg-card shadow-sm" aria-label="Traveller names">
+      <div className="bg-slate-900 px-5 py-3 font-semibold text-white">Traveller Names (optional)</div>
+      <div className="space-y-4 p-5">
+        <p className="text-sm text-slate-500">
+          Carried from the lead when the quotation was created. Names appear in email drafts;
+          blank entries are simply omitted.
+        </p>
+        {totalSeats === 0 && <p className="text-sm text-slate-500">No travellers on this quotation.</p>}
+        {TRAVELLER_NAME_GROUPS.map((group) => {
+          const count = Math.max(0, counts[group.countKey] ?? 0);
+          if (count <= 0) return null;
+          const list = values?.[group.key] ?? [];
+          return (
+            <div key={group.key}>
+              <p className="mb-2 text-sm font-semibold text-slate-800">{group.singular} names</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {Array.from({ length: count }, (_, index) => (
+                  <label key={`${group.key}-${index}`} className="block text-sm font-medium text-slate-700">
+                    <span>
+                      {group.singular} {index + 1} — Name
+                    </span>
+                    {canEdit ? (
+                      <input
+                        aria-label={`${group.singular} ${index + 1} — Name`}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm font-normal"
+                        placeholder="Full name (optional)"
+                        maxLength={120}
+                        value={list[index] ?? ''}
+                        onChange={(event) => setName(group.key, index, event.target.value)}
+                      />
+                    ) : (
+                      <span className="mt-1 block rounded-lg bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700">
+                        {(list[index] ?? '').trim() || '—'}
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        {error && (
+          <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {canEdit && (
+            <Button type="button" onClick={save} isLoading={update.isPending}>
+              Save traveller names
+            </Button>
+          )}
+          {saved && !update.isPending && (
+            <span role="status" className="text-sm font-medium text-emerald-700">
+              Saved
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 
@@ -8779,6 +8936,23 @@ export function QuotationBuilderPage() {
           </div>
         </div>
       </section>
+
+      <QuotationTravellerNames
+        quotationId={quotationId}
+        counts={{
+          adults: q.adults ?? 0,
+          childrenWithBed: q.childrenWithBed ?? 0,
+          childrenWithoutBed: q.childrenWithoutBed ?? 0,
+          infants: q.infants ?? 0,
+        }}
+        initial={{
+          adultNames: q.adultNames ?? [],
+          childWithBedNames: q.childWithBedNames ?? [],
+          childWithoutBedNames: q.childWithoutBedNames ?? [],
+          infantNames: q.infantNames ?? [],
+        }}
+        canEdit={hasPermission(PERMISSIONS.QUOTATIONS_UPDATE)}
+      />
 
       {activeTab === 'setting' ? (
         <div

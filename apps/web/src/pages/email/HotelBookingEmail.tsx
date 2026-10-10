@@ -8,12 +8,14 @@ import {
 } from '@interscale/shared';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useHotel, type Hotel } from '@/features/masters/masters.api';
+import { useLead } from '@/features/queries/queries.api';
 import {
   useQuotation,
   type Quotation,
   type TemplateHotel,
 } from '@/features/quotations/quotations.api';
 import { QuotationSelector } from './QuotationSelector';
+import { resolveTravellerNames, travellerNameItems, type TravellerNameEntry } from './travellerNames';
 
 export type EmailPurpose = 'hotel' | 'itinerary';
 
@@ -48,9 +50,50 @@ export function formatStayDate(value: string | null | undefined): string | null 
   return `${date}-${month}-${year}`;
 }
 
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/**
+ * Display-only "18 October 2026" for an ISO calendar value, used by the
+ * generated email subjects and bodies. Same parsing and omission rules as
+ * formatStayDate (which stays DD-MM-YYYY for the hotel dropdown summary):
+ * anything unparseable resolves to null, and no timezone conversion is
+ * applied so the calendar day never shifts.
+ */
+export function formatStayDateLong(value: string | null | undefined): string | null {
+  const day = (value ?? '').slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return null;
+  const [, year, month, date] = match as unknown as [string, string, string, string];
+  const monthNumber = Number(month);
+  const dateNumber = Number(date);
+  if (monthNumber < 1 || monthNumber > 12 || dateNumber < 1 || dateNumber > 31) return null;
+  return `${dateNumber} ${MONTH_NAMES[monthNumber - 1]} ${year}`;
+}
+
 function stayDateRange(hotel: TemplateHotel): string | null {
   const checkIn = formatStayDate(hotel.checkInDate);
   const checkOut = formatStayDate(hotel.checkOutDate);
+  if (checkIn && checkOut) return `${checkIn} to ${checkOut}`;
+  return checkIn ?? checkOut;
+}
+
+/** Month-name range for generated email subjects; same omission rules. */
+function stayDateRangeLong(hotel: TemplateHotel): string | null {
+  const checkIn = formatStayDateLong(hotel.checkInDate);
+  const checkOut = formatStayDateLong(hotel.checkOutDate);
   if (checkIn && checkOut) return `${checkIn} to ${checkOut}`;
   return checkIn ?? checkOut;
 }
@@ -85,7 +128,7 @@ export function buildHotelBookingSubject(input: {
   const parts = ['Hotel Booking Request'];
   if (input.customerName?.trim()) parts.push(input.customerName.trim());
   if (input.hotelName?.trim()) parts.push(input.hotelName.trim());
-  const range = stayDateRange({
+  const range = stayDateRangeLong({
     checkInDate: input.checkInDate ?? null,
     checkOutDate: input.checkOutDate ?? null,
   } as TemplateHotel);
@@ -104,6 +147,8 @@ interface BodyInput {
     Hotel,
     'name' | 'address' | 'phone' | 'email' | 'city'
   > | null;
+  /** Resolved traveller entries (quotation first, lead fallback); none when empty. */
+  travellers?: TravellerNameEntry[];
 }
 
 /**
@@ -111,11 +156,11 @@ interface BodyInput {
  * without values are omitted entirely — nothing is invented, and no
  * confirmation is ever implied.
  */
-export function buildHotelBookingBody({ quotation, hotel, master }: BodyInput): string {
+export function buildHotelBookingBody({ quotation, hotel, master, travellers = [] }: BodyInput): string {
   const lines: string[] = [];
   lines.push('<p>Dear Reservations Team,</p>');
   lines.push(
-    '<p>Please find below the hotel accommodation details for your review and booking confirmation.</p>',
+    '<p>Please find below the hotel accommodation details for booking confirmation.</p>',
   );
 
   const guestItems: string[] = [];
@@ -126,6 +171,10 @@ export function buildHotelBookingBody({ quotation, hotel, master }: BodyInput): 
     guestItems.push(`<li>Email: ${escapeHtml(quotation.customerEmail)}</li>`);
   if (guestItems.length > 0)
     lines.push(`<p><strong>Guest Details</strong></p><ul>${guestItems.join('')}</ul>`);
+  if (travellers.length > 0)
+    lines.push(
+      `<p><strong>Traveller Details</strong></p><ul>${travellerNameItems(travellers)}</ul>`,
+    );
 
   const hotelItems: string[] = [`<li>Hotel name: ${escapeHtml(hotel.hotelName)}</li>`];
   const city = master?.city?.name ?? hotel.city;
@@ -136,8 +185,8 @@ export function buildHotelBookingBody({ quotation, hotel, master }: BodyInput): 
   lines.push(`<p><strong>Hotel Details</strong></p><ul>${hotelItems.join('')}</ul>`);
 
   const stayItems: string[] = [];
-  const checkIn = formatStayDate(hotel.checkInDate);
-  const checkOut = formatStayDate(hotel.checkOutDate);
+  const checkIn = formatStayDateLong(hotel.checkInDate);
+  const checkOut = formatStayDateLong(hotel.checkOutDate);
   if (checkIn) stayItems.push(`<li>Check-in date: ${checkIn}</li>`);
   if (checkOut) stayItems.push(`<li>Check-out date: ${checkOut}</li>`);
   const nights = stayNights(hotel);
@@ -255,6 +304,23 @@ export function HotelEmailFlow({
   const master = useHotel(selectedHotel?.hotelId ?? undefined);
   const masterEmail = master.data?.email?.trim() ? master.data.email.trim() : null;
 
+  // Traveller names come from the quotation's own lists first; the linked
+  // lead is only a fallback for quotations saved before names existed. The
+  // lead is fetched lazily and only when the quotation itself has no names.
+  const quotationHasNames = useMemo(
+    () => resolveTravellerNames(quotation, null).source === 'quotation',
+    [quotation],
+  );
+  const leadQuery = useLead(
+    canViewQuotations && selectedHotel && !quotationHasNames
+      ? (quotation?.queryId ?? undefined)
+      : undefined,
+  );
+  const travellers = useMemo(
+    () => resolveTravellerNames(quotation, leadQuery.data ?? null).entries,
+    [quotation, leadQuery.data],
+  );
+
   const autoAppliedForRef = useRef<string | null>(null);
 
   // Switching quotations drops the previous stay and its generated draft.
@@ -286,9 +352,10 @@ export function HotelEmailFlow({
             guest: quotation
               ? [quotation.customerName, quotation.customerPhone, quotation.customerEmail]
               : null,
+            travellers,
           })
         : null,
-    [selectedHotel, masterEmail, quotation],
+    [selectedHotel, masterEmail, quotation, travellers],
   );
   const lastApplied = useRef<{ quotationId: string | null; key: string | null }>({
     quotationId: null,
@@ -313,10 +380,11 @@ export function HotelEmailFlow({
         quotation,
         hotel: selectedHotel,
         master: master.data ?? null,
+        travellers,
       }),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, selectedHotel, quotation, masterEmail]);
+  }, [draftKey, selectedHotel, quotation, masterEmail, travellers]);
 
   if (!canViewQuotations) return null;
 

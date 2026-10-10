@@ -58,6 +58,12 @@ export interface Lead {
   childrenWithBedAges: number[] | null;
   childrenWithoutBedAges: number[] | null;
   infantAges: number[] | null;
+  // Per-traveller names collected on the Lead form (Adult 1, CWB 1, …);
+  // positional arrays parallel to the passenger counts. Null for legacy leads.
+  adultNames: string[] | null;
+  childWithBedNames: string[] | null;
+  childWithoutBedNames: string[] | null;
+  infantNames: string[] | null;
   travellerSummary: string;
   expectedAmount: string | null;
   budgetMin: string | null;

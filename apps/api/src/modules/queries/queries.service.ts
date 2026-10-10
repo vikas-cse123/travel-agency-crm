@@ -569,6 +569,12 @@ function scalarData(input: QueryInput | QueryUpdateInput) {
     'childrenWithBedAges',
     'childrenWithoutBedAges',
     'infantAges',
+    // Per-traveller names (positional string arrays parallel to the
+    // passenger counts); same array handling as ages.
+    'adultNames',
+    'childWithBedNames',
+    'childWithoutBedNames',
+    'infantNames',
     'expectedAmount',
     'budgetMin',
     'budgetMax',

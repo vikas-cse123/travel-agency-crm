@@ -3629,3 +3629,157 @@ describe('Lead CSV import', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/only .csv/i);
   });
 });
+
+describe('Lead traveller names', () => {
+  const destination = {
+    id: 'dest-1',
+    name: 'Singapore',
+    status: 'ACTIVE',
+    cities: [{ id: 'dc-1', sequence: 1, city: { name: 'Singapore' } }],
+  };
+
+  function stubCreate() {
+    return vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+  }
+
+  async function fillRequired() {
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await waitFor(() => {
+      const destinationEl = screen.getByLabelText('Destination 1');
+      expect(
+        Array.from(destinationEl.querySelectorAll('option')).some(
+          (option) => option.textContent === 'Singapore',
+        ),
+      ).toBe(true);
+    });
+    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
+    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
+    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+  }
+
+  async function postedBody(fetchMock: ReturnType<typeof stubCreate>) {
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+    });
+    const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+    return JSON.parse(String(post![1]!.body));
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    // No assign permission: submissions skip the Assign To gate.
+    authState.permissions = new Set(['queries.view', 'queries.create', 'queries.update', 'queries.delete']);
+  });
+
+  it('generates one optional name input per traveller from the counts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    // Defaults: a single adult row, nothing else.
+    expect(screen.getByLabelText('Adult 1 — Name')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Child With Bed 1 — Name')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('CWB'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '1' } });
+    expect(screen.getByLabelText('Child With Bed 1 — Name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Child With Bed 2 — Name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Infant 1 — Name')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Child Without Bed 1 — Name')).not.toBeInTheDocument();
+  });
+
+  it('submits blank name lists sized to the counts when nothing is entered', async () => {
+    const fetchMock = stubCreate();
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await fillRequired();
+    fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '2' } });
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    const body = await postedBody(fetchMock);
+    expect(body.adultNames).toEqual(['', '']);
+    expect(body.childWithBedNames).toEqual([]);
+    expect(body.infantNames).toEqual([]);
+  });
+
+  it('submits entered names for every category in order', async () => {
+    const fetchMock = stubCreate();
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await fillRequired();
+    fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('CWB'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('CWOB'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '1' } });
+    await userEvent.type(screen.getByLabelText('Adult 1 — Name'), 'Rahul Sharma');
+    await userEvent.type(screen.getByLabelText('Adult 2 — Name'), 'Priya Sharma');
+    await userEvent.type(screen.getByLabelText('Child With Bed 1 — Name'), 'Aarav Sharma');
+    await userEvent.type(screen.getByLabelText('Child Without Bed 2 — Name'), 'Anaya Sharma');
+    await userEvent.type(screen.getByLabelText('Infant 1 — Name'), 'Ira Sharma');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    const body = await postedBody(fetchMock);
+    expect(body.adultNames).toEqual(['Rahul Sharma', 'Priya Sharma', '']);
+    expect(body.childWithBedNames).toEqual(['Aarav Sharma', '']);
+    expect(body.childWithoutBedNames).toEqual(['', 'Anaya Sharma']);
+    expect(body.infantNames).toEqual(['Ira Sharma']);
+  });
+
+  it('preserves retained names when a count decreases', async () => {
+    const fetchMock = stubCreate();
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await fillRequired();
+    fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '3' } });
+    await userEvent.type(screen.getByLabelText('Adult 1 — Name'), 'Rahul Sharma');
+    await userEvent.type(screen.getByLabelText('Adult 2 — Name'), 'Priya Sharma');
+    await userEvent.type(screen.getByLabelText('Adult 3 — Name'), 'Karan Sharma');
+    // Shrinking to one adult drops only the removed trailing rows.
+    fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '1' } });
+    expect(screen.queryByLabelText('Adult 2 — Name')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    const body = await postedBody(fetchMock);
+    expect(body.adultNames).toEqual(['Rahul Sharma']);
+  });
+
+  it('restores saved names when reopening the lead for editing', async () => {
+    const saved = {
+      ...lead,
+      adults: 2,
+      childWithBedNames: ['Aarav Sharma', ''],
+      adultNames: ['Rahul Sharma', 'Priya Sharma'],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(saved);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    expect(screen.getByLabelText('Adult 1 — Name')).toHaveValue('Rahul Sharma');
+    expect(screen.getByLabelText('Adult 2 — Name')).toHaveValue('Priya Sharma');
+  });
+});

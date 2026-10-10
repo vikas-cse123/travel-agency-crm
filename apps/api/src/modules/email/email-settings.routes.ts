@@ -23,5 +23,10 @@ router.post(
   validateRequest({ body: emailTestInputSchema }),
   asyncHandler(c.sendTest),
 );
+router.delete(
+  '/',
+  requirePermission(PERMISSIONS.EMAILS_MANAGE_SETTINGS),
+  asyncHandler(c.removeSettings),
+);
 
 export { router as emailSettingsRoutes };

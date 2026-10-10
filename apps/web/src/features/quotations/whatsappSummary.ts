@@ -340,8 +340,14 @@ function inlineMarkdownToHtml(value: string): string {
  * Convert the canonical WhatsApp markdown (the exact default summary) to
  * polished HTML for the rich-text editor. The HTML uses Tailwind prose
  * classes so the preview looks like the CRM — not raw *, ==, ►.
+ *
+ * The single `<div class="space-y-1">` container is a display wrapper only:
+ * pass `{ wrap: false }` for hosts (like the email composer) whose own
+ * edge-trimming would mistake the wrapper — which contains `<br>` spacers —
+ * for a blank block and drop the whole message. Content is identical either
+ * way; the WhatsApp dialog keeps the default wrapped output.
  */
-export function whatsappMarkdownToHtml(markdown: string): string {
+export function whatsappMarkdownToHtml(markdown: string, options?: { wrap?: boolean }): string {
   const rawLines = markdown.replace(/\r/g, '').split('\n');
   let html = '';
   let inList = false;
@@ -416,7 +422,7 @@ export function whatsappMarkdownToHtml(markdown: string): string {
   }
   closeList();
   // Wrap in a minimal container for contentEditable styling
-  return `<div class="space-y-1">${html}</div>`;
+  return options?.wrap === false ? html : `<div class="space-y-1">${html}</div>`;
 }
 
 function inlineHtmlToWhatsApp(node: Node): string {

@@ -27,6 +27,12 @@ export const emailController = {
       await emailService.sendTest(auth(req), req.body.to),
       'Test email sent successfully.',
     ),
+  removeSettings: async (req: Request, res: Response) =>
+    sendSuccess(
+      res,
+      await emailService.removeSettings(auth(req), context(req)),
+      'Email configuration removed.',
+    ),
   list: async (req: Request, res: Response) =>
     sendSuccess(res, await emailService.list(auth(req), req.query)),
   details: async (req: Request, res: Response) =>

@@ -75,6 +75,19 @@ export function useSendTestEmail() {
   });
 }
 
+export function useRemoveEmailSettings() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.delete<{ removed: boolean }>('/email-settings'),
+    onSuccess: () => {
+      // Null clears the configured state (password indicator, remove
+      // button, test-email enablement) without a loading flash; a later
+      // save repopulates through the same key.
+      client.setQueryData(keys.settings, null as unknown as EmailConfiguration);
+    },
+  });
+}
+
 export function useEmails(params = new URLSearchParams()) {
   return useQuery({
     queryKey: keys.list(params.toString()),

@@ -5,6 +5,7 @@ import type {
   QuotationSendInput,
   QuotationTemplateInput,
   QuotationTemplateUpdate,
+  QuotationUpdate,
   QuotationVersionUpdate,
 } from '@interscale/shared';
 
@@ -369,6 +370,11 @@ export interface Quotation {
   infants: number;
   rooms: number;
   currency: string;
+  /** Traveller names carried from the lead (or edited on the quotation). Null when unset. */
+  adultNames?: string[] | null;
+  childWithBedNames?: string[] | null;
+  childWithoutBedNames?: string[] | null;
+  infantNames?: string[] | null;
   validUntil: string | null;
   publicSlug: string | null;
   /** Resolved friendly-slug base URL (ACTIVE custom domain, else apex). */
@@ -599,8 +605,7 @@ export function useGenerateQuotationPdf(quotationId: string) {
     },
   });
 }
-export function useUpdateQuotationVersion(quotationId: string, versionId: string) {
-  const client = useQueryClient();
+export function useUpdateQuotationVersion(quotationId: string, versionId: string) {  const client = useQueryClient();
   return useMutation({
     mutationFn: (input: QuotationVersionUpdate) =>
       apiClient.patch<QuotationVersion>(`/quotations/${quotationId}/versions/${versionId}`, input),
@@ -609,6 +614,19 @@ export function useUpdateQuotationVersion(quotationId: string, versionId: string
       void client.invalidateQueries({ queryKey: quotationKeys.quotations });
       // Version edits change the final amount/margin shown in the Leads table.
       void client.invalidateQueries({ queryKey: ['queries'] });
+    },
+  });
+}
+
+/** Patch quotation-level fields (e.g. traveller names) without touching versions. */
+export function useUpdateQuotation(quotationId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: QuotationUpdate) =>
+      apiClient.patch<Quotation>(`/quotations/${quotationId}`, input),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: quotationKeys.quotation(quotationId) });
+      void client.invalidateQueries({ queryKey: quotationKeys.quotations });
     },
   });
 }

@@ -40,8 +40,6 @@ export interface HotelVoucherPdfGuestRow {
 export interface HotelVoucherPdfStayRoomRow {
   roomType: string;
   rooms: number;
-  extraBedQuantity: number | null;
-  childWithoutBedQuantity: number | null;
   notes: string | null;
 }
 
@@ -929,29 +927,34 @@ export async function renderHotelVoucherPdf(input: {
     y = top + height + 4;
   }
 
-  // Room configurations: every saved entry with its quantity and extras.
-  // Customer-facing columns only: row number, room type, room count and
-  // extra beds. Child-without-bed quantities and room remarks stay stored
-  // and editable but are never printed on the voucher.
+  // Room configurations: every saved entry with its quantity and, when
+  // present, its remark. The Remark column renders only when at least one
+  // room carries a non-empty remark; otherwise Room Type absorbs the width.
+  // Extra-bed and child-without-bed counts are voucher data no longer —
+  // they are never collected, stored, or printed here.
   if (voucher.stayRooms.length > 0) {
     // Keep the bar together with the table header plus one body row.
     sectionBar('ROOM DETAILS', 'bed', 24 + 32);
     // Column widths sum exactly to CONTENT_W so the purple header, zebra
     // stripes, and grid share one right edge. Room Type absorbs the width
     // freed by the removed columns so long names keep room to wrap.
-    const roomTypeW = CONTENT_W - (32 + 55 + 65);
+    const showRemark = voucher.stayRooms.some((row) => (row.notes ?? '').trim().length > 0);
+    const remarkW = 150;
+    const roomTypeW = CONTENT_W - (32 + 55 + (showRemark ? remarkW : 0));
     table(
       [
         { header: '#', width: 32, align: 'center' as const },
         { header: 'Room Type', width: roomTypeW, align: 'left' as const },
         { header: 'Rooms', width: 55, align: 'center' as const },
-        { header: 'Extra Bed', width: 65, align: 'center' as const },
+        ...(showRemark
+          ? [{ header: 'Remark', width: remarkW, align: 'left' as const }]
+          : []),
       ],
       voucher.stayRooms.map((row, index) => [
         String(index + 1),
         row.roomType,
         String(row.rooms),
-        row.extraBedQuantity === null ? '—' : String(row.extraBedQuantity),
+        ...(showRemark ? [(row.notes ?? '').trim() ? (row.notes as string).trim() : '—'] : []),
       ]),
     );
     y += 8;

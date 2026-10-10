@@ -293,10 +293,11 @@ export const dashboardService = {
    * Confirmed revenue by destination: the trip amount of every lead whose
    * CURRENT stage is BOOKING_CONFIRMED, attributed across its itinerary stops.
    *
-   * Amount rule (mirrors the Leads list Amount column): the latest
-   * quotation's latest version `finalAmount`, but only when that version has
-   * real net cost (`netAmount > 0`); otherwise the lead's `expectedAmount`.
-   * Leads with no positive amount from either source contribute nothing.
+   * Amount rule (mirrors the Leads list Amount column exactly): the latest
+   * quotation's latest version `finalAmount` whenever positive — independent
+   * of the recorded net cost, since a quotation can carry a selling price
+   * with zero recorded cost — otherwise the lead's `expectedAmount`. Leads
+   * with no positive amount from either source contribute nothing.
    * Attribution rule (the schema stores no per-stop amounts): each lead's
    * amount is split across its non-blank destinations pro-rata by nights, or
    * equally when the itinerary has zero total nights — so a lead's amount is
@@ -322,7 +323,7 @@ export const dashboardService = {
         quotations: {
           select: {
             versions: {
-              select: { finalAmount: true, netAmount: true },
+              select: { finalAmount: true },
               orderBy: { versionNumber: 'desc' },
               take: 1,
             },
@@ -337,9 +338,7 @@ export const dashboardService = {
       // Latest quotation's latest version, exactly like quotationSummary.
       const latest = lead.quotations[0]?.versions[0];
       const quoted =
-        latest && Number(latest.finalAmount) > 0 && Number(latest.netAmount) > 0
-          ? new Prisma.Decimal(latest.finalAmount)
-          : null;
+        latest && Number(latest.finalAmount) > 0 ? new Prisma.Decimal(latest.finalAmount) : null;
       const expected =
         lead.expectedAmount !== null && Number(lead.expectedAmount) > 0
           ? new Prisma.Decimal(lead.expectedAmount)

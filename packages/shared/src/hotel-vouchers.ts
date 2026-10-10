@@ -102,23 +102,17 @@ export const hotelVoucherPackageIncludeItemSchema = z.string().trim().min(1).max
 
 /**
  * One room configuration snapshotted onto a voucher from a quotation hotel
- * option (or entered manually). Mirrors the quotation room-line fields the
- * voucher actually displays; sequence preserves the quotation's line order.
- * Stored in the voucher's own child table, independent of the quotation.
+ * option (or entered manually). Only the room type, quantity, and remark are
+ * voucher content — the quotation's extra-bed and child-without-bed counts
+ * are deliberately not carried over and any legacy values are ignored.
+ * Sequence preserves the quotation's line order. Stored in the voucher's own
+ * child table, independent of the quotation.
  */
 export const hotelVoucherStayRoomRowSchema = z.object({
   roomType: z.string().trim().min(1).max(160),
   rooms: z.preprocess(
     (value) => (value === '' || value === null || value === undefined ? 1 : value),
     z.coerce.number().int().min(1).max(100),
-  ),
-  extraBedQuantity: z.preprocess(
-    (value) => (value === '' || value === null || value === undefined ? null : value),
-    z.coerce.number().int().min(0).max(100).nullable().optional(),
-  ),
-  childWithoutBedQuantity: z.preprocess(
-    (value) => (value === '' || value === null || value === undefined ? null : value),
-    z.coerce.number().int().min(0).max(100).nullable().optional(),
   ),
   notes: optionalText(2000),
 });

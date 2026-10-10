@@ -38,8 +38,6 @@ export interface HotelVoucherStayRoomRow {
   sequence: number;
   roomType: string;
   rooms: number;
-  extraBedQuantity: number | null;
-  childWithoutBedQuantity: number | null;
   notes: string | null;
 }
 

@@ -2999,6 +2999,13 @@ model Query {
   childrenWithBedAges      Json?
   childrenWithoutBedAges   Json?
   infantAges               Json?
+  // Optional per-traveller names collected on the Lead form (Adult 1, CWB 1,
+  // …), carried into quotations and email drafts. Positional string arrays
+  // parallel to the passenger counts; blanks stay blank. NULL for legacy.
+  adultNames               Json?
+  childWithBedNames        Json?
+  childWithoutBedNames     Json?
+  infantNames              Json?
   travellerSummary         String                   @db.VarChar(255)
   expectedAmount           Decimal?                 @db.Decimal(14, 2)
   budgetMin                Decimal?                 @db.Decimal(14, 2)
@@ -3617,6 +3624,13 @@ model Quotation {
   childrenWithBedAges    Json?
   childrenWithoutBedAges Json?
   infantAges             Json?
+  // Traveller names carried from the Lead (or edited on the quotation) for
+  // email drafts. Positional string arrays parallel to the passenger counts;
+  // blanks stay blank. NULL for legacy quotations.
+  adultNames             Json?
+  childWithBedNames      Json?
+  childWithoutBedNames   Json?
+  infantNames            Json?
   currency               String          @default("INR") @db.VarChar(3)
   validUntil             DateTime?       @db.Date
   publicTokenHash        String?         @unique @db.VarChar(64)
@@ -5483,7 +5497,7 @@ model HotelVoucherPackageInclude {
 
 /// Room configurations snapshotted onto a Hotel Voucher from a quotation
 /// hotel option (or entered manually): one row per room allocation with its
-/// own type, quantity, and extras. Sequence preserves the quotation's line
+/// own type, quantity, and remark. Sequence preserves the quotation's line
 /// order. Replaced wholesale on update; cascade-deleted with the voucher.
 /// The voucher's scalar `rooms` stays the document's stated total and
 /// `roomTypeName` mirrors the first row for legacy readers.
@@ -5494,8 +5508,6 @@ model HotelVoucherStayRoom {
   sequence                Int     @default(0)
   roomType                String  @db.VarChar(160)
   rooms                   Int     @default(1)
-  extraBedQuantity        Int?
-  childWithoutBedQuantity Int?
   notes                   String? @db.VarChar(2000)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt

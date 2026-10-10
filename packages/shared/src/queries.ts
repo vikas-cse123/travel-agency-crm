@@ -155,6 +155,14 @@ export const queryInputSchema = z
     childrenWithBedAges: z.array(z.coerce.number().int().min(0).max(30)).max(100).default([]),
     childrenWithoutBedAges: z.array(z.coerce.number().int().min(0).max(30)).max(100).default([]),
     infantAges: z.array(z.coerce.number().int().min(0).max(30)).max(100).default([]),
+    // Optional per-traveller names collected on the Lead (Adult 1, CWB 1, …).
+    // Positional string arrays parallel to the passenger counts; blanks are
+    // preserved so entries keep their identity and order. Carried into
+    // quotations and email drafts.
+    adultNames: z.array(z.string().trim().max(120)).max(200).default([]),
+    childWithBedNames: z.array(z.string().trim().max(120)).max(200).default([]),
+    childWithoutBedNames: z.array(z.string().trim().max(120)).max(200).default([]),
+    infantNames: z.array(z.string().trim().max(120)).max(200).default([]),
     expectedAmount: optionalMoney,
     budgetMin: optionalMoney,
     budgetMax: optionalMoney,

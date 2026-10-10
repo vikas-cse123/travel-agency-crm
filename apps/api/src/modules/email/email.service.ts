@@ -266,8 +266,42 @@ export const emailService = {
     return presentSettings(saved);
   },
 
-  async sendTest(auth: AuthContext, to: string): Promise<{ sent: boolean }> {
+  /**
+   * Disconnect the company's sending account. The configuration row has no
+   * dependents (EmailLog history is independent), so it is deleted outright —
+   * encrypted password and all. Sends and test emails re-read the row on
+   * every call, so nothing cached can survive removal: both fail with the
+   * existing "no sending account" error until a new configuration is saved.
+   */
+  async removeSettings(
+    auth: AuthContext,
+    context: EmailRequestContext,
+  ): Promise<{ removed: boolean }> {
     if (!(await hasPermission(auth, PERMISSIONS.EMAILS_MANAGE_SETTINGS)))
+      throw new ForbiddenError();
+    const existing = await loadConfiguration(auth);
+    if (!existing) throw new NotFoundError('No email configuration exists for this company yet.');
+    await prisma.$transaction(async (tx) => {
+      await tx.companyEmailConfiguration.delete({ where: { companyId: auth.companyId } });
+      await tx.activityLog.create({
+        data: {
+          companyId: auth.companyId,
+          actorUserId: auth.userId,
+          // Existing enum value (no migration): the metadata marks removal.
+          action: 'EMAIL_SETTINGS_UPDATED',
+          entityType: 'CompanyEmailConfiguration',
+          entityId: existing.id,
+          // Provider/host only — never credentials or secrets.
+          metadata: { provider: existing.provider, smtpHost: existing.smtpHost, removed: true },
+          ipAddress: context.ipAddress,
+          userAgent: context.userAgent,
+        },
+      });
+    });
+    return { removed: true };
+  },
+
+  async sendTest(auth: AuthContext, to: string): Promise<{ sent: boolean }> {    if (!(await hasPermission(auth, PERMISSIONS.EMAILS_MANAGE_SETTINGS)))
       throw new ForbiddenError();
     const config = await requireConfiguration(auth);
     const password = decryptPassword(config);

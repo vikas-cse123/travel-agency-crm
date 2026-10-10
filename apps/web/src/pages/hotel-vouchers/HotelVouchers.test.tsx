@@ -1997,16 +1997,24 @@ describe('Hotel Voucher pages (standalone)', () => {
         target: { value: 'QT-000777' },
       });
       // Single-hotel quotation: the option is auto-selected and every room
-      // configuration plus every meal plan is imported, in saved order.
+      // configuration plus every meal plan is imported, in saved order. The
+      // quotation's extra-bed / child-without-bed counts are ignored, never
+      // imported — the voucher keeps type, quantity, and remark only.
       await waitFor(() =>
         expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Superior Room'),
       );
       expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
-      expect(screen.getByLabelText('Stay room 1 extra beds')).toHaveValue(1);
       expect(screen.getByLabelText('Stay room 1 remark')).toHaveValue('High floor');
       expect(screen.getByLabelText('Stay room 2 type')).toHaveValue('Premier Room');
       expect(screen.getByLabelText('Stay room 2 rooms')).toHaveValue(4);
-      expect(screen.getByLabelText('Stay room 2 children without bed')).toHaveValue(1);
+      expect(screen.getByLabelText('Stay room 2 remark')).toHaveValue('');
+      // Extra Bed and Child w/o Bed are gone from the form entirely.
+      expect(screen.queryByText('Extra Bed')).not.toBeInTheDocument();
+      expect(screen.queryByText('Child w/o Bed')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 1 extra beds')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 1 children without bed')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 2 extra beds')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 2 children without bed')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Stay room 3 type')).not.toBeInTheDocument();
       expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast only');
       expect(screen.getByLabelText('Stay meal 2 plan')).toHaveValue('Dinner');
@@ -2031,6 +2039,12 @@ describe('Hotel Voucher pages (standalone)', () => {
       expect(body.stayRooms).toHaveLength(2);
       expect(body.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', rooms: 2 });
       expect(body.stayRooms[1]).toMatchObject({ roomType: 'Premier Room', rooms: 4 });
+      // The removed fields are never submitted, even though the quotation
+      // source rows carried them.
+      for (const row of body.stayRooms) {
+        expect(row).not.toHaveProperty('extraBedQuantity');
+        expect(row).not.toHaveProperty('childWithoutBedQuantity');
+      }
       expect(body.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
         'Breakfast only',
         'Dinner',
@@ -2061,6 +2075,11 @@ describe('Hotel Voucher pages (standalone)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Add Room' }));
       await userEvent.type(screen.getByLabelText('Stay room 1 type'), 'Suite');
       fireEvent.change(screen.getByLabelText('Stay room 1 rooms'), { target: { value: '2' } });
+      // The rooms table is only type / quantity / remark / actions now.
+      expect(screen.queryByText('Extra Bed')).not.toBeInTheDocument();
+      expect(screen.queryByText('Child w/o Bed')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 1 extra beds')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 1 children without bed')).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Add Meal Plan' }));
       await userEvent.type(screen.getByLabelText('Stay meal 1 plan'), 'Half Board');
       await userEvent.type(screen.getByLabelText('Guest Name'), 'Aarav Mehta');
@@ -2087,6 +2106,8 @@ describe('Hotel Voucher pages (standalone)', () => {
     });
 
     it('restores saved stay rows on edit and keeps them on save', async () => {
+      // Legacy rows may still carry the removed values; the edit form loads
+      // the voucher (type, quantity, remark) and never shows the old fields.
       const withStay = {
         ...draftVoucher,
         rooms: 6,
@@ -2116,6 +2137,9 @@ describe('Hotel Voucher pages (standalone)', () => {
       );
       expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Superior Room');
       expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
+      expect(screen.getByLabelText('Stay room 1 remark')).toHaveValue('High floor');
+      expect(screen.queryByLabelText('Stay room 1 extra beds')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Stay room 2 children without bed')).not.toBeInTheDocument();
       expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast only');
       expect(screen.getByLabelText('Stay meal 2 plan')).toHaveValue('Dinner');
       await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -2128,6 +2152,10 @@ describe('Hotel Voucher pages (standalone)', () => {
       expect(body.stayRooms).toHaveLength(2);
       expect(body.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', rooms: 2 });
       expect(body.stayRooms[1]).toMatchObject({ roomType: 'Premier Room', rooms: 4 });
+      for (const row of body.stayRooms) {
+        expect(row).not.toHaveProperty('extraBedQuantity');
+        expect(row).not.toHaveProperty('childWithoutBedQuantity');
+      }
       expect(body.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
         'Breakfast only',
         'Dinner',
@@ -2431,6 +2459,302 @@ describe('Hotel Voucher pages (standalone)', () => {
       expectGuestNames([...adultNames, ...childNames]);
       expect(screen.queryByLabelText('Guest 11 name')).not.toBeInTheDocument();
       expect(screen.queryByDisplayValue('Beta Adult')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Quotation autofill revalidation', () => {
+    const rubyHotelDated = {
+      id: 'dddddddd-dddd-4111-8111-dddddddddddd',
+      hotelId: null,
+      hotelName: 'Harbour View Resort',
+      city: 'Kochi',
+      roomType: 'Triple Room',
+      mealPlan: null,
+      rooms: 1,
+      checkInDate: '2027-01-01T00:00:00.000Z',
+      checkOutDate: '2027-01-03T00:00:00.000Z',
+      roomLines: [{ roomType: 'Triple Room', rooms: 1 }],
+      mealPlanLines: [],
+    };
+    const rubyHotelDateless = {
+      id: 'eeeeeeee-eeee-4111-8111-eeeeeeeeeeee',
+      hotelId: null,
+      hotelName: 'City Inn Budget',
+      city: 'Kochi',
+      roomType: 'Standard Room',
+      mealPlan: null,
+      rooms: 1,
+      checkInDate: null,
+      checkOutDate: null,
+      roomLines: [{ roomType: 'Standard Room', rooms: 1 }],
+      mealPlanLines: [],
+    };
+    const quotationRuby = {
+      id: 'c0ffee00-0000-4000-8000-000000000071',
+      quotationNumber: 'QT-000555',
+      queryId: 'c0ffee00-0000-4000-8000-000000000071',
+      customer: null,
+      currentVersionId: 'c0ffee00-0000-4000-8000-000000000081',
+      status: 'DRAFT',
+      customerName: 'Ruby jins',
+      customerEmail: null,
+      customerPhone: '9810202893',
+      destinationSummary: 'Kerala',
+      adults: 3,
+      childrenWithBed: 0,
+      childrenWithoutBed: 0,
+      rooms: 1,
+      versions: [
+        {
+          id: 'c0ffee00-0000-4000-8000-000000000081',
+          hotels: [rubyHotelDated, rubyHotelDateless],
+        },
+      ],
+    };
+    const quotationShort = {
+      ...quotationRuby,
+      id: 'c0ffee00-0000-4000-8000-000000000072',
+      quotationNumber: 'QT-000556',
+      customerName: 'X',
+      currentVersionId: 'c0ffee00-0000-4000-8000-000000000082',
+      versions: [
+        {
+          id: 'c0ffee00-0000-4000-8000-000000000082',
+          hotels: [{ ...rubyHotelDated, id: 'dddddddd-dddd-4111-8111-ddddddddddde' }],
+        },
+      ],
+    };
+    const quotationAlt = {
+      ...quotationRuby,
+      id: 'c0ffee00-0000-4000-8000-000000000073',
+      quotationNumber: 'QT-000557',
+      customerName: 'Arjun Nair',
+      currentVersionId: 'c0ffee00-0000-4000-8000-000000000083',
+      versions: [
+        {
+          id: 'c0ffee00-0000-4000-8000-000000000083',
+          hotels: [
+            {
+              ...rubyHotelDated,
+              id: 'dddddddd-dddd-4111-8111-dddddddddddf',
+              checkInDate: '2027-02-10T00:00:00.000Z',
+              checkOutDate: '2027-02-12T00:00:00.000Z',
+            },
+          ],
+        },
+      ],
+    };
+
+    function stubAutofillFlow(
+      detailsById: Record<string, unknown>,
+      listRows: unknown[],
+    ) {
+      return vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        if (init?.method === 'POST' && url.endsWith('/hotel-vouchers'))
+          return response({ id: 'new-voucher-id' });
+        if (url.includes('/masters/hotels')) return response(page([]));
+        if (url.includes('/customers')) return response(page([]));
+        if (url.includes('/queries')) return response(page([]));
+        const detailsMatch = url.match(/\/quotations\/([0-9a-f-]{36})(?:[?]|$)/);
+        if (detailsMatch) return response(detailsById[detailsMatch[1]!] ?? null);
+        if (url.includes('/quotations')) return response(page(listRows));
+        return response(page([]));
+      });
+    }
+
+    function hotelDatalist(): string[] {
+      const input = screen.getByLabelText('Select Hotel');
+      const list = document.getElementById(input.getAttribute('list') ?? '');
+      if (!list) return [];
+      return Array.from(list.querySelectorAll('option')).map(
+        (option) => option.getAttribute('value') ?? '',
+      );
+    }
+
+    async function pickQuotation(number: string) {
+      const picker = await screen.findByLabelText('Quotation ID');
+      await waitFor(() =>
+        expect(
+          Array.from(
+            document
+              .getElementById(picker.getAttribute('list') ?? '')
+              ?.querySelectorAll('option') ?? [],
+          ).map((option) => option.getAttribute('value')),
+        ).toContain(number),
+      );
+      fireEvent.change(picker, { target: { value: number } });
+    }
+
+    async function pickHotel(name: string) {
+      await waitFor(() => expect(hotelDatalist()).toContain(name));
+      fireEvent.change(screen.getByLabelText('Select Hotel'), { target: { value: name } });
+    }
+
+    beforeEach(() => {
+      auth.permissions = new Set([...ALL, 'quotations.view']);
+    });
+
+    it('shows required errors on empty submit, then clears them for valid autofilled values', async () => {
+      vi.stubGlobal(
+        'fetch',
+        stubAutofillFlow({ [quotationRuby.id]: quotationRuby }, [quotationRuby]),
+      );
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Guest Name');
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      // Empty submit surfaces the required errors; nothing is posted.
+      // (Guest Name and Hotel Name share the min-length message.)
+      const guestErrors = await screen.findAllByText('String must contain at least 2 character(s)');
+      expect(guestErrors).toHaveLength(2);
+      expect(screen.getAllByText('Use a YYYY-MM-DD date.')).toHaveLength(2);
+
+      await pickQuotation('QT-000555');
+      await pickHotel('Harbour View Resort');
+      // Prefilled values land in YYYY-MM-DD form and their stale errors clear.
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest Name')).toHaveValue('Ruby jins'),
+      );
+      expect(screen.getByLabelText('Check-in')).toHaveValue('2027-01-01');
+      expect(screen.getByLabelText('Check-out')).toHaveValue('2027-01-03');
+      expect(screen.queryAllByText('String must contain at least 2 character(s)')).toHaveLength(0);
+      expect(screen.queryByText('Use a YYYY-MM-DD date.')).not.toBeInTheDocument();
+    });
+
+    it('keeps errors for fields that stay invalid after autofill', async () => {
+      vi.stubGlobal(
+        'fetch',
+        stubAutofillFlow({ [quotationRuby.id]: quotationRuby }, [quotationRuby]),
+      );
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Guest Name');
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      expect(
+        await screen.findAllByText('String must contain at least 2 character(s)'),
+      ).toHaveLength(2);
+
+      await pickQuotation('QT-000555');
+      // The dateless option fills the guest name but leaves both dates blank.
+      await pickHotel('City Inn Budget');
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest Name')).toHaveValue('Ruby jins'),
+      );
+      expect(screen.queryByText('String must contain at least 2 character(s)')).not.toBeInTheDocument();
+      // Blank dates remain genuinely invalid, so their errors stay.
+      expect(screen.getAllByText('Use a YYYY-MM-DD date.')).toHaveLength(2);
+    });
+
+    it('retains a genuine error for an invalid autofilled guest name', async () => {
+      vi.stubGlobal(
+        'fetch',
+        stubAutofillFlow({ [quotationShort.id]: quotationShort }, [quotationShort]),
+      );
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Guest Name');
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      expect(
+        await screen.findAllByText('String must contain at least 2 character(s)'),
+      ).toHaveLength(2);
+
+      await pickQuotation('QT-000556');
+      await pickHotel('Harbour View Resort');
+      // One-character names fail the shared min-length rule even from autofill.
+      await waitFor(() => expect(screen.getByLabelText('Guest Name')).toHaveValue('X'));
+      expect(screen.getByText('String must contain at least 2 character(s)')).toBeInTheDocument();
+      // The valid prefilled dates clear their own errors regardless.
+      expect(screen.queryByText('Use a YYYY-MM-DD date.')).not.toBeInTheDocument();
+    });
+
+    it('reflects the newly selected quotation after a change', async () => {
+      vi.stubGlobal(
+        'fetch',
+        stubAutofillFlow(
+          { [quotationRuby.id]: quotationRuby, [quotationAlt.id]: quotationAlt },
+          [quotationRuby, quotationAlt],
+        ),
+      );
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Guest Name');
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      expect(
+        await screen.findAllByText('String must contain at least 2 character(s)'),
+      ).toHaveLength(2);
+
+      await pickQuotation('QT-000555');
+      await pickHotel('Harbour View Resort');
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest Name')).toHaveValue('Ruby jins'),
+      );
+      expect(screen.queryAllByText('String must contain at least 2 character(s)')).toHaveLength(0);
+
+      await pickQuotation('QT-000557');
+      await pickHotel('Harbour View Resort');
+      // Guest tracks the new record; dates follow the new option.
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest Name')).toHaveValue('Arjun Nair'),
+      );
+      expect(screen.getByLabelText('Check-in')).toHaveValue('2027-02-10');
+      expect(screen.queryByText('String must contain at least 2 character(s)')).not.toBeInTheDocument();
+    });
+
+    it('manual edits continue to revalidate without submitting', async () => {
+      vi.stubGlobal(
+        'fetch',
+        stubAutofillFlow({ [quotationRuby.id]: quotationRuby }, [quotationRuby]),
+      );
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Guest Name');
+      // Enter the submitted state first so edits revalidate on change.
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      expect(
+        await screen.findAllByText('String must contain at least 2 character(s)'),
+      ).toHaveLength(2);
+      await pickQuotation('QT-000555');
+      await pickHotel('Harbour View Resort');
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest Name')).toHaveValue('Ruby jins'),
+      );
+      expect(screen.queryAllByText('String must contain at least 2 character(s)')).toHaveLength(0);
+
+      // Clearing reintroduces the error; typing a valid name clears it again.
+      fireEvent.change(screen.getByLabelText('Guest Name'), { target: { value: '' } });
+      expect(await screen.findByText('String must contain at least 2 character(s)')).toBeInTheDocument();
+      await userEvent.type(screen.getByLabelText('Guest Name'), 'Ruby jins');
+      await waitFor(() =>
+        expect(
+          screen.queryByText('String must contain at least 2 character(s)'),
+        ).not.toBeInTheDocument(),
+      );
+    });
+
+    it('submits the prefilled form through the existing API validation', async () => {
+      const fetchMock = stubAutofillFlow({ [quotationRuby.id]: quotationRuby }, [quotationRuby]);
+      vi.stubGlobal('fetch', fetchMock);
+      renderRoutes('/hotel-vouchers/new');
+      await screen.findByLabelText('Guest Name');
+      await pickQuotation('QT-000555');
+      await pickHotel('Harbour View Resort');
+      await waitFor(() =>
+        expect(screen.getByLabelText('Guest Name')).toHaveValue('Ruby jins'),
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Create Voucher' }));
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+        );
+        expect(post).toBeDefined();
+      });
+      const post = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith('/hotel-vouchers') && options?.method === 'POST',
+      );
+      const body = JSON.parse(String(post?.[1]?.body));
+      expect(body).toMatchObject({
+        guestName: 'Ruby jins',
+        checkIn: '2027-01-01',
+        checkOut: '2027-01-03',
+        hotelName: 'Harbour View Resort',
+      });
     });
   });
 });

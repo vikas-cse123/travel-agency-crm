@@ -571,8 +571,6 @@ export const hotelVouchersService = {
                 sequence: index,
                 roomType: row.roomType.trim(),
                 rooms: row.rooms ?? 1,
-                extraBedQuantity: row.extraBedQuantity ?? null,
-                childWithoutBedQuantity: row.childWithoutBedQuantity ?? null,
                 notes: row.notes?.trim() || null,
               })),
             },
@@ -764,8 +762,6 @@ export const hotelVouchersService = {
               sequence: index,
               roomType: stayRow.roomType.trim(),
               rooms: stayRow.rooms ?? 1,
-              extraBedQuantity: stayRow.extraBedQuantity ?? null,
-              childWithoutBedQuantity: stayRow.childWithoutBedQuantity ?? null,
               notes: stayRow.notes?.trim() || null,
             })),
           });
@@ -881,8 +877,6 @@ export const hotelVouchersService = {
             ? current.stayRooms.map((row) => ({
                 roomType: row.roomType,
                 rooms: row.rooms,
-                extraBedQuantity: row.extraBedQuantity,
-                childWithoutBedQuantity: row.childWithoutBedQuantity,
                 notes: row.notes,
               }))
             : current.roomTypeName
@@ -890,8 +884,6 @@ export const hotelVouchersService = {
                   {
                     roomType: current.roomTypeName,
                     rooms: current.rooms,
-                    extraBedQuantity: null,
-                    childWithoutBedQuantity: null,
                     notes: null,
                   },
                 ]

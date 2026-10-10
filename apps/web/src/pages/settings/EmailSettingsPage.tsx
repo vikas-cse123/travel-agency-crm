@@ -9,6 +9,7 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import { ApiError } from '@/api/client';
 import {
   useEmailSettings,
+  useRemoveEmailSettings,
   useSaveEmailSettings,
   useSendTestEmail,
 } from '@/features/email/email.api';
@@ -36,6 +37,12 @@ export function EmailSettingsPage() {
   const settings = useEmailSettings();
   const save = useSaveEmailSettings();
   const testEmail = useSendTestEmail();
+  const remove = useRemoveEmailSettings();
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [removeFeedback, setRemoveFeedback] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   const [provider, setProvider] = useState<string>('CUSTOM_SMTP');
   const [smtpHost, setSmtpHost] = useState('');
@@ -123,6 +130,36 @@ export function EmailSettingsPage() {
         },
       },
     );
+  };
+
+  const resetForm = () => {
+    setProvider('CUSTOM_SMTP');
+    setSmtpHost('');
+    setSmtpPort('587');
+    setSecurity('STARTTLS');
+    setSmtpUsername('');
+    setSmtpPassword('');
+    setFromName('');
+    setFromEmail('');
+    setReplyTo('');
+    filledFor.current = null;
+  };
+
+  const confirmRemove = () => {
+    setRemoveFeedback(null);
+    remove.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmingRemove(false);
+        resetForm();
+        setTestFeedback(null);
+        setRemoveFeedback({ ok: true, message: 'Email configuration removed.' });
+      },
+      onError: (failure) =>
+        setRemoveFeedback({
+          ok: false,
+          message: failure instanceof Error ? failure.message : String(failure),
+        }),
+    });
   };
 
   return (
@@ -254,10 +291,49 @@ export function EmailSettingsPage() {
           </p>
         )}
         {canManage && (
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button isLoading={save.isPending} onClick={submit}>
               Save Configuration
             </Button>
+            {saved && !confirmingRemove && (
+              <Button variant="danger" onClick={() => setConfirmingRemove(true)}>
+                Remove Configuration
+              </Button>
+            )}
+          </div>
+        )}
+        {removeFeedback && (
+          <p
+            role={removeFeedback.ok ? 'status' : 'alert'}
+            className={`mt-3 rounded-lg p-3 text-sm ${
+              removeFeedback.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+            }`}
+          >
+            {removeFeedback.message}
+          </p>
+        )}
+        {canManage && saved && confirmingRemove && (
+          <div
+            role="alertdialog"
+            aria-label="Remove email configuration"
+            className="mt-4 rounded-lg border border-red-200 bg-red-50/60 p-4"
+          >
+            <p className="text-sm text-slate-700">
+              Remove the configured sending email account? The CRM will no longer be able to send
+              emails using these settings.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <Button
+                variant="secondary"
+                disabled={remove.isPending}
+                onClick={() => setConfirmingRemove(false)}
+              >
+                Cancel
+              </Button>
+              <Button variant="danger" isLoading={remove.isPending} onClick={confirmRemove}>
+                Remove Configuration
+              </Button>
+            </div>
           </div>
         )}
       </section>
@@ -280,7 +356,7 @@ export function EmailSettingsPage() {
           <Button
             variant="secondary"
             isLoading={testEmail.isPending}
-            disabled={!canManage || !testTo.trim()}
+            disabled={!canManage || !testTo.trim() || !saved}
             onClick={sendTest}
           >
             Send Test Email

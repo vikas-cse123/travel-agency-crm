@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm, Controller } from 'react-hook-form';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
@@ -187,6 +187,7 @@ export function HotelVoucherFormPage() {
     handleSubmit,
     reset,
     setValue,
+    trigger,
     watch,
     getValues,
     control,
@@ -312,6 +313,17 @@ export function HotelVoucherFormPage() {
     return keys;
   };
   /**
+   * Re-run validation for freshly autofilled fields against the final form
+   * state, so stale errors clear (or honest ones appear) without resubmitting.
+   */
+  const revalidate = useCallback(
+    (keys: PrefillKey[]) => {
+      if (keys.length > 0) void trigger(keys);
+    },
+    [trigger],
+  );
+
+  /**
    * Revert our values back to form defaults, skipping user-edited fields.
    * A skipped field keeps its baseline so later prefills keep preserving it.
    */
@@ -356,7 +368,8 @@ export function HotelVoucherFormPage() {
       setValue(key, value as never, { shouldDirty: true });
       appliedValues.current[key] = value;
     }
-  }, [hotelDetails.data, selectedHotelId, setValue, getValues]);
+    revalidate(snapshot.map(([key]) => key));
+  }, [hotelDetails.data, selectedHotelId, setValue, getValues, revalidate]);
 
   // Quotation selection drives lead/guest prefill; hotel options come from
   // the applicable version. Changing/clearing the quotation reverts only
@@ -383,11 +396,13 @@ export function HotelVoucherFormPage() {
   useEffect(() => {
     if (!canUseQuotations) return;
     if (selectedQuotationId === appliedQuotationId.current) return;
-    revertValues(lastQuotationKeys.current);
+    const staleQuotationKeys = lastQuotationKeys.current;
+    const staleHotelKeys = lastHotelKeys.current;
+    revertValues(staleQuotationKeys);
     // The hotel selection is already cleared by pickQuotation; revert its
     // stale prefilled values here too (the hotel effect would early-return
     // once the applied id is reset below).
-    revertValues(lastHotelKeys.current);
+    revertValues(staleHotelKeys);
     revertStayArrays();
     lastHotelKeys.current = [];
     appliedOptionId.current = null;
@@ -396,6 +411,7 @@ export function HotelVoucherFormPage() {
     if (!selectedQuotationId || !selectedQuotation || selectedQuotation.id !== selectedQuotationId) {
       appliedQuotationId.current = null;
       lastQuotationKeys.current = [];
+      revalidate([...staleQuotationKeys, ...staleHotelKeys]);
       return;
     }
     const quotation = selectedQuotation;
@@ -410,6 +426,7 @@ export function HotelVoucherFormPage() {
       rooms: quotation.rooms,
     });
     appliedQuotationId.current = selectedQuotationId;
+    revalidate(lastQuotationKeys.current);
     // Exactly one hotel option: auto-select it through the same manual-pick
     // path so every hotel/stay field prefills without dropdown interaction.
     // Multi-hotel quotations keep manual selection; an explicit user clear
@@ -431,17 +448,20 @@ export function HotelVoucherFormPage() {
   useEffect(() => {
     if (!canUseQuotations) return;
     if (selectedQuotationHotelId === appliedOptionId.current) return;
-    revertValues(lastHotelKeys.current);
+    const staleHotelKeys = lastHotelKeys.current;
+    revertValues(staleHotelKeys);
     revertStayArrays();
     if (!selectedQuotationHotelId) {
       lastHotelKeys.current = [];
       appliedOptionId.current = null;
+      revalidate(staleHotelKeys);
       return;
     }
     const option = quotationHotelOptions.find((row) => row.id === selectedQuotationHotelId);
     if (!option) {
       lastHotelKeys.current = [];
       appliedOptionId.current = selectedQuotationHotelId;
+      revalidate(staleHotelKeys);
       return;
     }
     // Allow the master snapshot effect to refire for the new hotel link.
@@ -472,8 +492,6 @@ export function HotelVoucherFormPage() {
             return {
               roomType: textOf(record, 'roomType') ?? option.roomType ?? '',
               rooms: countOf(record, 'rooms', 1) ?? 1,
-              extraBedQuantity: countOf(record, 'extraBedQuantity'),
-              childWithoutBedQuantity: countOf(record, 'childWithoutBedQuantity'),
               notes: textOf(record, 'notes'),
             };
           })
@@ -482,8 +500,6 @@ export function HotelVoucherFormPage() {
               {
                 roomType: option.roomType,
                 rooms: option.rooms ?? 1,
-                extraBedQuantity: null,
-                childWithoutBedQuantity: null,
                 notes: null,
               },
             ]
@@ -520,6 +536,7 @@ export function HotelVoucherFormPage() {
     lastHotelKeys.current = applyValues(values);
     applyStayArrays(stayRooms, stayMeals);
     appliedOptionId.current = selectedQuotationHotelId;
+    revalidate([...lastHotelKeys.current, 'stayRooms', 'stayMeals']);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     canUseQuotations,
@@ -535,8 +552,16 @@ export function HotelVoucherFormPage() {
     const lead = (leads.data?.data ?? []).find((row) => row.id === id);
     if (!lead) return;
     setValue('guestName', lead.customerName, { shouldDirty: true });
-    if (lead.phone) setValue('guestPhone', lead.phone, { shouldDirty: true });
-    if (lead.email) setValue('guestEmail', lead.email, { shouldDirty: true });
+    const touched: PrefillKey[] = ['queryId', 'guestName'];
+    if (lead.phone) {
+      setValue('guestPhone', lead.phone, { shouldDirty: true });
+      touched.push('guestPhone');
+    }
+    if (lead.email) {
+      setValue('guestEmail', lead.email, { shouldDirty: true });
+      touched.push('guestEmail');
+    }
+    revalidate(touched);
   };
 
   const pickHotel = (id: string | null) => {
@@ -627,8 +652,6 @@ export function HotelVoucherFormPage() {
     const savedStayRooms = (value.stayRooms ?? []).map((row) => ({
       roomType: row.roomType,
       rooms: row.rooms,
-      extraBedQuantity: row.extraBedQuantity ?? null,
-      childWithoutBedQuantity: row.childWithoutBedQuantity ?? null,
       notes: row.notes ?? null,
     }));
     const savedStayMeals = (value.stayMeals ?? []).map((row) => ({
@@ -1112,8 +1135,6 @@ export function HotelVoucherFormPage() {
                   stayRoomRows.append({
                     roomType: '',
                     rooms: 1,
-                    extraBedQuantity: null,
-                    childWithoutBedQuantity: null,
                     notes: null,
                   })
                 }
@@ -1123,14 +1144,12 @@ export function HotelVoucherFormPage() {
             </div>
           ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="w-full min-w-[760px] border-collapse bg-card text-sm">
+            <table className="w-full min-w-[560px] border-collapse bg-card text-sm">
               <thead>
                 <tr className="bg-slate-100 text-left text-xs uppercase text-muted-foreground">
                   <th className="w-10 px-2 py-2 font-medium">#</th>
                   <th className="min-w-40 px-2 py-2 font-medium">Room Type</th>
                   <th className="w-20 px-2 py-2 text-right font-medium">Rooms</th>
-                  <th className="w-24 px-2 py-2 text-right font-medium">Extra Bed</th>
-                  <th className="w-28 px-2 py-2 text-right font-medium">Child w/o Bed</th>
                   <th className="min-w-40 px-2 py-2 font-medium">Remark</th>
                   <th className="w-16 px-2 py-2 font-medium">Actions</th>
                 </tr>
@@ -1158,28 +1177,6 @@ export function HotelVoucherFormPage() {
                         min={1}
                         className={inputClass}
                         {...register(`stayRooms.${index}.rooms`, { valueAsNumber: true })}
-                      />
-                    </td>
-                    <td className="px-2 py-2">
-                      <input
-                        aria-label={`Stay room ${index + 1} extra beds`}
-                        type="number"
-                        min={0}
-                        className={inputClass}
-                        {...register(`stayRooms.${index}.extraBedQuantity`, {
-                          valueAsNumber: true,
-                        })}
-                      />
-                    </td>
-                    <td className="px-2 py-2">
-                      <input
-                        aria-label={`Stay room ${index + 1} children without bed`}
-                        type="number"
-                        min={0}
-                        className={inputClass}
-                        {...register(`stayRooms.${index}.childWithoutBedQuantity`, {
-                          valueAsNumber: true,
-                        })}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -1216,8 +1213,6 @@ export function HotelVoucherFormPage() {
                 stayRoomRows.append({
                   roomType: '',
                   rooms: 1,
-                  extraBedQuantity: null,
-                  childWithoutBedQuantity: null,
                   notes: null,
                 })
               }

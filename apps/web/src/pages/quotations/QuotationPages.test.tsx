@@ -18613,3 +18613,67 @@ describe('Finalize quotation from the details page', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/Version v1 finalized/i);
   });
 });
+
+describe('Quotation Builder — traveller names', () => {
+  const namedQuotation = {
+    ...builderQuotation(),
+    adults: 2,
+    childrenWithBed: 1,
+    childrenWithoutBed: 0,
+    infants: 1,
+    adultNames: ['Rahul Sharma', 'Priya Sharma'],
+    childWithBedNames: ['Aarav Sharma'],
+    childWithoutBedNames: [],
+    infantNames: [],
+  };
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  it('exposes the carried traveller names and saves edits to the quotation', async () => {
+    const fetchMock = masterFetch(namedQuotation);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    expect(await screen.findByText('Traveller Names (optional)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Adult 1 — Name')).toHaveValue('Rahul Sharma');
+    expect(screen.getByLabelText('Adult 2 — Name')).toHaveValue('Priya Sharma');
+    expect(screen.getByLabelText('Child With Bed 1 — Name')).toHaveValue('Aarav Sharma');
+    expect(screen.getByLabelText('Infant 1 — Name')).toHaveValue('');
+
+    await userEvent.type(screen.getByLabelText('Infant 1 — Name'), 'Ira Sharma');
+    await userEvent.click(screen.getByRole('button', { name: 'Save traveller names' }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        ([url, options]) =>
+          String(url).endsWith('/quotations/quotation-1') && options?.method === 'PATCH',
+      );
+      expect(patch).toBeDefined();
+    });
+    const patch = fetchMock.mock.calls.find(
+      ([url, options]) =>
+        String(url).endsWith('/quotations/quotation-1') && options?.method === 'PATCH',
+    );
+    expect(JSON.parse(String(patch![1]!.body))).toMatchObject({
+      adultNames: ['Rahul Sharma', 'Priya Sharma'],
+      childWithBedNames: ['Aarav Sharma'],
+      infantNames: ['Ira Sharma'],
+    });
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+  });
+
+  it('shows no name inputs without travellers and keeps the card readable', async () => {
+    const fetchMock = masterFetch({
+      ...builderQuotation(),
+      adults: 0,
+      childrenWithBed: 0,
+      childrenWithoutBed: 0,
+      infants: 0,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    expect(await screen.findByText('Traveller Names (optional)')).toBeInTheDocument();
+    expect(screen.getByText('No travellers on this quotation.')).toBeInTheDocument();
+  });
+});
