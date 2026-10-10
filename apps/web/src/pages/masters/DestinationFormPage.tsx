@@ -39,6 +39,14 @@ const schema = z.object({
   countryCode: z.string().length(2, 'Select a country.'),
   name: z.string().trim().min(2, 'Enter a destination name.').max(200),
   privateName: z.string().trim().max(200),
+  email: z
+    .string()
+    .trim()
+    .max(255)
+    .refine(
+      (value) => value === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+      'Enter a valid email address.',
+    ),
   destinationType: z.enum(['DOMESTIC', 'INTERNATIONAL']),
   cityIds: z.array(z.string().uuid()).min(1, 'Select at least one city.'),
   inclusions: z.string().max(50_000),
@@ -54,6 +62,7 @@ const initial: Values = {
   countryCode: '',
   name: '',
   privateName: '',
+  email: '',
   destinationType: 'DOMESTIC',
   cityIds: [],
   inclusions: '',
@@ -122,6 +131,7 @@ export function DestinationFormPage() {
         countryCode: destination.data.countryCode,
         name: destination.data.name,
         privateName: destination.data.privateName ?? '',
+        email: destination.data.email ?? '',
         destinationType: destination.data.destinationType as Values['destinationType'],
         cityIds: (destination.data.cities ?? []).map((link) => link.cityId),
         inclusions: destination.data.inclusions ?? '',
@@ -171,6 +181,7 @@ export function DestinationFormPage() {
     const payload: DestinationInput = {
       ...values,
       privateName: values.privateName.trim() ? values.privateName.trim() : null,
+      email: values.email.trim() ? values.email.trim() : null,
       inclusions: values.inclusions || null,
       exclusions: values.exclusions || null,
       paymentPolicies: values.paymentPolicies || null,
@@ -269,6 +280,23 @@ export function DestinationFormPage() {
                 {form.formState.errors.privateName && (
                   <span className="text-xs text-red-600">
                     {form.formState.errors.privateName.message}
+                  </span>
+                )}
+              </label>
+              <label className="block text-sm font-medium">
+                Destination Email (Optional)
+                <input
+                  className={fieldClass}
+                  type="email"
+                  placeholder="e.g. reservations@destination-vendor.com"
+                  {...form.register('email')}
+                />
+                <span className="mt-1 block text-xs font-normal text-slate-500">
+                  Vendor contact used to address itinerary emails. Leave blank if none.
+                </span>
+                {form.formState.errors.email && (
+                  <span className="text-xs text-red-600">
+                    {form.formState.errors.email.message}
                   </span>
                 )}
               </label>

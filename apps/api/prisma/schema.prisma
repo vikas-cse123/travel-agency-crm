@@ -1636,6 +1636,8 @@ model Destination {
   /// Internal-only label for agency staff. Never rendered in quotations,
   /// weblinks, PDFs or any other customer-facing output.
   privateName           String?          @db.VarChar(200)
+  /// Optional vendor contact for itinerary emails. Null means unconfigured.
+  email                 String?          @db.VarChar(255)
   destinationType       DestinationType
   imageStorageProvider  StorageProvider?
   imageBucket           String?          @db.VarChar(255)

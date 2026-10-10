@@ -88,6 +88,11 @@ export function DestinationDetailsPage() {
                   Private name: <span className="font-medium">{value.privateName}</span>
                 </p>
               )}
+              {value.email?.trim() && (
+                <p className="mt-1 text-sm text-slate-500">
+                  Vendor email: <span className="font-medium">{value.email}</span>
+                </p>
+              )}
             </div>
             <div>
               <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-800">

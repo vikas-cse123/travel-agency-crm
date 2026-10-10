@@ -629,6 +629,8 @@ export const destinationsService = {
             // Internal-only label; blank becomes null. Never used for
             // customer-facing naming or matching.
             privateName: blankToNull(input.privateName),
+            // Optional itinerary-vendor contact; blank becomes null.
+            email: blankToNull(input.email),
             destinationType: input.destinationType,
             status: input.status,
             createdById: auth.userId,
@@ -700,6 +702,7 @@ export const destinationsService = {
               ? { name: input.name.trim(), normalizedName: normalizeCustomerName(input.name) }
               : {}),
             ...('privateName' in input ? { privateName: blankToNull(input.privateName) } : {}),
+            ...('email' in input ? { email: blankToNull(input.email) } : {}),
             ...(input.destinationType ? { destinationType: input.destinationType } : {}),
             ...(input.status ? { status: input.status } : {}),
             ...policyData(input),

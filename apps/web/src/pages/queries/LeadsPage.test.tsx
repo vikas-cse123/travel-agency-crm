@@ -2905,7 +2905,7 @@ describe('Dense operational Leads table structure', () => {
     expect(within(row).getByText('₹15,000.00')).toBeInTheDocument();
   });
 
-  it('shows amount and margin for a quotation with a final amount but zero net cost (QRY-000006/QT-001034)', async () => {
+  it('shows amount with an empty margin when the stored margin only echoes the final amount (QRY-000006/QT-001034)', async () => {
     stubLeadList([
       {
         ...enrichedLead,
@@ -2930,12 +2930,45 @@ describe('Dense operational Leads table structure', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const row = document.querySelector('.leads-tbody tr') as HTMLElement;
-    // Mirrors the live record: final ₹6,00,000 with net 0 must render both
-    // cells instead of the empty-state dash (no expected fallback exists).
+    // A stored margin identical to the final amount means no margin was ever
+    // recorded (final minus zero costs) — the margin cell keeps the
+    // empty-state dash instead of echoing the amount.
     const amountCells = Array.from(row.querySelectorAll('.leads-amount')).map(
       (cell) => cell.textContent?.trim(),
     );
-    expect(amountCells).toEqual(['₹6,00,000.00', '₹6,00,000.00']);
+    expect(amountCells).toEqual(['₹6,00,000.00', '—']);
+  });
+
+  it('shows a stored margin that differs from the final amount even with zero net cost', async () => {
+    stubLeadList([
+      {
+        ...enrichedLead,
+        queryNumber: 'QRY-000007',
+        expectedAmount: null,
+        expectedMargin: null,
+        quotationSummary: {
+          quotationId: 'quote-1',
+          quotationNumber: 'QT-001035',
+          quotationStatus: 'DRAFT',
+          acceptedVersionId: null,
+          latestVersionAmount: '600000.00',
+          netAmount: '0',
+          marginAmount: '45000.00',
+          currency: 'INR',
+          bookingId: null,
+          lastSentAt: null,
+          acceptedAt: null,
+        },
+      },
+    ]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Aarav Mehta');
+    const row = document.querySelector('.leads-tbody tr') as HTMLElement;
+    // A genuinely recorded margin is preserved verbatim.
+    const amountCells = Array.from(row.querySelectorAll('.leads-amount')).map(
+      (cell) => cell.textContent?.trim(),
+    );
+    expect(amountCells).toEqual(['₹6,00,000.00', '₹45,000.00']);
   });
 
   it('keeps the empty state when the quotation stores no margin', async () => {
@@ -2976,6 +3009,19 @@ describe('Dense operational Leads table structure', () => {
     expect(within(row).getByText(/250000/)).toBeInTheDocument();
     // Quotation cell shows the + New action (lead can create quotations).
     expect(within(row).getByRole('link', { name: '+ New' })).toBeInTheDocument();
+  });
+
+  it('shows dashes for both Amount and Margin when neither is set', async () => {
+    stubLeadList([
+      { ...enrichedLead, expectedAmount: null, expectedMargin: null, quotationSummary: null },
+    ]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Aarav Mehta');
+    const row = document.querySelector('.leads-tbody tr') as HTMLElement;
+    const amountCells = Array.from(row.querySelectorAll('.leads-amount')).map(
+      (cell) => cell.textContent?.trim(),
+    );
+    expect(amountCells).toEqual(['—', '—']);
   });
 
   it('has no Call Recording column, controls or statuses anywhere', async () => {

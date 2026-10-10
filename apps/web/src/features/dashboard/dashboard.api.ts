@@ -30,7 +30,7 @@ export interface UpcomingTravelRow {
   id: string;
   customerName: string;
   travelDate: string;
-  city: string;
+  destination: string;
   leadStage: string;
 }
 export interface UpcomingTravelSection {
@@ -154,32 +154,15 @@ export function useDashboardOperations(params: DashboardParams) {
   });
 }
 
-export interface UpcomingTravelParams {
-  days?: '7' | '30' | '90';
-  from?: string;
-  to?: string;
-  limit?: number;
-}
-
 export interface UpcomingTravelResponse {
-  range: { from: string; to: string; timezone: string; days: '7' | '30' | '90' };
   confirmed: UpcomingTravelSection;
   others: UpcomingTravelSection;
 }
 
-function toTravelQuery(params: UpcomingTravelParams) {
-  const search = new URLSearchParams({ days: params.days ?? '30' });
-  if (params.from) search.set('from', params.from);
-  if (params.to) search.set('to', params.to);
-  if (params.limit) search.set('limit', String(params.limit));
-  return search.toString();
-}
-
-export function useDashboardUpcomingTravel(params: UpcomingTravelParams) {
-  const query = toTravelQuery(params);
+export function useDashboardUpcomingTravel() {
   return useQuery({
-    queryKey: ['dashboard', 'upcoming-travel', query],
+    queryKey: ['dashboard', 'upcoming-travel'],
     queryFn: ({ signal }) =>
-      apiClient.get<UpcomingTravelResponse>(`/dashboard/upcoming-travel?${query}`, signal),
+      apiClient.get<UpcomingTravelResponse>('/dashboard/upcoming-travel', signal),
   });
 }

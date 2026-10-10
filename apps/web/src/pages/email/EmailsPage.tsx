@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useCallback, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS, labelForLookup } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +11,13 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import { ApiError } from '@/api/client';
 import { formatDateTime12Hour } from '@/utils/dateTime';
 import { useEmail, useEmails, useSendEmail, type EmailLogRow } from '@/features/email/email.api';
+import {
+  EmailPurposeSelector,
+  HotelEmailFlow,
+  type EmailPurpose,
+  type HotelEmailDraft,
+} from './HotelBookingEmail';
+import { ItineraryEmailFlow } from './ItineraryBookingEmail';
 
 const inputClass =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm placeholder:text-muted-foreground';
@@ -247,12 +254,56 @@ function EmailDetails({ id }: { id: string }) {
 
 function Composer() {
   const send = useSendEmail();
-  const [to, setTo] = useState('');
+  const [purpose, setPurpose] = useState<EmailPurpose>('hotel');
+  // Remounting the hotel flow (via flowKey) resets its quotation/hotel
+  // selection, e.g. after a successful send or Cancel.
+  const [flowKey, setFlowKey] = useState(0);
+  const [toState, setToState] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
-  const [subject, setSubject] = useState('');
-  const [bodyHtml, setBodyHtml] = useState('');
+  const [subjectState, setSubjectState] = useState('');
+  const [bodyState, setBodyState] = useState('');
   const [feedback, setFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Tracked setters mirror the current values into refs so the generated
+  // draft can tell user edits apart from its own last write.
+  const toRef = useRef('');
+  const subjectRef = useRef('');
+  const bodyRef = useRef('');
+  const setTo = (value: string) => {
+    toRef.current = value;
+    setToState(value);
+  };
+  const setSubject = (value: string) => {
+    subjectRef.current = value;
+    setSubjectState(value);
+  };
+  const setBodyHtml = (value: string) => {
+    bodyRef.current = value;
+    setBodyState(value);
+  };
+  const to = toState;
+  const subject = subjectState;
+  const bodyHtml = bodyState;
+
+  /** Last generated draft; null means the composer holds no generated content. */
+  const appliedRef = useRef<HotelEmailDraft | null>(null);
+
+  /** Fill the composer, preserving any field the user edited since generation. */
+  const applyGenerated = useCallback((draft: HotelEmailDraft) => {
+    if (toRef.current === (appliedRef.current?.to ?? '')) setTo(draft.to);
+    if (subjectRef.current === (appliedRef.current?.subject ?? '')) setSubject(draft.subject);
+    if (bodyRef.current === (appliedRef.current?.bodyHtml ?? '')) setBodyHtml(draft.bodyHtml);
+    appliedRef.current = draft;
+  }, []);
+
+  /** Revert generated content back to blank, never touching user edits. */
+  const clearGenerated = useCallback(() => {
+    if (toRef.current === (appliedRef.current?.to ?? '')) setTo('');
+    if (subjectRef.current === (appliedRef.current?.subject ?? '')) setSubject('');
+    if (bodyRef.current === (appliedRef.current?.bodyHtml ?? '')) setBodyHtml('');
+    appliedRef.current = null;
+  }, []);
 
   const toList = parseAddresses(to);
   const plainBody = stripHtml(bodyHtml);
@@ -277,6 +328,8 @@ function Composer() {
           setBcc('');
           setSubject('');
           setBodyHtml('');
+          appliedRef.current = null;
+          setFlowKey((key) => key + 1);
           setFeedback({ ok: true, message: `Email sent to ${row.to.join(', ')}.` });
         },
         onError: (failure) => {
@@ -299,11 +352,34 @@ function Composer() {
     setSubject('');
     setBodyHtml('');
     setFeedback(null);
+    appliedRef.current = null;
+    setFlowKey((key) => key + 1);
   };
 
   return (
     <section className="rounded-xl border bg-card p-5 shadow-sm" aria-label="Compose email">
       <h2 className="mb-4 text-base font-semibold">Compose Email</h2>
+      <div className="mb-4">
+        <EmailPurposeSelector value={purpose} onChange={setPurpose} />
+      </div>
+      {purpose === 'hotel' && (
+        <div className="mb-4">
+          <HotelEmailFlow
+            key={`hotel-${flowKey}`}
+            onGenerate={applyGenerated}
+            onClear={clearGenerated}
+          />
+        </div>
+      )}
+      {purpose === 'itinerary' && (
+        <div className="mb-4">
+          <ItineraryEmailFlow
+            key={`itinerary-${flowKey}`}
+            onGenerate={applyGenerated}
+            onClear={clearGenerated}
+          />
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-2">
         <div className="md:col-span-2">
           <FormField label="To *">

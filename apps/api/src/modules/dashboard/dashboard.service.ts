@@ -9,7 +9,6 @@ import {
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { prisma } from '../../config/prisma.js';
 import { localDayBounds } from '../../utils/timezone.js';
-import { ValidationError } from '../../utils/errors.js';
 import { permissionsService } from '../auth/permissions.service.js';
 import {
   visibility as queryVisibility,
@@ -145,26 +144,30 @@ export const dashboardService = {
   },
 
   /**
-   * Upcoming travel widgets: leads with a planned travel date inside the
-   * requested forward window, split by current stage. Widget one holds only
-   * leads whose CURRENT persisted stage is BOOKING_CONFIRMED; widget two
-   * holds every other stage. Eligibility never consults stage history,
-   * vouchers, payments or bookings — only the live lead row.
+   * Upcoming travel widgets: every lead with a future planned travel date,
+   * split by current stage. Widget one holds only leads whose CURRENT
+   * persisted stage is BOOKING_CONFIRMED; widget two holds every other
+   * stage. Eligibility never consults stage history, vouchers, payments or
+   * bookings — only the live lead row.
+   *
+   * There is intentionally no date-range window or row limit: both widgets
+   * cover all future travel (past dates excluded). Legacy `days`/`from`/`to`
+   * /`limit` query params are accepted but ignored.
    *
    * Travel date is the authoritative `Query.travelStartDate` (a calendar
-   * date, like the operations widgets use); the city is the first itinerary
-   * stop by sequence, mirroring quotation title generation. Leads without a
-   * travel date are excluded from both widgets.
+   * date, like the operations widgets use); the destination is the first
+   * itinerary stop by sequence, mirroring quotation title generation. Leads
+   * without a travel date are excluded from both widgets.
    */
-  async upcomingTravel(auth: AuthContext, input: UpcomingTravelQuery) {
+  async upcomingTravel(auth: AuthContext, _input: UpcomingTravelQuery) {
     const timezone = await companyTimezone(auth.companyId);
     const canViewLeads = await has(auth, PERMISSIONS.QUERIES_VIEW);
-    // Calendar-date window in the company timezone. `travelStartDate` is a
-    // `@db.Date` column, so comparing it against local-midnight instants
-    // would let Postgres truncate the bounds to UTC dates and shift the
-    // window by the UTC offset. UTC-midnight calendar boundaries keep the
-    // window exact regardless of timezone — the same convention the leads
-    // list uses for its TRAVEL_DATE filter, which the View More links reuse.
+    // Lower calendar-date bound in the company timezone. `travelStartDate`
+    // is a `@db.Date` column, so comparing it against a local-midnight
+    // instant would let Postgres truncate the bound to a UTC date and shift
+    // it by the UTC offset. A UTC-midnight calendar boundary keeps the
+    // cutoff exact regardless of timezone — the same convention the leads
+    // list uses for its TRAVEL_DATE filter.
     const todayParts = new Intl.DateTimeFormat('en-CA', {
       timeZone: timezone,
       year: 'numeric',
@@ -172,38 +175,16 @@ export const dashboardService = {
       day: '2-digit',
     }).formatToParts(new Date());
     const parts = Object.fromEntries(todayParts.map((part) => [part.type, part.value]));
-    let from = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
-    let to = new Date(from.getTime() + Number(input.days) * 86_400_000);
-    if (input.from || input.to) {
-      if (!input.from || !input.to)
-        throw new ValidationError('A custom range needs both a from and a to date.');
-      if (input.from > input.to)
-        throw new ValidationError('The custom range start must not be after its end.');
-      if (input.to.getTime() - input.from.getTime() > 366 * 86_400_000)
-        throw new ValidationError('A custom range covers at most 366 days.');
-      from = new Date(
-        Date.UTC(input.from.getUTCFullYear(), input.from.getUTCMonth(), input.from.getUTCDate()),
-      );
-      to = new Date(
-        Date.UTC(input.to.getUTCFullYear(), input.to.getUTCMonth(), input.to.getUTCDate() + 1),
-      );
-    }
-    const limit = Math.min(Math.max(input.limit ?? 8, 1), 25);
-    const emptyRange = {
-      range: {
-        from: from.toISOString(),
-        to: to.toISOString(),
-        timezone,
-        days: input.days,
-      },
+    const from = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+    const empty = {
       confirmed: { totalCount: 0, items: [] as never[] },
       others: { totalCount: 0, items: [] as never[] },
     };
     // Like the operations endpoint, lead content is withheld without the lead
     // capability instead of failing the whole request.
-    if (!canViewLeads) return emptyRange;
+    if (!canViewLeads) return empty;
     const base = await queryVisibleWhere(auth, {
-      travelStartDate: { gte: from, lt: to },
+      travelStartDate: { gte: from },
     });
     const select = {
       id: true,
@@ -213,33 +194,28 @@ export const dashboardService = {
       itinerary: { select: { destination: true }, orderBy: { sequence: 'asc' as const }, take: 1 },
     } as const;
     const orderBy = { travelStartDate: 'asc' as const };
-    const [confirmedRows, confirmedTotal, otherRows, otherTotal] = await prisma.$transaction([
+    const [confirmedRows, otherRows] = await prisma.$transaction([
       prisma.query.findMany({
         where: { ...base, leadStage: 'BOOKING_CONFIRMED' },
         select,
         orderBy,
-        take: limit,
       }),
-      prisma.query.count({ where: { ...base, leadStage: 'BOOKING_CONFIRMED' } }),
       prisma.query.findMany({
         where: { ...base, leadStage: { not: 'BOOKING_CONFIRMED' } },
         select,
         orderBy,
-        take: limit,
       }),
-      prisma.query.count({ where: { ...base, leadStage: { not: 'BOOKING_CONFIRMED' } } }),
     ]);
     const present = (row: (typeof confirmedRows)[number]) => ({
       id: row.id,
       customerName: row.customerName,
       travelDate: (row.travelStartDate as Date).toISOString(),
-      city: row.itinerary[0]?.destination.trim() || '—',
+      destination: row.itinerary[0]?.destination.trim() || '—',
       leadStage: row.leadStage,
     });
     return {
-      range: { from: from.toISOString(), to: to.toISOString(), timezone, days: input.days },
-      confirmed: { totalCount: confirmedTotal, items: confirmedRows.map(present) },
-      others: { totalCount: otherTotal, items: otherRows.map(present) },
+      confirmed: { totalCount: confirmedRows.length, items: confirmedRows.map(present) },
+      others: { totalCount: otherRows.length, items: otherRows.map(present) },
     };
   },
 

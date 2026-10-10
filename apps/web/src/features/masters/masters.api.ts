@@ -106,6 +106,8 @@ export interface Destination extends MasterVisibilityMeta {
   countryName: string;
   name: string;
   privateName: string | null;
+  /** Optional vendor contact used by itinerary emails; null when unconfigured. */
+  email: string | null;
   destinationType: string;
   status: string;
   inclusions: string | null;

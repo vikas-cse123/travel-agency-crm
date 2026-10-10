@@ -76,16 +76,27 @@ const quotationAmountFor = (lead: Lead): string => {
 
 /**
  * Quotation margin for the Margin column: the latest quotation's stored
- * margin, shown whenever a margin value exists (including when the recorded
- * net cost is zero — margin is then final minus zero, per the authoritative
- * pricing calculation). Returns '' only when no margin is stored, so the cell
- * uses the existing empty-state behavior instead of an invented value.
+ * margin. A stored margin that merely echoes the final amount means no
+ * margin was ever recorded — the pricing engine persists final-minus-zero
+ * when no costs exist — so the cell keeps the empty-state dash instead of
+ * presenting the amount as a margin. A genuinely recorded margin always
+ * differs from the final amount (or the final amount is absent), and is
+ * shown as stored. Returns '' when the cell should fall through to the
+ * existing empty-state behavior.
  */
 const quotationMarginFor = (lead: Lead): string => {
   const summary = lead.quotationSummary;
   const margin = summary?.marginAmount;
   const currency = summary?.currency ?? lead.currency;
   if (!summary || margin === null || margin === undefined || margin === '') return '';
+  const final = summary?.latestVersionAmount;
+  if (
+    final !== null &&
+    final !== undefined &&
+    final !== '' &&
+    Number(margin) === Number(final)
+  )
+    return '';
   const formatted = formatCurrency(margin, currency);
   return formatted === '' ? '' : formatted;
 };

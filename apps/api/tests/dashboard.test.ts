@@ -277,16 +277,17 @@ describe('Upcoming travel widgets', () => {
     id: string;
     customerName: string;
     travelDate: string;
-    city: string;
+    destination: string;
     leadStage: string;
   };
   type WidgetSection = { totalCount: number; items: TravelRow[] };
 
-  const travelOf = async (client: Client, query = 'days=30') => {
-    const res = await client.get(`/api/dashboard/upcoming-travel?${query}`);
+  const travelOf = async (client: Client, query = '') => {
+    const res = await client.get(
+      `/api/dashboard/upcoming-travel${query ? `?${query}` : ''}`,
+    );
     expect(res.status).toBe(200);
     return res.body.data as {
-      range: { from: string; to: string; timezone: string; days: string };
       confirmed: WidgetSection;
       others: WidgetSection;
     };
@@ -307,7 +308,7 @@ describe('Upcoming travel widgets', () => {
     const data = await travelOf(client);
     expect(data.confirmed.totalCount).toBe(1);
     expect(data.confirmed.items).toMatchObject([
-      { customerName: 'Aarav Mehta', city: 'Goa', leadStage: 'BOOKING_CONFIRMED' },
+      { customerName: 'Aarav Mehta', destination: 'Goa', leadStage: 'BOOKING_CONFIRMED' },
     ]);
     expect(data.others.totalCount).toBe(0);
     expect(data.others.items).toEqual([]);
@@ -383,7 +384,7 @@ describe('Upcoming travel widgets', () => {
     expect(data.others.totalCount).toBe(0);
   });
 
-  it('uses the first itinerary stop as the city', async () => {
+  it('uses the first itinerary stop as the destination', async () => {
     const client = await owner();
     const lead = await seedLead(client, {
       travelStartDate: soon(10),
@@ -394,12 +395,34 @@ describe('Upcoming travel widgets', () => {
     });
     await setStage(lead.id, 'BOOKING_CONFIRMED');
     const data = await travelOf(client);
-    expect(data.confirmed.items).toMatchObject([{ city: 'Goa' }]);
+    expect(data.confirmed.items).toMatchObject([{ destination: 'Goa' }]);
   });
 
-  it('enforces date-range boundaries on the company-local window', async () => {
+  it('passes multi-word destination names through and shows — without stops', async () => {
     const client = await owner();
-    // Fix the company timezone so boundaries are deterministic.
+    const cruise = await seedLead(client, {
+      customerName: 'Cruise Traveller',
+      travelStartDate: soon(10),
+      itinerary: [{ country: 'Singapore', destination: 'Singapore Cruise', nights: 5, sequence: 1 }],
+    });
+    await setStage(cruise.id, 'BOOKING_CONFIRMED');
+    const bare = await seedLead(client, {
+      customerName: 'Bare Traveller',
+      travelStartDate: soon(10),
+      itinerary: [],
+    });
+    await setStage(bare.id, 'BOOKING_CONFIRMED');
+    const data = await travelOf(client);
+    expect(data.confirmed.items.map((row) => row.destination).sort()).toEqual([
+      'Singapore Cruise',
+      '—',
+    ]);
+    expect(data.confirmed.totalCount).toBe(2);
+  });
+
+  it('includes every future travel date with no 30-day cutoff', async () => {
+    const client = await owner();
+    // Fix the company timezone so the today boundary is deterministic.
     const company = await db.company.findFirstOrThrow({ select: { id: true } });
     await db.company.update({ where: { id: company.id }, data: { timezone: 'Asia/Kolkata' } });
     const kolkataToday = new Date(
@@ -422,51 +445,51 @@ describe('Upcoming travel widgets', () => {
         return lead;
       });
     await mk('Today Traveller', day(0));
-    await mk('Week Traveller', day(6));
-    await mk('Boundary Traveller', day(7));
+    await mk('Month Traveller', day(45));
+    await mk('Far Traveller', day(200));
     await mk('Past Traveller', day(-1));
-    const data = await travelOf(client, 'days=7');
-    expect(data.range.days).toBe('7');
+    const data = await travelOf(client);
     const names = data.confirmed.items.map((row) => row.customerName);
     expect(names).toContain('Today Traveller');
-    expect(names).toContain('Week Traveller');
-    expect(names).not.toContain('Boundary Traveller');
+    expect(names).toContain('Month Traveller');
+    expect(names).toContain('Far Traveller');
     expect(names).not.toContain('Past Traveller');
-    expect(data.confirmed.totalCount).toBe(2);
+    expect(data.confirmed.totalCount).toBe(3);
+    expect(data.confirmed.items).toHaveLength(3);
   });
 
-  it('supports custom ranges and rejects invalid ones', async () => {
+  it('ignores legacy window params instead of windowing or failing', async () => {
     const client = await owner();
     const lead = await seedLead(client, {
       travelStartDate: soon(40),
       itinerary: [{ country: 'India', destination: 'Goa', nights: 2, sequence: 1 }],
     });
     await setStage(lead.id, 'BOOKING_CONFIRMED');
-    expect((await travelOf(client, 'days=30')).confirmed.totalCount).toBe(0);
-    const from = soon(30);
-    const to = soon(60);
-    const custom = await travelOf(client, `from=${from}&to=${to}`);
+    // Previously windowed out; now included even with the legacy params.
+    expect((await travelOf(client, 'days=30')).confirmed.totalCount).toBe(1);
+    const custom = await travelOf(client, `from=${soon(30)}&to=${soon(60)}`);
     expect(custom.confirmed.totalCount).toBe(1);
-    expect(
-      (await client.get('/api/dashboard/upcoming-travel?from=2026-06-30&to=2026-06-01')).status,
-    ).toBe(400);
-    expect((await client.get('/api/dashboard/upcoming-travel?from=2026-06-01')).status).toBe(400);
+    // Previously rejected ranges are simply accepted (params are ignored).
+    expect((await client.get('/api/dashboard/upcoming-travel?from=2026-06-30&to=2026-06-01')).status)
+      .toBe(200);
+    expect((await client.get('/api/dashboard/upcoming-travel?from=2026-06-01')).status).toBe(200);
   });
 
-  it('limits preview rows while reporting full counts', async () => {
+  it('returns every matching row with counts reflecting the full set', async () => {
     const client = await owner();
-    for (let index = 0; index < 3; index += 1) {
+    // Beyond both the old default preview (8) and the old maximum (25).
+    for (let index = 0; index < 30; index += 1) {
       const lead = await seedLead(client, {
         customerName: `Group Traveller ${index}`,
         phone: `+91 90000 2000${index}`,
-        travelStartDate: soon(10),
+        travelStartDate: soon(10 + (index % 200)),
         itinerary: [{ country: 'India', destination: 'Goa', nights: 2, sequence: 1 }],
       });
       await setStage(lead.id, 'BOOKING_CONFIRMED');
     }
     const data = await travelOf(client, 'days=30&limit=2');
-    expect(data.confirmed.totalCount).toBe(3);
-    expect(data.confirmed.items).toHaveLength(2);
+    expect(data.confirmed.totalCount).toBe(30);
+    expect(data.confirmed.items).toHaveLength(30);
   });
 
   it('isolates tenants and respects assignment visibility', async () => {

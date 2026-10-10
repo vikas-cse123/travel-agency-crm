@@ -37,6 +37,13 @@ const destinationBaseSchema = z.object({
   // never matched, resolved, or rendered in quotation flows.
   // (Inline max() because the shared optionalText helper is declared below.)
   privateName: z.string().trim().max(200).nullable().optional(),
+  // Optional vendor contact used by itinerary emails. Blank (including
+  // whitespace-only) stays null; non-blank values must be a valid email
+  // address.
+  email: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? '' : value),
+    z.string().trim().max(255).email().nullable().optional().or(z.literal('')),
+  ),
   destinationType: z.enum(DESTINATION_TYPES),
   cityIds: z.array(z.string().uuid()).min(1, 'Select at least one city.').max(100),
   inclusions: optionalRichText,
