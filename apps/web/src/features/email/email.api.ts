@@ -3,7 +3,16 @@ import type { EmailSendInput, EmailSettingsInput } from '@interscale/shared';
 import { apiClient } from '@/api/client';
 
 export type EmailProviderValue =
-  'CUSTOM_SMTP' | 'GMAIL_SMTP' | 'MICROSOFT_365_SMTP' | 'AMAZON_SES_SMTP' | 'OTHER_SMTP';
+  | 'CUSTOM_SMTP'
+  | 'HOSTINGER_SMTP'
+  | 'GODADDY_M365_SMTP'
+  | 'GODADDY_WORKSPACE_SMTP'
+  | 'GMAIL_SMTP'
+  | 'MICROSOFT_365_SMTP'
+  | 'ZOHO_SMTP'
+  | 'AMAZON_SES_SMTP'
+  | 'CLOUDFLARE_EMAIL'
+  | 'OTHER_SMTP';
 
 export interface EmailConfiguration {
   id: string;
@@ -53,6 +62,26 @@ export function useEmailSettings() {
   return useQuery({
     queryKey: keys.settings,
     queryFn: ({ signal }) => apiClient.get<EmailConfiguration>('/email-settings', signal),
+    retry: false,
+  });
+}
+
+/**
+ * Sender-visible sending status for the /emails banner and Send gating.
+ * Tri-state by design: `connected: true` (account ready), `false`
+ * (definitively unconfigured), or query error/loading (unknown — never
+ * misreported as unconnected).
+ */
+export interface EmailSendingStatus {
+  connected: boolean;
+  fromName: string | null;
+  fromEmail: string | null;
+}
+
+export function useEmailSendingStatus() {
+  return useQuery({
+    queryKey: [...keys.settings, 'status'],
+    queryFn: ({ signal }) => apiClient.get<EmailSendingStatus>('/email-settings/status', signal),
     retry: false,
   });
 }

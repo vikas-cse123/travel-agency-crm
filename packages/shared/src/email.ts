@@ -8,9 +8,14 @@ import { z } from 'zod';
 
 export const EMAIL_PROVIDERS = [
   'CUSTOM_SMTP',
+  'HOSTINGER_SMTP',
+  'GODADDY_M365_SMTP',
+  'GODADDY_WORKSPACE_SMTP',
   'GMAIL_SMTP',
   'MICROSOFT_365_SMTP',
+  'ZOHO_SMTP',
   'AMAZON_SES_SMTP',
+  'CLOUDFLARE_EMAIL',
   'OTHER_SMTP',
 ] as const;
 export type EmailProviderValue = (typeof EMAIL_PROVIDERS)[number];

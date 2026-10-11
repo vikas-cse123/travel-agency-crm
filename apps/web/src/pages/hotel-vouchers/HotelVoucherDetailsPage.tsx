@@ -60,7 +60,7 @@ export function HotelVoucherDetailsPage() {
               id: 'legacy-room',
               roomType: value.roomTypeName,
               rooms: value.rooms,
-              notes: null,
+              extraBedQuantity: 0,
             },
           ]
         : [];
@@ -262,7 +262,7 @@ export function HotelVoucherDetailsPage() {
                   <th className="px-2 py-1 font-medium">#</th>
                   <th className="px-2 py-1 font-medium">Room Type</th>
                   <th className="px-2 py-1 font-medium">Rooms</th>
-                  <th className="px-2 py-1 font-medium">Remark</th>
+                  <th className="px-2 py-1 font-medium">Extra Bed</th>
                 </tr>
               </thead>
               <tbody>
@@ -271,7 +271,7 @@ export function HotelVoucherDetailsPage() {
                     <td className="px-2 py-1 text-muted-foreground">{index + 1}</td>
                     <td className="px-2 py-1">{row.roomType}</td>
                     <td className="px-2 py-1">{row.rooms}</td>
-                    <td className="px-2 py-1">{row.notes?.trim() ? row.notes : '—'}</td>
+                    <td className="px-2 py-1">{row.extraBedQuantity ?? 0}</td>
                   </tr>
                 ))}
               </tbody>

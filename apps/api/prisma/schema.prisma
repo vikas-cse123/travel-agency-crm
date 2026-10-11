@@ -341,9 +341,14 @@ enum DocumentStatus {
 /// provider; no OAuth). One row per company.
 enum EmailProvider {
   CUSTOM_SMTP
+  HOSTINGER_SMTP
+  GODADDY_M365_SMTP
+  GODADDY_WORKSPACE_SMTP
   GMAIL_SMTP
   MICROSOFT_365_SMTP
+  ZOHO_SMTP
   AMAZON_SES_SMTP
+  CLOUDFLARE_EMAIL
   OTHER_SMTP
 }
 
@@ -5508,6 +5513,9 @@ model HotelVoucherStayRoom {
   sequence                Int     @default(0)
   roomType                String  @db.VarChar(160)
   rooms                   Int     @default(1)
+  extraBedQuantity        Int?
+  /// Retained for backward compatibility with vouchers saved before room
+  /// remarks left the voucher workflow. No longer written or read.
   notes                   String? @db.VarChar(2000)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt

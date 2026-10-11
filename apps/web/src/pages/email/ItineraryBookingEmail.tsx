@@ -5,6 +5,7 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import { useDestinations, type Destination } from '@/features/masters/masters.api';
 import {
   useQuotation,
+  useQuotationAction,
   type Quotation,
   type QuotationVersion,
   type SightseeingDay,
@@ -158,8 +159,10 @@ export function buildItinerarySubject(input: {
  * shared generator (no destination filtering, no email-specific format), so
  * both channels always carry the same wording, sections, dates, hotels,
  * sightseeing, and services. Optional flight/cruise/vehicle sections stay
- * off (the WhatsApp default); no weblink is provisioned here, so that
- * conditional section is omitted exactly as in a link-less WhatsApp share.
+ * off (the WhatsApp default). The Weblink section appears whenever the
+ * caller provisions a URL (same `weblinkUrl` input as the WhatsApp share,
+ * rendered as a clickable anchor by the shared converter); without one the
+ * section is omitted exactly as in a link-less WhatsApp share.
  * The shared display wrapper is omitted: the composer editor edge-trims it
  * as a blank block (it contains `<br>` spacers), which would wipe the draft.
  */
@@ -168,11 +171,12 @@ export function buildItineraryEmailBody(input: {
   version: QuotationVersion;
   companyName?: string | null;
   preparedByName?: string | null;
+  weblinkUrl?: string | null;
 }): string {
   const markdown = buildWhatsAppSummary({
     quotation: input.quotation,
     version: input.version,
-    weblinkUrl: null,
+    weblinkUrl: input.weblinkUrl ?? null,
     companyName: (input.companyName ?? '').trim() || 'Travel Agency CRM',
     preparedByName: (input.preparedByName ?? '').trim() || null,
     options: { includeFlights: false, includeCruises: false, includeVehicles: false },
@@ -210,6 +214,34 @@ export function ItineraryEmailFlow({
   const version = useMemo(() => applicableVersion(quotation), [quotation]);
   const options = useMemo(() => itineraryDestinationOptions(version), [version]);
   const selectedOption = options.find((row) => normalizePlaceName(row.name) === destinationKey) ?? null;
+
+  // Provision the public weblink for the applicable version — the same URL
+  // source as the WhatsApp share — so the email carries the identical
+  // "Click on Weblink for Pricing & more details:" section. The action is
+  // idempotent. Guarded on the version id so a cached link never points at
+  // an older version; a missing/failed link simply omits the section.
+  const [publicLinkUrl, setPublicLinkUrl] = useState<string | null>(null);
+  const [publicLinkVersionId, setPublicLinkVersionId] = useState<string | null>(null);
+  const quotationAction = useQuotationAction(quotationId ?? '');
+  useEffect(() => {
+    if (!quotation || !version) return;
+    if (publicLinkVersionId === version.id && publicLinkUrl) return;
+    setPublicLinkUrl(null);
+    setPublicLinkVersionId(null);
+    quotationAction.mutate(
+      { path: 'public-link', body: { quotationVersionId: version.id } },
+      {
+        onSuccess: (result) => {
+          const url = (result as { url?: string }).url ?? null;
+          if (url) {
+            setPublicLinkUrl(url);
+            setPublicLinkVersionId(version.id);
+          }
+        },
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotation, version, publicLinkVersionId, publicLinkUrl]);
 
   // Email identity for the shared WhatsApp template (same precedence as the
   // quotation share dialog): stored preparer first, signed-in user last.
@@ -270,6 +302,8 @@ export function ItineraryEmailFlow({
     autoAppliedForRef.current = null;
     setQuotationId(id);
     setDestinationKey(null);
+    setPublicLinkUrl(null);
+    setPublicLinkVersionId(null);
     onClear();
   };
 
@@ -295,6 +329,7 @@ export function ItineraryEmailFlow({
             destination: selectedOption.name,
             email: masterEmail,
             version,
+            weblink: publicLinkUrl,
             guest: quotation
               ? [
                   quotation.customerName,
@@ -307,7 +342,7 @@ export function ItineraryEmailFlow({
             preparedBy: preparedByName,
           })
         : null,
-    [selectedOption, masterEmail, version, quotation, preparedByName],
+    [selectedOption, masterEmail, version, publicLinkUrl, quotation, preparedByName],
   );
   const lastApplied = useRef<{ quotationId: string | null; key: string | null }>({
     quotationId: null,
@@ -330,6 +365,7 @@ export function ItineraryEmailFlow({
         version,
         companyName,
         preparedByName,
+        weblinkUrl: publicLinkUrl,
       }),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

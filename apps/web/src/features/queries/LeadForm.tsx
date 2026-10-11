@@ -119,6 +119,16 @@ function travelMonthYearDefaults(lead?: Lead): { travelMonth: string; travelYear
   return { travelMonth: '', travelYear: '' };
 }
 
+type TravelTimingMode = 'exact' | 'month';
+/** Initial Travel Timing mode from saved data: a complete month/year pair
+ * selects Month mode, anything else (exact date, neither, or legacy records)
+ * selects Exact Date mode. A record carrying both representations opens in
+ * Month mode; saving then keeps only the month/year representation so no
+ * conflicting values are ever submitted. */
+function travelTimingModeFor(lead?: Lead): TravelTimingMode {
+  return lead?.travelMonth != null && lead?.travelYear != null ? 'month' : 'exact';
+}
+
 /**
  * Dropdown-only helper label for the Lead Itinerary destination selector.
  * Unselected options show "Destination Name — Private Name" so staff can
@@ -376,6 +386,18 @@ export function LeadForm({
     formState: { isDirty },
   } = useForm<FormValues>({ defaultValues: defaults(lead) });
   useEffect(() => reset(defaults(lead)), [lead, reset]);
+  // Travel Timing mode follows the loaded record: exact date and month/year
+  // are mutually exclusive, so the mode tracks whichever representation the
+  // saved data carries. Keyed on the lead id so background refetches (same
+  // id, new object identity) never yank a mode the user just picked.
+  const [travelTiming, setTravelTiming] = useState<TravelTimingMode>(() =>
+    travelTimingModeFor(lead),
+  );
+  const leadIdentity = lead?.id ?? null;
+  useEffect(() => {
+    setTravelTiming(travelTimingModeFor(lead));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadIdentity]);
   useEffect(() => {
     if (!requestedCustomer.data || lead) return;
     setValue('customerId', requestedCustomer.data.id);
@@ -412,6 +434,7 @@ export function LeadForm({
     if (autofilledIdRef.current === found.id) return;
     autofilledIdRef.current = found.id;
     reset(defaults(found));
+    setTravelTiming(travelTimingModeFor(found));
   }, [searchedLead.data, lead, reset]);
   const countryOptions = useMemo(
     () => countries.map((country) => country.name.common).sort((a, b) => a.localeCompare(b)),
@@ -473,6 +496,19 @@ export function LeadForm({
   ]
     .filter(Boolean)
     .join(', ');
+  /**
+   * Switch the Travel Timing mode, clearing the representation being left
+   * behind so hidden fields can never stay populated and be submitted.
+   */
+  const selectTravelTiming = (mode: TravelTimingMode) => {
+    setTravelTiming(mode);
+    if (mode === 'exact') {
+      setValue('travelMonth', '', { shouldDirty: true });
+      setValue('travelYear', '', { shouldDirty: true });
+    } else {
+      setValue('travelStartDate', '', { shouldDirty: true });
+    }
+  };
   const submit = (v: FormValues) => {
     const itinerary = v.itinerary
       .filter((r) => r.country.trim() && r.destination.trim())
@@ -488,14 +524,20 @@ export function LeadForm({
       setLocalError('Please fix the following errors: Assign To is required.');
       return;
     }
-    // Travel Date and Travel Month are independent optional fields. An
-    // incomplete month/year pair (only one side selected) is treated as empty
-    // so an invalid combination is never saved; the backend pair rule agrees.
-    const monthSelected = v.travelMonth ? Number(v.travelMonth) : null;
-    const yearSelected = v.travelYear ? Number(v.travelYear) : null;
+    // Travel Timing is mutually exclusive: only the active mode's
+    // representation is submitted. The inactive side is always nulled so a
+    // hidden field can never leak a stale conflicting value. An incomplete
+    // month/year pair (only one side selected) is treated as empty so an
+    // invalid combination is never saved; the backend pair rule agrees.
+    // Never invent a day from month/year.
+    const monthSelected =
+      travelTiming === 'month' && v.travelMonth ? Number(v.travelMonth) : null;
+    const yearSelected =
+      travelTiming === 'month' && v.travelYear ? Number(v.travelYear) : null;
     const travelMonth = monthSelected != null && yearSelected != null ? monthSelected : null;
     const travelYear = monthSelected != null && yearSelected != null ? yearSelected : null;
-    const travelStartDate = v.travelStartDate ? new Date(v.travelStartDate) : null;
+    const travelStartDate =
+      travelTiming === 'exact' && v.travelStartDate ? new Date(v.travelStartDate) : null;
     if (v.services.length === 0) {
       setLocalError('Please fix the following errors: Select at least one service required.');
       return;
@@ -708,34 +750,79 @@ export function LeadForm({
         </Section>
         <Section title="Travel Details" tone="teal">
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Travel Date">
-              <input
-                aria-label="Travel Date"
-                type="date"
-                className={inputClass}
-                {...register('travelStartDate')}
-              />
-            </Field>
-            <Field label="Travel Month">
-              <div className="grid grid-cols-2 gap-2">
-                <select aria-label="Travel month" className={inputClass} {...register('travelMonth')}>
-                  <option value="">Month</option>
-                  {TRAVEL_MONTH_NAMES.map((month, index) => (
-                    <option key={month} value={index + 1}>
-                      {month}
-                    </option>
+            <div className="md:col-span-2">
+              <fieldset>
+                <legend className="text-sm font-medium text-slate-700">Travel Timing</legend>
+                <div
+                  role="radiogroup"
+                  aria-label="Travel Timing"
+                  className="mt-1 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1"
+                >
+                  {(
+                    [
+                      { value: 'exact', label: 'Exact Date' },
+                      { value: 'month', label: 'Month' },
+                    ] as const
+                  ).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={travelTiming === option.value}
+                      onClick={() => selectTravelTiming(option.value)}
+                      className={
+                        travelTiming === option.value
+                          ? 'rounded-md bg-card px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm'
+                          : 'rounded-md px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-700'
+                      }
+                    >
+                      {option.label}
+                    </button>
                   ))}
-                </select>
-                <select aria-label="Travel year" className={inputClass} {...register('travelYear')}>
-                  <option value="">Year</option>
-                  {travelYearOptions().map((year) => (
-                    <option key={year} value={year}>
-                      {year}
-                    </option>
-                  ))}
-                </select>
+                </div>
+              </fieldset>
+            </div>
+            {travelTiming === 'exact' ? (
+              <Field label="Travel Date">
+                <input
+                  aria-label="Travel Date"
+                  type="date"
+                  className={inputClass}
+                  {...register('travelStartDate')}
+                />
+              </Field>
+            ) : (
+              <div className="md:col-span-2">
+                <Field label="Travel Month">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <select
+                      aria-label="Travel month"
+                      className={inputClass}
+                      {...register('travelMonth')}
+                    >
+                      <option value="">Month</option>
+                      {TRAVEL_MONTH_NAMES.map((month, index) => (
+                        <option key={month} value={index + 1}>
+                          {month}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label="Travel year"
+                      className={inputClass}
+                      {...register('travelYear')}
+                    >
+                      <option value="">Year</option>
+                      {travelYearOptions().map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </Field>
               </div>
-            </Field>
+            )}
             <Field label="Departure country">
               <select
                 className={inputClass}

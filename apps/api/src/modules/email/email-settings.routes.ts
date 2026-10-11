@@ -11,6 +11,11 @@ const router = Router();
 router.use(requireAuth, requireVerifiedEmail);
 
 router.get('/', requirePermission(PERMISSIONS.EMAILS_MANAGE_SETTINGS), asyncHandler(c.settings));
+router.get(
+  '/status',
+  requirePermission(PERMISSIONS.EMAILS_VIEW),
+  asyncHandler(c.sendingStatus),
+);
 router.put(
   '/',
   requirePermission(PERMISSIONS.EMAILS_MANAGE_SETTINGS),

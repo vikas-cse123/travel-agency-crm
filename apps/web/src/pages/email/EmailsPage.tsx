@@ -10,7 +10,7 @@ import { RichTextEditor } from '@/components/ui/RichTextEditor';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { ApiError } from '@/api/client';
 import { formatDateTime12Hour } from '@/utils/dateTime';
-import { useEmail, useEmails, useSendEmail, type EmailLogRow } from '@/features/email/email.api';
+import { useEmail, useEmails, useEmailSendingStatus, useSendEmail, type EmailLogRow } from '@/features/email/email.api';
 import {
   EmailPurposeSelector,
   HotelEmailFlow,
@@ -73,6 +73,8 @@ export function EmailsPage() {
           </Link>
         }
       />
+
+      <SendingStatusBanner />
 
       {canSend && <Composer />}
 
@@ -190,6 +192,58 @@ export function EmailsPage() {
   );
 }
 
+/**
+ * Sending-account status for the top of /emails. SMTP management lives only
+ * on /settings/email — this banner only reports which account mail goes out
+ * from (or that none is configured), linking there for setup.
+ *
+ * Tri-state on purpose: a failed status request renders a neutral note and
+ * never claims "not connected", and the composer only blocks sending on a
+ * definitive unconfigured response.
+ */
+function SendingStatusBanner() {
+  const status = useEmailSendingStatus();
+
+  if (status.isLoading) {
+    return <p className="text-sm text-muted-foreground">Checking email connection…</p>;
+  }
+  const connected =
+    typeof status.data?.connected === 'boolean' ? status.data.connected : null;
+  if (connected === null || status.isError) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Could not verify the email connection status.
+      </p>
+    );
+  }
+  if (connected) {
+    const fromEmail = status.data?.fromEmail ?? '';
+    const fromName = status.data?.fromName?.trim() ?? '';
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        <span>
+          Sending from: {fromName ? `${fromName} <${fromEmail}>` : fromEmail}
+        </span>
+      </p>
+    );
+  }
+  return (
+    <div
+      role="alert"
+      className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+    >
+      <p className="font-medium">Email is not connected.</p>
+      <p className="mt-1">
+        Configure a sending account to enable sending.{' '}
+        <Link className="font-medium underline" to="/settings/email">
+          Go to Email Settings
+        </Link>
+      </p>
+    </div>
+  );
+}
+
 function EmailDetails({ id }: { id: string }) {
   const details = useEmail(id);
   if (details.isLoading) {
@@ -254,6 +308,7 @@ function EmailDetails({ id }: { id: string }) {
 
 function Composer() {
   const send = useSendEmail();
+  const sendingStatus = useEmailSendingStatus();
   const [purpose, setPurpose] = useState<EmailPurpose>('hotel');
   // Remounting the hotel flow (via flowKey) resets its quotation/hotel
   // selection, e.g. after a successful send or Cancel.
@@ -307,8 +362,16 @@ function Composer() {
 
   const toList = parseAddresses(to);
   const plainBody = stripHtml(bodyHtml);
+  // Sending stays available while the connection status is unknown (loading
+  // or failed check) — only a definitive "not connected" response disables
+  // it, matching the banner above.
+  const sendingReady = sendingStatus.data?.connected !== false;
   const canSubmit =
-    toList.length > 0 && subject.trim().length > 0 && plainBody.length > 0 && !send.isPending;
+    toList.length > 0 &&
+    subject.trim().length > 0 &&
+    plainBody.length > 0 &&
+    sendingReady &&
+    !send.isPending;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -386,7 +449,11 @@ function Composer() {
             <input
               aria-label="Email recipients"
               className={inputClass}
-              placeholder="hotel@example.com, manager@example.com"
+              placeholder={
+                purpose === 'itinerary'
+                  ? 'Recipient email address'
+                  : 'hotel@example.com, manager@example.com'
+              }
               value={to}
               onChange={(event) => setTo(event.target.value)}
             />

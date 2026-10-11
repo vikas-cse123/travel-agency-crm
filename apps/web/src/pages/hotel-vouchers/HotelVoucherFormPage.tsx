@@ -492,7 +492,7 @@ export function HotelVoucherFormPage() {
             return {
               roomType: textOf(record, 'roomType') ?? option.roomType ?? '',
               rooms: countOf(record, 'rooms', 1) ?? 1,
-              notes: textOf(record, 'notes'),
+              extraBedQuantity: countOf(record, 'extraBedQuantity') ?? 0,
             };
           })
         : option.roomType
@@ -500,7 +500,7 @@ export function HotelVoucherFormPage() {
               {
                 roomType: option.roomType,
                 rooms: option.rooms ?? 1,
-                notes: null,
+                extraBedQuantity: 0,
               },
             ]
           : []
@@ -652,7 +652,7 @@ export function HotelVoucherFormPage() {
     const savedStayRooms = (value.stayRooms ?? []).map((row) => ({
       roomType: row.roomType,
       rooms: row.rooms,
-      notes: row.notes ?? null,
+      extraBedQuantity: row.extraBedQuantity ?? 0,
     }));
     const savedStayMeals = (value.stayMeals ?? []).map((row) => ({
       mealPlan: row.mealPlan,
@@ -1135,7 +1135,7 @@ export function HotelVoucherFormPage() {
                   stayRoomRows.append({
                     roomType: '',
                     rooms: 1,
-                    notes: null,
+                    extraBedQuantity: 0,
                   })
                 }
               >
@@ -1150,7 +1150,7 @@ export function HotelVoucherFormPage() {
                   <th className="w-10 px-2 py-2 font-medium">#</th>
                   <th className="min-w-40 px-2 py-2 font-medium">Room Type</th>
                   <th className="w-20 px-2 py-2 text-right font-medium">Rooms</th>
-                  <th className="min-w-40 px-2 py-2 font-medium">Remark</th>
+                  <th className="w-24 px-2 py-2 text-right font-medium">Extra Bed</th>
                   <th className="w-16 px-2 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
@@ -1181,11 +1181,19 @@ export function HotelVoucherFormPage() {
                     </td>
                     <td className="px-2 py-2">
                       <input
-                        aria-label={`Stay room ${index + 1} remark`}
+                        aria-label={`Stay room ${index + 1} extra beds`}
+                        type="number"
+                        min={0}
                         className={inputClass}
-                        placeholder="e.g. high floor"
-                        {...register(`stayRooms.${index}.notes`)}
+                        {...register(`stayRooms.${index}.extraBedQuantity`, {
+                          valueAsNumber: true,
+                        })}
                       />
+                      {errors.stayRooms?.[index]?.extraBedQuantity?.message && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.stayRooms?.[index]?.extraBedQuantity?.message}
+                        </p>
+                      )}
                     </td>
                     <td className="px-2 py-2">
                       <Button
@@ -1213,7 +1221,7 @@ export function HotelVoucherFormPage() {
                 stayRoomRows.append({
                   roomType: '',
                   rooms: 1,
-                  notes: null,
+                  extraBedQuantity: 0,
                 })
               }
             >

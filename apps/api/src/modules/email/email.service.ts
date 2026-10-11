@@ -199,6 +199,20 @@ export const emailService = {
     return presentSettings(row);
   },
 
+  /**
+   * Sender-readable sending status for the /emails composer banner.
+   * Deliberately narrow: only whether an account exists plus the public
+   * From identity. Never secrets, hosts, ports, or usernames. Gated on
+   * EMAILS_VIEW (not MANAGE_SETTINGS) so senders without settings access
+   * still see which account their mail goes out from.
+   */
+  async sendingStatus(auth: AuthContext) {
+    if (!(await hasPermission(auth, PERMISSIONS.EMAILS_VIEW))) throw new ForbiddenError();
+    const row = await loadConfiguration(auth);
+    if (!row) return { connected: false, fromName: null, fromEmail: null };
+    return { connected: true, fromName: row.fromName, fromEmail: row.fromEmail };
+  },
+
   async saveSettings(auth: AuthContext, input: EmailSettingsInput, context: EmailRequestContext) {
     if (!(await hasPermission(auth, PERMISSIONS.EMAILS_MANAGE_SETTINGS)))
       throw new ForbiddenError();

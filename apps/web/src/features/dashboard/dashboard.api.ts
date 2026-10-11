@@ -77,6 +77,7 @@ export interface DashboardAnalytics {
     acceptedQuotations: number;
     rejectedQuotations: number;
     quotationAcceptanceRate: number;
+    agencyRevenue: string;
   };
   bookings?: {
     totalBookings: number;

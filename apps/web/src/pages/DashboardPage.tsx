@@ -453,7 +453,7 @@ export function DashboardPage() {
             {showFinancials && (
               <KpiCard
                 label="Agency Revenue"
-                value={money(data?.financials?.totalCustomerAmount)}
+                value={money(data?.quotations?.agencyRevenue)}
                 icon={IndianRupee}
                 className="bg-teal-600 text-white"
               />

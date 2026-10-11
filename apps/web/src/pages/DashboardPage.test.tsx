@@ -44,6 +44,7 @@ const analytics = (overrides: Record<string, unknown> = {}) => ({
     acceptedQuotations: 12,
     rejectedQuotations: 8,
     quotationAcceptanceRate: 60,
+    agencyRevenue: '250000.00',
   },
   bookings: {
     totalBookings: 12,
@@ -238,6 +239,8 @@ describe('Phase 16 dashboard page', () => {
     renderDashboard();
     await screen.findByText('Total Leads');
     expect(screen.getByText('Agency Revenue')).toBeInTheDocument();
+    // Agency revenue comes from the quotations metrics, formatted as INR.
+    expect(screen.getByText('₹2,50,000.00')).toBeInTheDocument();
     expect(screen.getAllByText('Net Profit').length).toBeGreaterThan(0);
     expect(screen.getByText('Top Performers — Profit Earned')).toBeInTheDocument();
     expect(screen.getByText('Refunds')).toBeInTheDocument();

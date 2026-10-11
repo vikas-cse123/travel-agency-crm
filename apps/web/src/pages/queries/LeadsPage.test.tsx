@@ -263,15 +263,23 @@ describe('Phase 6 lead pages', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
+    // Travel Timing offers two mutually exclusive modes; Exact Date is default.
+    expect(screen.getByRole('radio', { name: 'Exact Date' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('radio', { name: 'Month' })).toHaveAttribute('aria-checked', 'false');
     // Travel Date (exact date) and Travel Month (month/year only) are separate
     // optional fields; city has no default.
-    expect(screen.getByText('Travel Month')).toBeInTheDocument();
     expect(screen.getByLabelText('Travel Date')).toBeInTheDocument();
     expect(screen.queryByText('Travel Month *')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Travel Date *')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Departure city (Optional)')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    // Switching to Month hides the date picker and shows month/year instead.
+    expect(screen.queryByLabelText('Travel Date')).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
     await userEvent.selectOptions(screen.getByLabelText('Travel year'), year);
     await waitFor(() => {
@@ -293,6 +301,64 @@ describe('Phase 6 lead pages', () => {
       expect(body.travelYear).toBe(Number(year));
       expect(body.travelStartDate).toBeNull();
       expect(body.departureCity).toBeNull();
+    });
+  });
+  it('creates an exact-date lead with month/year hidden and nothing invented', async () => {
+    authState.permissions.delete('queries.assign');
+    const destination = {
+      id: 'dest-1',
+      name: 'Singapore',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-1', sequence: 1, city: { name: 'Singapore' } }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    // Exact Date is the default mode: picker visible, month/year hidden.
+    expect(screen.getByRole('radiogroup', { name: 'Travel Timing' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Exact Date' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByLabelText('Travel Date')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Travel month')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Travel year')).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    fireEvent.change(screen.getByLabelText('Travel Date'), { target: { value: '2026-09-10' } });
+    await waitFor(() => {
+      expect(
+        Array.from(screen.getByLabelText('Destination 1').querySelectorAll('option')).some(
+          (option) => option.textContent === 'Singapore',
+        ),
+      ).toBe(true);
+    });
+    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
+    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
+    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(String(body.travelStartDate)).toContain('2026-09-10');
+      expect(body.travelMonth).toBeNull();
+      expect(body.travelYear).toBeNull();
     });
   });
   it('shows December of the selected year for month/year leads in the list', async () => {
@@ -336,13 +402,18 @@ describe('Phase 6 lead pages', () => {
       { route: `/queries/${legacyLead.id}/edit` },
     );
     await screen.findByRole('heading', { name: 'Edit lead' });
-    // Travel Date loads the stored exact date; month/year stay empty because the
-    // two fields are semantically separate (no derivation).
+    // Exact-date mode is preselected from the saved date; the date picker
+    // shows it while month/year stay hidden (semantically separate fields,
+    // no derivation).
+    expect(screen.getByRole('radio', { name: 'Exact Date' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
     await waitFor(() =>
       expect(screen.getByLabelText('Travel Date') as HTMLInputElement).toHaveValue('2026-08-15'),
     );
-    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('');
-    expect(screen.getByLabelText('Travel year') as HTMLSelectElement).toHaveValue('');
+    expect(screen.queryByLabelText('Travel month')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Travel year')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
@@ -354,7 +425,7 @@ describe('Phase 6 lead pages', () => {
       expect(body.travelYear).toBeNull();
     });
   });
-  it('keeps the exact date when month/year selects are set alongside it', async () => {
+  it('switching to Month mode clears the exact date so both are never submitted', async () => {
     const year = String(new Date().getFullYear());
     const legacyLead = { ...lead, travelMonth: null, travelYear: null };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
@@ -379,11 +450,15 @@ describe('Phase 6 lead pages', () => {
       { route: `/queries/${legacyLead.id}/edit` },
     );
     await screen.findByRole('heading', { name: 'Edit lead' });
-    // Month/year start empty; the exact date input keeps the legacy date.
+    // Exact-date mode is preselected from the saved date.
     await waitFor(() =>
       expect(screen.getByLabelText('Travel Date') as HTMLInputElement).toHaveValue('2026-08-15'),
     );
-    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('');
+    // Switching to Month hides the picker, clears the date, and reveals
+    // month/year instead.
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    expect(screen.queryByLabelText('Travel Date')).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Month' })).toHaveAttribute('aria-checked', 'true');
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
     await userEvent.selectOptions(screen.getByLabelText('Travel year'), year);
     await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
@@ -391,10 +466,97 @@ describe('Phase 6 lead pages', () => {
       const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
       expect(patch).toBeDefined();
       const body = JSON.parse(String(patch![1]!.body));
-      // Both fields coexist; editing month/year never clears the exact date.
-      expect(String(body.travelStartDate)).toContain('2026-08-15');
+      // Only the month representation is submitted — never both.
+      expect(body.travelStartDate).toBeNull();
       expect(body.travelMonth).toBe(12);
       expect(body.travelYear).toBe(Number(year));
+    });
+  });
+  it('switching back to Exact Date mode clears month/year', async () => {
+    const year = String(new Date().getFullYear());
+    const monthLead = { ...lead, travelStartDate: null, travelMonth: 12, travelYear: Number(year) };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${monthLead.id}`)) {
+        if (options?.method === 'PATCH')
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: monthLead }),
+          } as Response;
+        return response(monthLead);
+      }
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${monthLead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Month mode is preselected from the saved pair; the picker stays hidden.
+    expect(screen.getByRole('radio', { name: 'Month' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByLabelText('Travel Date')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('12'),
+    );
+    expect(screen.getByLabelText('Travel year') as HTMLSelectElement).toHaveValue(year);
+    await userEvent.click(screen.getByRole('radio', { name: 'Exact Date' }));
+    expect(screen.queryByLabelText('Travel month')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Travel Date')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Travel Date'), { target: { value: '2026-09-10' } });
+    await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(patch).toBeDefined();
+      const body = JSON.parse(String(patch![1]!.body));
+      // Only the exact date is submitted — month/year cleared, not stale.
+      expect(String(body.travelStartDate)).toContain('2026-09-10');
+      expect(body.travelMonth).toBeNull();
+      expect(body.travelYear).toBeNull();
+    });
+  });
+  it('submits an incomplete month/year pair as empty rather than half a date', async () => {
+    const legacyLead = { ...lead, travelMonth: null, travelYear: null };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${legacyLead.id}`)) {
+        if (options?.method === 'PATCH')
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: legacyLead }),
+          } as Response;
+        return response(legacyLead);
+      }
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${legacyLead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Travel Date') as HTMLInputElement).toHaveValue('2026-08-15'),
+    );
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    // Month without a year: conditional validation treats it as empty.
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
+    await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(patch).toBeDefined();
+      const body = JSON.parse(String(patch![1]!.body));
+      expect(body.travelMonth).toBeNull();
+      expect(body.travelYear).toBeNull();
+      expect(body.travelStartDate).toBeNull();
     });
   });
   it('creates a new lead without adding Visa', async () => {
@@ -425,6 +587,7 @@ describe('Phase 6 lead pages', () => {
     await screen.findByRole('heading', { name: 'Create lead' });
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '9');
     await userEvent.selectOptions(
       screen.getByLabelText('Travel year'),
@@ -2421,6 +2584,7 @@ describe('Admin lead self-assignment (frontend)', () => {
     await userEvent.selectOptions(screen.getByLabelText('Assigned salesperson'), 'me');
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '9');
     await userEvent.selectOptions(
       screen.getByLabelText('Travel year'),

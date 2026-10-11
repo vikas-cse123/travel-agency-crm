@@ -439,9 +439,14 @@ export const dashboardService = {
       orderBy: { status: 'asc' },
     });
     const byStatus = Object.fromEntries(grouped.map((row) => [row.status, countAll(row._count)]));
-    const total = grouped.reduce((sum, row) => sum + countAll(row._count), 0);
     const accepted = byStatus.ACCEPTED ?? 0;
     const rejected = byStatus.REJECTED ?? 0;
+    // Unique quotations: one per lead with at least one visible quotation in
+    // the filtered set — five quotations on one lead count once.
+    const uniqueLeads = await prisma.quotation.groupBy({
+      by: ['queryId'],
+      where,
+    });
     // Quoted value = sum of each visible quotation's current-version finalAmount.
     const currentVersions = await prisma.quotation.findMany({
       where: { ...where, currentVersionId: { not: null } },
@@ -457,12 +462,66 @@ export const dashboardService = {
         })
       : { _sum: { finalAmount: null } };
     return {
-      totalQuotations: total,
+      totalQuotations: uniqueLeads.length,
       acceptedQuotations: accepted,
       rejectedQuotations: rejected,
       totalQuotedValue: money(valueAgg._sum.finalAmount),
       quotationAcceptanceRate: percent(accepted, accepted + rejected),
+      agencyRevenue: await this.agencyRevenue(auth, where),
     };
+  },
+
+  /**
+   * Agency Revenue: the agency's earnings on confirmed business — the sum of
+   * the latest quotation's latest version `marginAmount` (selling minus
+   * recorded line-item costs, per the pricing engine) over every lead whose
+   * CURRENT persisted stage is BOOKING_CONFIRMED.
+   *
+   * Deliberately not the quotation total / selling price (customer money,
+   * mostly passed to vendors), not booking profit figures, and not a margin
+   * percentage: `marginAmount` is the persisted earnings amount. Latest
+   * quotation = newest `createdAt` (the application's quotation ordering);
+   * latest version = highest `versionNumber`. Scoping mirrors
+   * quotationMetrics (company, visibility, caller filters); only the stage
+   * gate is added. Missing versions or null margins contribute nothing, so
+   * the KPI is always a number, never NaN.
+   */
+  async agencyRevenue(
+    auth: AuthContext,
+    quotationWhere: Prisma.QuotationWhereInput,
+  ): Promise<string> {
+    const rows = await prisma.quotation.findMany({
+      where: {
+        ...quotationWhere,
+        // Replaces quotationWhere.query: same company + visibility scoping,
+        // plus the current-stage gate (no history, no booking join).
+        query: {
+          is: {
+            companyId: auth.companyId,
+            ...(await queryVisibility(auth)),
+            leadStage: 'BOOKING_CONFIRMED',
+          },
+        },
+      },
+      select: {
+        queryId: true,
+        versions: {
+          select: { marginAmount: true },
+          orderBy: { versionNumber: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const seen = new Set<string>();
+    let total = new Prisma.Decimal(0);
+    for (const row of rows) {
+      if (seen.has(row.queryId)) continue;
+      seen.add(row.queryId);
+      const margin = row.versions[0]?.marginAmount ?? null;
+      if (margin !== null) total = total.plus(margin);
+    }
+    return money(total.toDecimalPlaces(2));
   },
 
   async bookingMetrics(auth: AuthContext, dateFilter: CreatedFilter, withFinancials: boolean) {

@@ -241,4 +241,101 @@ describe('Email settings page', () => {
     expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue('smtp.example.com');
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
   });
+
+  it('offers documented provider presets without touching the password', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(savedSettings)),
+    );
+    renderPage();
+    await screen.findByDisplayValue('smtp.example.com');
+    const provider = screen.getByLabelText('Email provider') as HTMLSelectElement;
+    for (const label of [
+      'Hostinger',
+      'GoDaddy Microsoft 365',
+      'GoDaddy Workspace Email',
+      'Google Workspace / Gmail',
+      'Microsoft 365',
+      'Zoho Mail',
+      'Amazon SES',
+      'Cloudflare Email Routing',
+    ]) {
+      expect(provider.textContent).toContain(label);
+    }
+
+    await userEvent.selectOptions(provider, 'HOSTINGER_SMTP');
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue(
+      'smtp.hostinger.com',
+    );
+    expect(screen.getByLabelText('SMTP port') as HTMLInputElement).toHaveValue(587);
+    // Switching presets never fills or clears the stored password.
+    expect(screen.getByLabelText('SMTP password') as HTMLInputElement).toHaveValue('');
+    expect(document.body.textContent).not.toContain('s3cret');
+
+    await userEvent.selectOptions(provider, 'GODADDY_WORKSPACE_SMTP');
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue(
+      'smtpout.secureserver.net',
+    );
+    await userEvent.selectOptions(provider, 'GODADDY_M365_SMTP');
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue(
+      'smtp.office365.com',
+    );
+  });
+
+  it('composes the SES host from the selected AWS region', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(savedSettings)),
+    );
+    renderPage();
+    await screen.findByDisplayValue('smtp.example.com');
+    await userEvent.selectOptions(screen.getByLabelText('Email provider'), 'AMAZON_SES_SMTP');
+    // First pick keeps the previously chosen default region visible.
+    expect(screen.getByLabelText('AWS region') as HTMLSelectElement).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('AWS region'), 'eu-west-1');
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue(
+      'email-smtp.eu-west-1.amazonaws.com',
+    );
+  });
+
+  it('restores the saved SES region instead of assuming the default', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response({ ...savedSettings, provider: 'AMAZON_SES_SMTP', smtpHost: 'email-smtp.eu-west-1.amazonaws.com' }),
+      ),
+    );
+    renderPage();
+    await screen.findByDisplayValue('email-smtp.eu-west-1.amazonaws.com');
+    expect(screen.getByLabelText('AWS region') as HTMLSelectElement).toHaveValue('eu-west-1');
+  });
+
+  it('uses the correct Zoho host per account region', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(savedSettings)),
+    );
+    renderPage();
+    await screen.findByDisplayValue('smtp.example.com');
+    await userEvent.selectOptions(screen.getByLabelText('Email provider'), 'ZOHO_SMTP');
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue('smtp.zoho.com');
+    await userEvent.selectOptions(screen.getByLabelText('Zoho region'), 'smtp.zoho.in');
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue('smtp.zoho.in');
+  });
+
+  it('explains Cloudflare has no outbound SMTP and populates nothing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(savedSettings)),
+    );
+    renderPage();
+    await screen.findByDisplayValue('smtp.example.com');
+    await userEvent.selectOptions(screen.getByLabelText('Email provider'), 'CLOUDFLARE_EMAIL');
+    expect(
+      await screen.findByText(/Cloudflare Email Routing only forwards inbound mail/),
+    ).toBeInTheDocument();
+    // No fictional server is invented; the existing host stays editable.
+    expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue('smtp.example.com');
+    expect(screen.getByLabelText('SMTP port') as HTMLInputElement).toHaveValue(587);
+  });
 });

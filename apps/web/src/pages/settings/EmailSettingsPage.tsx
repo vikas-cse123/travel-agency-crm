@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PERMISSIONS, labelForLookup } from '@interscale/shared';
+import { PERMISSIONS } from '@interscale/shared';
 import type { EmailSecurityMode } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { FormField } from '@/components/ui/FormField';
@@ -19,17 +19,92 @@ const inputClass =
 
 const PROVIDERS = [
   'CUSTOM_SMTP',
+  'HOSTINGER_SMTP',
+  'GODADDY_M365_SMTP',
+  'GODADDY_WORKSPACE_SMTP',
   'GMAIL_SMTP',
   'MICROSOFT_365_SMTP',
+  'ZOHO_SMTP',
   'AMAZON_SES_SMTP',
+  'CLOUDFLARE_EMAIL',
   'OTHER_SMTP',
 ] as const;
 
-const PROVIDER_HINTS: Record<string, { host: string; port: number; security: string }> = {
-  GMAIL_SMTP: { host: 'smtp.gmail.com', port: 587, security: 'STARTTLS' },
-  MICROSOFT_365_SMTP: { host: 'smtp.office365.com', port: 587, security: 'STARTTLS' },
-  AMAZON_SES_SMTP: { host: 'email-smtp.ap-south-1.amazonaws.com', port: 587, security: 'STARTTLS' },
+const PROVIDER_LABELS: Record<string, string> = {
+  CUSTOM_SMTP: 'Custom SMTP',
+  HOSTINGER_SMTP: 'Hostinger',
+  GODADDY_M365_SMTP: 'GoDaddy Microsoft 365',
+  GODADDY_WORKSPACE_SMTP: 'GoDaddy Workspace Email',
+  GMAIL_SMTP: 'Google Workspace / Gmail',
+  MICROSOFT_365_SMTP: 'Microsoft 365',
+  ZOHO_SMTP: 'Zoho Mail',
+  AMAZON_SES_SMTP: 'Amazon SES',
+  CLOUDFLARE_EMAIL: 'Cloudflare Email Routing',
+  OTHER_SMTP: 'Other',
 };
+
+const PROVIDER_HINTS: Record<string, { host: string; port: number; security: string; note?: string }> = {
+  HOSTINGER_SMTP: {
+    host: 'smtp.hostinger.com',
+    port: 587,
+    security: 'STARTTLS',
+    note: 'Port 465 with SSL/TLS also works for Hostinger.',
+  },
+  GODADDY_M365_SMTP: { host: 'smtp.office365.com', port: 587, security: 'STARTTLS' },
+  GODADDY_WORKSPACE_SMTP: {
+    host: 'smtpout.secureserver.net',
+    port: 465,
+    security: 'SSL_TLS',
+    note: 'Workspace/cPanel mailboxes only. Port 587 with STARTTLS also works. Microsoft 365 mailboxes from GoDaddy use the GoDaddy Microsoft 365 option instead.',
+  },
+  GMAIL_SMTP: {
+    host: 'smtp.gmail.com',
+    port: 587,
+    security: 'STARTTLS',
+    note: 'Gmail requires an App Password, not the account password.',
+  },
+  MICROSOFT_365_SMTP: { host: 'smtp.office365.com', port: 587, security: 'STARTTLS' },
+};
+
+/** Common Amazon SES SMTP regions. The endpoint always embeds the region —
+ * there is no single universal SES host. */
+const AWS_SES_REGIONS = [
+  'us-east-1',
+  'us-east-2',
+  'us-west-1',
+  'us-west-2',
+  'eu-west-1',
+  'eu-central-1',
+  'eu-north-1',
+  'ap-south-1',
+  'ap-southeast-1',
+  'ap-southeast-2',
+  'ap-northeast-1',
+  'ca-central-1',
+  'sa-east-1',
+] as const;
+const DEFAULT_SES_REGION = 'ap-south-1';
+const sesHostFor = (region: string) => `email-smtp.${region}.amazonaws.com`;
+function parseSesRegion(host: string): string | null {
+  const match = /^email-smtp\.([a-z0-9-]+)\.amazonaws\.com$/i.exec(host.trim());
+  const region = match?.[1]?.toLowerCase() ?? null;
+  return region && (AWS_SES_REGIONS as readonly string[]).includes(region) ? region : null;
+}
+
+/** Zoho Mail uses a different SMTP host per account region. */
+const ZOHO_REGION_HOSTS = [
+  { label: 'United States — smtp.zoho.com', host: 'smtp.zoho.com' },
+  { label: 'Europe — smtp.zoho.eu', host: 'smtp.zoho.eu' },
+  { label: 'India — smtp.zoho.in', host: 'smtp.zoho.in' },
+  { label: 'Australia — smtp.zoho.com.au', host: 'smtp.zoho.com.au' },
+  { label: 'Japan — smtp.zoho.jp', host: 'smtp.zoho.jp' },
+  { label: 'China — smtp.zoho.com.cn', host: 'smtp.zoho.com.cn' },
+] as const;
+const DEFAULT_ZOHO_HOST = 'smtp.zoho.com';
+function parseZohoHost(host: string): string | null {
+  const found = ZOHO_REGION_HOSTS.find((row) => row.host === host.trim().toLowerCase());
+  return found ? found.host : null;
+}
 
 export function EmailSettingsPage() {
   const { hasPermission } = useAuth();
@@ -48,6 +123,8 @@ export function EmailSettingsPage() {
   const [smtpHost, setSmtpHost] = useState('');
   const [smtpPort, setSmtpPort] = useState('587');
   const [security, setSecurity] = useState<string>('STARTTLS');
+  const [awsRegion, setAwsRegion] = useState<string>(DEFAULT_SES_REGION);
+  const [zohoHost, setZohoHost] = useState<string>(DEFAULT_ZOHO_HOST);
   const [smtpUsername, setSmtpUsername] = useState('');
   const [smtpPassword, setSmtpPassword] = useState('');
   const [fromName, setFromName] = useState('');
@@ -67,6 +144,14 @@ export function EmailSettingsPage() {
     setSmtpHost(saved.smtpHost);
     setSmtpPort(String(saved.smtpPort));
     setSecurity(saved.security);
+    // Region selectors reflect the saved host without rewriting it: an
+    // unrecognized host keeps the field value untouched.
+    if (saved.provider === 'AMAZON_SES_SMTP') {
+      setAwsRegion(parseSesRegion(saved.smtpHost) ?? DEFAULT_SES_REGION);
+    }
+    if (saved.provider === 'ZOHO_SMTP') {
+      setZohoHost(parseZohoHost(saved.smtpHost) ?? DEFAULT_ZOHO_HOST);
+    }
     setSmtpUsername(saved.smtpUsername);
     setSmtpPassword('');
     setFromName(saved.fromName);
@@ -80,6 +165,18 @@ export function EmailSettingsPage() {
 
   const applyProviderPreset = (value: string) => {
     setProvider(value);
+    // Cloudflare Email Routing forwards inbound mail and provides no
+    // outbound SMTP mailbox: explain instead of inventing a host, and leave
+    // the host/port/security the user already entered untouched.
+    if (value === 'CLOUDFLARE_EMAIL') return;
+    if (value === 'AMAZON_SES_SMTP') {
+      applySesRegion(awsRegion);
+      return;
+    }
+    if (value === 'ZOHO_SMTP') {
+      applyZohoHost(zohoHost);
+      return;
+    }
     const preset = PROVIDER_HINTS[value];
     if (preset) {
       setSmtpHost(preset.host);
@@ -87,6 +184,22 @@ export function EmailSettingsPage() {
       setSecurity(preset.security);
     }
   };
+
+  const applySesRegion = (region: string) => {
+    setAwsRegion(region);
+    setSmtpHost(sesHostFor(region));
+    setSmtpPort('587');
+    setSecurity('STARTTLS');
+  };
+
+  const applyZohoHost = (host: string) => {
+    setZohoHost(host);
+    setSmtpHost(host);
+    setSmtpPort('587');
+    setSecurity('STARTTLS');
+  };
+
+  const providerNote = PROVIDER_HINTS[provider]?.note ?? null;
 
   const submit = () => {
     setFormError('');
@@ -137,6 +250,8 @@ export function EmailSettingsPage() {
     setSmtpHost('');
     setSmtpPort('587');
     setSecurity('STARTTLS');
+    setAwsRegion(DEFAULT_SES_REGION);
+    setZohoHost(DEFAULT_ZOHO_HOST);
     setSmtpUsername('');
     setSmtpPassword('');
     setFromName('');
@@ -186,7 +301,7 @@ export function EmailSettingsPage() {
             >
               {PROVIDERS.map((option) => (
                 <option key={option} value={option}>
-                  {labelForLookup(option.replace(/_SMTP$/, ''))}
+                  {PROVIDER_LABELS[option] ?? option}
                 </option>
               ))}
             </select>
@@ -204,7 +319,7 @@ export function EmailSettingsPage() {
               <option value="SSL_TLS">SSL (port 465)</option>
             </select>
           </FormField>
-          <FormField label="SMTP Host *">
+          <FormField label="SMTP Host *" hint={providerNote ?? undefined}>
             <input
               aria-label="SMTP host"
               className={inputClass}
@@ -214,6 +329,57 @@ export function EmailSettingsPage() {
               disabled={!canManage}
             />
           </FormField>
+          {provider === 'AMAZON_SES_SMTP' && (
+            <FormField
+              label="AWS Region"
+              hint="The SES SMTP endpoint always embeds the region — pick the one your SES identity is verified in."
+            >
+              <select
+                aria-label="AWS region"
+                className={inputClass}
+                value={awsRegion}
+                onChange={(event) => applySesRegion(event.target.value)}
+                disabled={!canManage}
+              >
+                {AWS_SES_REGIONS.map((region) => (
+                  <option key={region} value={region}>
+                    {region} — {sesHostFor(region)}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+          {provider === 'ZOHO_SMTP' && (
+            <FormField
+              label="Zoho Account Region"
+              hint="Zoho Mail uses a different SMTP host per account region — pick yours."
+            >
+              <select
+                aria-label="Zoho region"
+                className={inputClass}
+                value={zohoHost}
+                onChange={(event) => applyZohoHost(event.target.value)}
+                disabled={!canManage}
+              >
+                {ZOHO_REGION_HOSTS.map((row) => (
+                  <option key={row.host} value={row.host}>
+                    {row.label}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+          {provider === 'CLOUDFLARE_EMAIL' && (
+            <div
+              role="note"
+              className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 md:col-span-2"
+            >
+              Cloudflare Email Routing only forwards inbound mail to another mailbox — it does
+              not provide an outbound SMTP mailbox. Use the host, port, and credentials of the
+              provider that actually sends your mail (for example Gmail, Microsoft 365, or
+              Amazon SES), and keep this selection only as a label.
+            </div>
+          )}
           <FormField label="SMTP Port *">
             <input
               aria-label="SMTP port"

@@ -38,7 +38,7 @@ export interface HotelVoucherStayRoomRow {
   sequence: number;
   roomType: string;
   rooms: number;
-  notes: string | null;
+  extraBedQuantity: number;
 }
 
 export interface HotelVoucherStayMealRow {

@@ -200,6 +200,117 @@ describe('Emails page (standalone)', () => {
   });
 });
 
+describe('Email sending status banner', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set(ALL);
+  });
+
+  function stubWithStatus(status: unknown) {
+    return vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.endsWith('/email-settings/status')) return response(status);
+      if (init?.method === 'POST' && url.endsWith('/emails')) return response(sentRow);
+      return response(historyPage([]));
+    });
+  }
+
+  async function fillValidComposer() {
+    await userEvent.type(screen.getByLabelText('Email recipients'), 'hotel@example.com');
+    await userEvent.type(screen.getByLabelText('Email subject'), 'Hello');
+    const editor = screen.getByLabelText('Email message');
+    editor.innerHTML = '<p>Hello</p>';
+    fireEvent.input(editor);
+  }
+
+  it('keeps SMTP management out of /emails, linking to settings instead', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubWithStatus({
+        connected: true,
+        fromName: 'ABC Travels',
+        fromEmail: 'contact@interscalemarketing.in',
+      }),
+    );
+    renderPage();
+    await screen.findByText('Compose Email');
+    expect(screen.queryByLabelText('SMTP host')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('SMTP password')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save Configuration' })).not.toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Email Settings' });
+    expect(link).toHaveAttribute('href', '/settings/email');
+  });
+
+  it('shows the connected sending account', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubWithStatus({
+        connected: true,
+        fromName: 'ABC Travels',
+        fromEmail: 'contact@interscalemarketing.in',
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText(/Sending from:/)).toBeInTheDocument();
+    expect(screen.getByText(/contact@interscalemarketing\.in/)).toBeInTheDocument();
+    expect(screen.queryByText('Email is not connected.')).not.toBeInTheDocument();
+  });
+
+  it('shows not-connected with a settings link and disables Send', async () => {
+    vi.stubGlobal('fetch', stubWithStatus({ connected: false, fromName: null, fromEmail: null }));
+    renderPage();
+    expect(await screen.findByText('Email is not connected.')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Go to Email Settings' });
+    expect(link).toHaveAttribute('href', '/settings/email');
+    await fillValidComposer();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Send Email' })).toBeDisabled(),
+    );
+  });
+
+  it('treats a failed status check as unknown instead of not-connected', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (String(url).endsWith('/email-settings/status')) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({
+            success: false,
+            error: { code: 'INTERNAL_ERROR', message: 'Database unavailable.' },
+          }),
+        } as Response;
+      }
+      return response(historyPage([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage();
+    expect(
+      await screen.findByText('Could not verify the email connection status.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Email is not connected.')).not.toBeInTheDocument();
+    // Unknown status must not block sending on its own.
+    await fillValidComposer();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send Email' })).toBeEnabled());
+  });
+
+  it('renders Send as an enabled primary button when everything is valid', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubWithStatus({
+        connected: true,
+        fromName: 'ABC Travels',
+        fromEmail: 'contact@interscalemarketing.in',
+      }),
+    );
+    renderPage();
+    await fillValidComposer();
+    const send = await screen.findByRole('button', { name: 'Send Email' });
+    await waitFor(() => expect(send).toBeEnabled());
+    expect(send.className).toMatch(/bg-primary/);
+  });
+});
+
 describe('Hotel booking emails (Phase 1)', () => {
   const hotelMaster = {
     id: 'aaaaaaaa-aaaa-4111-8111-aaaaaaaaaaaa',
@@ -1283,6 +1394,40 @@ describe('Itinerary vendor emails (Phase 2)', () => {
     expect(message).toContain('Other city day');
   });
 
+  it('lists a lone destination without a master email and keeps To empty', async () => {
+    const klOnly = {
+      ...quotationItin,
+      id: 'c0ffee00-0000-4000-8000-000000000065',
+      quotationNumber: 'QT-000655',
+      currentVersionId: 'c0ffee00-0000-4000-8000-000000000055',
+      versions: [
+        {
+          ...versionMulti,
+          id: 'c0ffee00-0000-4000-8000-000000000055',
+          itinerary: [itineraryRows[2]],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      stubItineraryFlow({ list: [klOnly], details: { [klOnly.id]: klOnly } }),
+    );
+    renderPage();
+    await screen.findByText('Compose Email');
+    await pickPurposeItinerary();
+    await searchAndPickQuotation('QT-000655');
+    await screen.findByLabelText('Select Destination');
+    // Exactly one eligible option — the quotation's single destination group.
+    const select = screen.getByLabelText('Select Destination') as HTMLSelectElement;
+    expect(select.querySelectorAll('option')).toHaveLength(2);
+    pickDestination('Kuala Lumpur');
+    // No master email: warning explains what is missing, and the To value
+    // stays empty — placeholder example text is never treated as a contact.
+    expect(await screen.findByText(/has no email address/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Email recipients')).toHaveValue(''));
+    expect(screen.getByLabelText('Email recipients').getAttribute('value')).toBe('');
+  });
+
   it('warns when the destination has no configured master record', async () => {
     vi.stubGlobal('fetch', stubItineraryFlow({ masters: [] }));
     renderPage();
@@ -1401,6 +1546,51 @@ describe('Itinerary vendor emails (Phase 2)', () => {
     expect(body.bodyHtml).not.toContain('Trip Overview');
     expect(body.bodyHtml).not.toContain('Hotel stay charge');
     expect(await screen.findByText(/Email sent to vendor-sg@example.test/)).toBeInTheDocument();
+  });
+
+  it('provisions the quotation Weblink and sends it as a clickable anchor in the email', async () => {
+    const weblink = 'https://weblink.example.test/q/qt-000321';
+    const base = stubItineraryFlow();
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (init?.method === 'POST' && url.includes('/public-link')) {
+        return response({ url: weblink });
+      }
+      return base(request, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage();
+    await screen.findByText('Compose Email');
+    await pickPurposeItinerary();
+    await searchAndPickQuotation('QT-000321');
+    await screen.findByLabelText('Select Destination');
+    pickDestination('Singapore');
+    // The flow provisions the public link for the applicable version.
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, options]) =>
+            String(url).includes('/public-link') && options?.method === 'POST',
+        ),
+      ).toBe(true);
+    });
+    const send = screen.getByRole('button', { name: 'Send Email' });
+    await waitFor(() => expect(send).toBeEnabled());
+    await userEvent.click(send);
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, options]) => String(url).endsWith('/emails') && options?.method === 'POST',
+      );
+      expect(post).toBeDefined();
+    });
+    const post = fetchMock.mock.calls.find(
+      ([url, options]) => String(url).endsWith('/emails') && options?.method === 'POST',
+    );
+    const body = JSON.parse(String(post?.[1]?.body));
+    // Same section and URL as the WhatsApp share, clickable in the email.
+    expect(body.bodyHtml).toContain('Click on Weblink for Pricing &amp; more details:');
+    expect(body.bodyHtml).toContain(`<a href="${weblink}"`);
+    expect(body.bodyHtml).toContain(`>${weblink}</a>`);
   });
 });
 
@@ -1594,6 +1784,62 @@ describe('Itinerary vendor email content builders', () => {
     expect(bare).not.toContain('Travelers:');
     expect(bare).not.toContain('ITINERARY');
     expect(bare).toContain('Travel Agency CRM');
+  });
+
+  it('includes the quotation Weblink in the email body as a clickable anchor', async () => {
+    const { buildItineraryEmailBody } = await import('./ItineraryBookingEmail');
+    const { buildWhatsAppSummary } = await import(
+      '@/features/quotations/whatsappSummary'
+    );
+    const quotation = {
+      customerName: 'Mohan Kumar',
+      customerPhone: '+91 91111 11111',
+      customerEmail: 'mohan@example.test',
+      destinationSummary: 'Singapore',
+      adults: 2,
+      childrenWithBed: 0,
+      childrenWithoutBed: 0,
+      infants: 0,
+    };
+    const version = {
+      travelStartDate: '2026-11-01',
+      travelEndDate: '2026-11-05',
+      destinationSummary: 'Singapore',
+      hotels: [],
+      itinerary: [],
+      services: [],
+    };
+    const input = {
+      quotation: quotation as never,
+      version: version as never,
+      companyName: 'ABC Travels',
+      preparedByName: 'Priya Nair',
+    };
+    // Without a provisioned URL the section stays omitted, as before.
+    expect(buildItineraryEmailBody(input)).not.toContain('Click on Weblink');
+    // With a URL the email carries the same section as the WhatsApp share.
+    const url = 'https://crm.example.test/q/abc123';
+    const body = buildItineraryEmailBody({ ...input, weblinkUrl: url });
+    const markdown = buildWhatsAppSummary({
+      quotation: quotation as never,
+      version: version as never,
+      weblinkUrl: url,
+      companyName: 'ABC Travels',
+      preparedByName: 'Priya Nair',
+    });
+    expect(markdown).toContain('Click on Weblink for Pricing & more details:');
+    expect(markdown).toContain(url);
+    expect(body).toContain('Click on Weblink for Pricing &amp; more details:');
+    expect(body).toContain(`<a href="${url}"`);
+    expect(body).toContain(`>${url}</a>`);
+    // Query-string ampersands are HTML-escaped in both href and label.
+    const tricky = buildItineraryEmailBody({
+      ...input,
+      weblinkUrl: 'https://crm.example.test/q/abc123?x=1&y=2',
+    });
+    expect(tricky).toContain('href="https://crm.example.test/q/abc123?x=1&amp;y=2"');
+    expect(tricky).toContain('>https://crm.example.test/q/abc123?x=1&amp;y=2</a>');
+    expect(tricky).not.toContain('?x=1&y=2</a>');
   });
 });
 

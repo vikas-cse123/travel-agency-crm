@@ -910,3 +910,125 @@ describe('Booking confirmed amount by destination', () => {
     ]);
   });
 });
+
+describe('Quotation KPIs: unique count and agency revenue', () => {
+  const kpisOf = async (client: Client, query = 'period=THIS_YEAR') => {
+    const res = await client.get(`/api/dashboard/analytics?${query}`);
+    expect(res.status).toBe(200);
+    return res.body.data.quotations as {
+      totalQuotations: number;
+      acceptedQuotations: number;
+      rejectedQuotations: number;
+      agencyRevenue: string;
+    };
+  };
+
+  /** A quotation on the lead with its latest version margin set directly. */
+  async function quoteWithMargin(client: Client, queryId: string, margin: number) {
+    const created = await client.post('/api/quotations', { queryId });
+    expect(created.status).toBe(201);
+    const quotation = created.body.data as { id: string; versions: { id: string }[] };
+    await db.quotationVersion.update({
+      where: { id: quotation.versions[0]!.id },
+      data: { marginAmount: margin },
+    });
+    return quotation;
+  }
+
+  it('counts one quotation per lead regardless of quotation volume', async () => {
+    const client = await owner();
+    const five = await seedLead(client, { customerName: 'Five Quotes' });
+    for (let index = 0; index < 5; index += 1) {
+      const created = await client.post('/api/quotations', { queryId: five.id });
+      expect(created.status).toBe(201);
+    }
+    const two = await seedLead(client, { customerName: 'Two Quotes' });
+    for (let index = 0; index < 2; index += 1) {
+      const created = await client.post('/api/quotations', { queryId: two.id });
+      expect(created.status).toBe(201);
+    }
+    // A lead with no quotations is never counted.
+    await seedLead(client, { customerName: 'No Quotes' });
+    const kpis = await kpisOf(client);
+    expect(kpis.totalQuotations).toBe(2);
+  });
+
+  it('uses only the latest quotation per lead for agency revenue', async () => {
+    const client = await owner();
+    const lead = await seedLead(client, { customerName: 'Serial Quoter' });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    const older = await quoteWithMargin(client, lead.id, 10000);
+    // Backdate so "latest" is unambiguous regardless of timestamp ties.
+    await db.quotation.update({
+      where: { id: older.id },
+      data: { createdAt: new Date('2026-01-05T00:00:00Z') },
+    });
+    await quoteWithMargin(client, lead.id, 60000);
+    const kpis = await kpisOf(client);
+    expect(kpis.totalQuotations).toBe(1);
+    expect(kpis.agencyRevenue).toBe('60000.00');
+  });
+
+  it('sums latest margins of confirmed leads and ignores other stages', async () => {
+    const client = await owner();
+    const first = await seedLead(client, { customerName: 'Confirmed One' });
+    await setStage(first.id, 'BOOKING_CONFIRMED');
+    // Zero recorded net cost: the margin still counts (selling minus zero).
+    await quoteWithMargin(client, first.id, 25000);
+    const second = await seedLead(client, { customerName: 'Confirmed Two' });
+    await setStage(second.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(client, second.id, 15000);
+    // Other stages contribute nothing, however large their margins.
+    for (const stage of ['NEW_LEAD', 'QUALIFIED', 'READY_TO_BOOK', 'LOST', 'CANCELLED']) {
+      const lead = await seedLead(client, { customerName: `Not counted ${stage}` });
+      await setStage(lead.id, stage);
+      await quoteWithMargin(client, lead.id, 99999);
+    }
+    const kpis = await kpisOf(client);
+    expect(kpis.agencyRevenue).toBe('40000.00');
+  });
+
+  it('excludes a lead whose current stage moved away from confirmed', async () => {
+    const client = await owner();
+    const lead = await seedLead(client, { customerName: 'Was Confirmed' });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(client, lead.id, 50000);
+    expect((await kpisOf(client)).agencyRevenue).toBe('50000.00');
+    // Real stage transition away: history may mention confirmed, but the
+    // current stage decides.
+    const lost = await client.patch(`/api/queries/${lead.id}/stage`, {
+      stage: 'LOST',
+      lostReason: 'budget cut',
+    });
+    expect(lost.status).toBe(200);
+    expect((await kpisOf(client)).agencyRevenue).toBe('0.00');
+  });
+
+  it('returns zero revenue safely when margins are missing', async () => {
+    const client = await owner();
+    // Confirmed lead with no quotation at all.
+    const bare = await seedLead(client, { customerName: 'No Quotation' });
+    await setStage(bare.id, 'BOOKING_CONFIRMED');
+    // Confirmed lead whose quotation version carries a zero margin.
+    const zero = await seedLead(client, { customerName: 'Zero Margin' });
+    await setStage(zero.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(client, zero.id, 0);
+    const kpis = await kpisOf(client);
+    expect(kpis.totalQuotations).toBe(1);
+    expect(kpis.agencyRevenue).toBe('0.00');
+  });
+
+  it('isolates quotation KPIs per company', async () => {
+    const alpha = await owner('owner@alpha-kpi.test', 'Alpha KPI');
+    const lead = await seedLead(alpha, { customerName: 'Alpha Confirmed' });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(alpha, lead.id, 70000);
+    const beta = await owner('owner@beta-kpi.test', 'Beta KPI');
+    const betaKpis = await kpisOf(beta);
+    expect(betaKpis.totalQuotations).toBe(0);
+    expect(betaKpis.agencyRevenue).toBe('0.00');
+    const alphaKpis = await kpisOf(alpha);
+    expect(alphaKpis.totalQuotations).toBe(1);
+    expect(alphaKpis.agencyRevenue).toBe('70000.00');
+  });
+});

@@ -235,8 +235,18 @@ function presentVoucher(row: Record<string, unknown>) {
       : [],
     stayRooms: Array.isArray(stayRooms)
       ? (stayRooms as Record<string, unknown>[]).map((entry) => {
-          const { companyId: _companyId, voucherId: _voucherId, ...safeEntry } = entry;
-          return safeEntry;
+          const {
+            companyId: _companyId,
+            voucherId: _voucherId,
+            notes: _notes,
+            ...safeEntry
+          } = entry;
+          return {
+            ...safeEntry,
+            // Historical rows predate the Extra Bed column (NULL) — read as 0.
+            extraBedQuantity:
+              typeof entry.extraBedQuantity === 'number' ? entry.extraBedQuantity : 0,
+          };
         })
       : [],
     stayMeals: Array.isArray(stayMeals)
@@ -571,7 +581,7 @@ export const hotelVouchersService = {
                 sequence: index,
                 roomType: row.roomType.trim(),
                 rooms: row.rooms ?? 1,
-                notes: row.notes?.trim() || null,
+                extraBedQuantity: row.extraBedQuantity ?? 0,
               })),
             },
             stayMeals: {
@@ -762,7 +772,7 @@ export const hotelVouchersService = {
               sequence: index,
               roomType: stayRow.roomType.trim(),
               rooms: stayRow.rooms ?? 1,
-              notes: stayRow.notes?.trim() || null,
+              extraBedQuantity: stayRow.extraBedQuantity ?? 0,
             })),
           });
         }
@@ -877,14 +887,14 @@ export const hotelVouchersService = {
             ? current.stayRooms.map((row) => ({
                 roomType: row.roomType,
                 rooms: row.rooms,
-                notes: row.notes,
+                extraBedQuantity: row.extraBedQuantity ?? 0,
               }))
             : current.roomTypeName
               ? [
                   {
                     roomType: current.roomTypeName,
                     rooms: current.rooms,
-                    notes: null,
+                    extraBedQuantity: 0,
                   },
                 ]
               : [],

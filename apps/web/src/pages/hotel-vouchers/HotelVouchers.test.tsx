@@ -1998,22 +1998,22 @@ describe('Hotel Voucher pages (standalone)', () => {
       });
       // Single-hotel quotation: the option is auto-selected and every room
       // configuration plus every meal plan is imported, in saved order. The
-      // quotation's extra-bed / child-without-bed counts are ignored, never
-      // imported — the voucher keeps type, quantity, and remark only.
+      // quotation's extra-bed counts are imported; child-without-bed counts
+      // and remarks are not voucher content and stay out.
       await waitFor(() =>
         expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Superior Room'),
       );
       expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
-      expect(screen.getByLabelText('Stay room 1 remark')).toHaveValue('High floor');
+      expect(screen.getByLabelText('Stay room 1 extra beds')).toHaveValue(1);
       expect(screen.getByLabelText('Stay room 2 type')).toHaveValue('Premier Room');
       expect(screen.getByLabelText('Stay room 2 rooms')).toHaveValue(4);
-      expect(screen.getByLabelText('Stay room 2 remark')).toHaveValue('');
-      // Extra Bed and Child w/o Bed are gone from the form entirely.
-      expect(screen.queryByText('Extra Bed')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Stay room 2 extra beds')).toHaveValue(0);
+      expect(screen.getByLabelText('Stay room 2 extra beds')).toHaveValue(0);
+      // Remark is gone from the form entirely; Child w/o Bed stays out.
+      expect(screen.queryByLabelText('Stay room 1 remark')).not.toBeInTheDocument();
+      expect(screen.queryByText('Remark')).not.toBeInTheDocument();
       expect(screen.queryByText('Child w/o Bed')).not.toBeInTheDocument();
-      expect(screen.queryByLabelText('Stay room 1 extra beds')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Stay room 1 children without bed')).not.toBeInTheDocument();
-      expect(screen.queryByLabelText('Stay room 2 extra beds')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Stay room 2 children without bed')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Stay room 3 type')).not.toBeInTheDocument();
       expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast only');
@@ -2039,10 +2039,13 @@ describe('Hotel Voucher pages (standalone)', () => {
       expect(body.stayRooms).toHaveLength(2);
       expect(body.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', rooms: 2 });
       expect(body.stayRooms[1]).toMatchObject({ roomType: 'Premier Room', rooms: 4 });
-      // The removed fields are never submitted, even though the quotation
-      // source rows carried them.
+      // Extra-bed counts persist per room; remarks and child-without-bed
+      // counts are never submitted, even though the quotation source rows
+      // carried them.
+      expect(body.stayRooms[0]).toMatchObject({ extraBedQuantity: 1 });
+      expect(body.stayRooms[1]).toMatchObject({ extraBedQuantity: 0 });
       for (const row of body.stayRooms) {
-        expect(row).not.toHaveProperty('extraBedQuantity');
+        expect(row).not.toHaveProperty('notes');
         expect(row).not.toHaveProperty('childWithoutBedQuantity');
       }
       expect(body.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([
@@ -2075,10 +2078,11 @@ describe('Hotel Voucher pages (standalone)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Add Room' }));
       await userEvent.type(screen.getByLabelText('Stay room 1 type'), 'Suite');
       fireEvent.change(screen.getByLabelText('Stay room 1 rooms'), { target: { value: '2' } });
-      // The rooms table is only type / quantity / remark / actions now.
-      expect(screen.queryByText('Extra Bed')).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText('Stay room 1 extra beds'), { target: { value: '1' } });
+      // The rooms table is type / quantity / extra bed / actions now: no
+      // remark, no Child w/o Bed.
+      expect(screen.queryByLabelText('Stay room 1 remark')).not.toBeInTheDocument();
       expect(screen.queryByText('Child w/o Bed')).not.toBeInTheDocument();
-      expect(screen.queryByLabelText('Stay room 1 extra beds')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Stay room 1 children without bed')).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Add Meal Plan' }));
       await userEvent.type(screen.getByLabelText('Stay meal 1 plan'), 'Half Board');
@@ -2098,7 +2102,7 @@ describe('Hotel Voucher pages (standalone)', () => {
       );
       const body = JSON.parse(String(post?.[1]?.body));
       expect(body.stayRooms).toEqual([
-        expect.objectContaining({ roomType: 'Suite', rooms: 2 }),
+        expect.objectContaining({ roomType: 'Suite', rooms: 2, extraBedQuantity: 1 }),
       ]);
       expect(body.stayMeals).toEqual([expect.objectContaining({ mealPlan: 'Half Board' })]);
       expect(body.roomTypeName).toBe('Suite');
@@ -2106,16 +2110,16 @@ describe('Hotel Voucher pages (standalone)', () => {
     });
 
     it('restores saved stay rows on edit and keeps them on save', async () => {
-      // Legacy rows may still carry the removed values; the edit form loads
-      // the voucher (type, quantity, remark) and never shows the old fields.
+      // Saved rows load with their extra-bed counts; historical remark
+      // values stay stored but are never shown or resubmitted.
       const withStay = {
         ...draftVoucher,
         rooms: 6,
         roomTypeName: 'Superior Room',
         mealPlanName: 'Breakfast only',
         stayRooms: [
-          { id: 'r-1', sequence: 0, roomType: 'Superior Room', rooms: 2, extraBedQuantity: 1, childWithoutBedQuantity: 0, notes: 'High floor' },
-          { id: 'r-2', sequence: 1, roomType: 'Premier Room', rooms: 4, extraBedQuantity: 0, childWithoutBedQuantity: 1, notes: null },
+          { id: 'r-1', sequence: 0, roomType: 'Superior Room', rooms: 2, extraBedQuantity: 1 },
+          { id: 'r-2', sequence: 1, roomType: 'Premier Room', rooms: 4, extraBedQuantity: 0 },
         ],
         stayMeals: [
           { id: 'm-1', sequence: 0, mealPlan: 'Breakfast only' },
@@ -2137,8 +2141,9 @@ describe('Hotel Voucher pages (standalone)', () => {
       );
       expect(screen.getByLabelText('Stay room 1 type')).toHaveValue('Superior Room');
       expect(screen.getByLabelText('Stay room 1 rooms')).toHaveValue(2);
-      expect(screen.getByLabelText('Stay room 1 remark')).toHaveValue('High floor');
-      expect(screen.queryByLabelText('Stay room 1 extra beds')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Stay room 1 extra beds')).toHaveValue(1);
+      expect(screen.getByLabelText('Stay room 2 extra beds')).toHaveValue(0);
+      expect(screen.queryByLabelText('Stay room 1 remark')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Stay room 2 children without bed')).not.toBeInTheDocument();
       expect(screen.getByLabelText('Stay meal 1 plan')).toHaveValue('Breakfast only');
       expect(screen.getByLabelText('Stay meal 2 plan')).toHaveValue('Dinner');
@@ -2153,7 +2158,7 @@ describe('Hotel Voucher pages (standalone)', () => {
       expect(body.stayRooms[0]).toMatchObject({ roomType: 'Superior Room', rooms: 2 });
       expect(body.stayRooms[1]).toMatchObject({ roomType: 'Premier Room', rooms: 4 });
       for (const row of body.stayRooms) {
-        expect(row).not.toHaveProperty('extraBedQuantity');
+        expect(row).not.toHaveProperty('notes');
         expect(row).not.toHaveProperty('childWithoutBedQuantity');
       }
       expect(body.stayMeals.map((row: { mealPlan: string }) => row.mealPlan)).toEqual([

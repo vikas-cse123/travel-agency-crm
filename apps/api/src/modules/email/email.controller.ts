@@ -15,6 +15,8 @@ const context = (req: Request) => ({
 export const emailController = {
   settings: async (req: Request, res: Response) =>
     sendSuccess(res, await emailService.settings(auth(req))),
+  sendingStatus: async (req: Request, res: Response) =>
+    sendSuccess(res, await emailService.sendingStatus(auth(req))),
   saveSettings: async (req: Request, res: Response) =>
     sendSuccess(
       res,
