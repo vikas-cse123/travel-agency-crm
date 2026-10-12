@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, FileDown, MessageCircle } from 'lucide-react';
+import { Check, Copy, ExternalLink, FileDown } from 'lucide-react';
 import { PERMISSIONS } from '@interscale/shared';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
@@ -9,8 +9,8 @@ import {
 } from '@/features/quotations/quotations.api';
 import { WhatsappSummaryDialog } from './WhatsappSummaryDialog';
 
-const iconButtonClass =
-  'inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60';
+const iconButtonBase =
+  'group inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50';
 
 /**
  * Compact per-row actions for the quotations list, reusing the detail page's
@@ -134,9 +134,9 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
             aria-busy={generatePdf.isPending}
             disabled={generatePdf.isPending}
             onClick={generateRowPdf}
-            className={iconButtonClass}
+            className={`${iconButtonBase} hover:bg-amber-50`}
           >
-            <FileDown className="h-4 w-4" aria-hidden="true" />
+            <FileDown className="h-[18px] w-[18px] text-[#D99016] transition-colors group-hover:text-[#B87812]" strokeWidth={2} aria-hidden="true" />
           </button>
         )}
         <button
@@ -145,12 +145,12 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
           aria-label={`Copy Weblink URL for ${quotation.quotationNumber}`}
           disabled={!current || provisioning}
           onClick={() => void copyRowLink()}
-          className={iconButtonClass}
+          className={`${iconButtonBase} hover:bg-slate-100`}
         >
           {linkCopied ? (
-            <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+            <Check className="h-[18px] w-[18px] text-emerald-600" strokeWidth={2} aria-hidden="true" />
           ) : (
-            <Copy className="h-4 w-4" aria-hidden="true" />
+            <Copy className="h-[18px] w-[18px] text-[#64748B] transition-colors group-hover:text-[#475569]" strokeWidth={2} aria-hidden="true" />
           )}
         </button>
         <button
@@ -159,9 +159,9 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
           aria-label={`Preview Weblink for ${quotation.quotationNumber}`}
           disabled={!current || provisioning}
           onClick={() => void previewRowLink()}
-          className={iconButtonClass}
+          className={`${iconButtonBase} hover:bg-blue-50`}
         >
-          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          <ExternalLink className="h-[18px] w-[18px] text-[#2563EB] transition-colors group-hover:text-[#1D4ED8]" strokeWidth={2} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -169,9 +169,16 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
           aria-label={`WhatsApp Message for ${quotation.quotationNumber}`}
           disabled={!current}
           onClick={() => void openRowWhatsapp()}
-          className={iconButtonClass}
+          className={`${iconButtonBase} hover:bg-green-50`}
         >
-          <MessageCircle className="h-4 w-4" aria-hidden="true" />
+          <img
+            src="/whatsapp-logo-green.png"
+            alt=""
+            aria-hidden="true"
+            width={18}
+            height={18}
+            className="h-[18px] w-[18px] shrink-0 object-contain"
+          />
         </button>
       </div>
       {error && (

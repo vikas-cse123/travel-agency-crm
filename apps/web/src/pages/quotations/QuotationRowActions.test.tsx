@@ -122,6 +122,49 @@ describe('Quotation row actions', () => {
     }
   });
 
+  it('uses the supplied WhatsApp image asset with accessible labeling', async () => {
+    vi.stubGlobal('fetch', stubList([quotation()]));
+    renderList();
+    await screen.findAllByText('QT-2026-000001');
+    const button = screen.getByRole('button', { name: 'WhatsApp Message for QT-2026-000001' });
+    expect(button).toHaveAttribute('title', 'WhatsApp Message');
+    const image = within(button).getByRole('presentation', { hidden: true });
+    expect(image.tagName).toBe('IMG');
+    expect(image).toHaveAttribute('src', '/whatsapp-logo-green.png');
+    expect(image.className).toContain('h-[18px]');
+    expect(image.className).toContain('w-[18px]');
+  });
+
+  it('applies distinct icon colors with the WhatsApp image unchanged', async () => {
+    vi.stubGlobal('fetch', stubList([quotation()]));
+    renderList();
+    await screen.findAllByText('QT-2026-000001');
+    const pdfIcon = screen
+      .getByRole('button', { name: 'Generate PDF for QT-2026-000001' })
+      .querySelector('svg')!;
+    expect(pdfIcon.getAttribute('class')).toContain('text-[#D99016]');
+    expect(pdfIcon.getAttribute('class')).toContain('h-[18px]');
+    expect(pdfIcon.getAttribute('stroke-width')).toBe('2');
+    const copyIcon = screen
+      .getByRole('button', { name: 'Copy Weblink URL for QT-2026-000001' })
+      .querySelector('svg')!;
+    expect(copyIcon.getAttribute('class')).toContain('text-[#64748B]');
+    expect(copyIcon.getAttribute('class')).toContain('h-[18px]');
+    expect(copyIcon.getAttribute('stroke-width')).toBe('2');
+    const previewIcon = screen
+      .getByRole('button', { name: 'Preview Weblink for QT-2026-000001' })
+      .querySelector('svg')!;
+    expect(previewIcon.getAttribute('class')).toContain('text-[#2563EB]');
+    expect(previewIcon.getAttribute('class')).toContain('h-[18px]');
+    expect(previewIcon.getAttribute('stroke-width')).toBe('2');
+    // WhatsApp keeps the supplied green logo image, not a lucide icon.
+    const whatsappButton = screen.getByRole('button', {
+      name: 'WhatsApp Message for QT-2026-000001',
+    });
+    expect(whatsappButton.querySelector('svg')).toBeNull();
+    expect(whatsappButton.querySelector('img')).toHaveAttribute('src', '/whatsapp-logo-green.png');
+  });
+
   it('generates the PDF for the clicked row with its current version', async () => {
     const fetchMock = stubList([
       quotation(),
