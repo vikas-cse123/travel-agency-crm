@@ -19,8 +19,10 @@ export function HorizontalBarChart({
   const max = Math.max(...data.map((row) => row.value), 1);
   return (
     <ul className="space-y-2">
-      {data.map((row) => (
-        <li key={row.label}>
+      {data.map((row, index) => (
+        // Labels are not unique (e.g. same-named destinations in different
+        // countries); the stable sorted order plus index keeps keys unique.
+        <li key={`${row.label}-${index}`}>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="truncate text-slate-700" title={row.label}>
               {row.label}

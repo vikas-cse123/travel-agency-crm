@@ -34,6 +34,7 @@ import {
   formatDayPrefixedTitle,
   formatItineraryDayTitle,
   formatAgeList,
+  formatInfantAgeList,
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
@@ -1972,7 +1973,7 @@ export function PublicQuotationPage() {
   // columns. Null/empty for legacy data → the age cells are simply omitted.
   const cwbAgesText = formatAgeList(q.childrenWithBedAges);
   const cwobAgesText = formatAgeList(q.childrenWithoutBedAges);
-  const infantAgesText = formatAgeList(q.infantAges);
+  const infantAgesText = formatInfantAgeList(q.infantAges);
 
   const pricing = resolveQuotationPricing({ version: v, quotation: q });
   // Single authoritative total from the shared pricing engine: the ACTIVE

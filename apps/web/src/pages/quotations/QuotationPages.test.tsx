@@ -579,14 +579,144 @@ describe('Phase 8 quotation pages', () => {
     // Table shows the simplified columns, LEAD heading, no removed columns.
     const thead = document.querySelector('thead');
     expect(thead).not.toBeNull();
+    expect(
+      within(thead!).getAllByRole('columnheader').map((cell) => cell.textContent),
+    ).toEqual(['Quotation', 'Lead', 'Destination', 'Created by', 'Actions']);
     const headerText = thead!.textContent ?? '';
-    for (const header of ['Quotation', 'Lead', 'Destination', 'Version', 'Created by', 'Created']) {
-      expect(headerText).toContain(header);
-    }
     expect(headerText).not.toContain('Final amount');
     expect(headerText).not.toContain('Last sent');
     expect(headerText).not.toContain('Last viewed');
     expect(headerText).not.toContain('Lead / customer');
+  });
+
+  describe('Documents panel version filtering', () => {
+    const multiVersionDetail = {
+      ...copyQuotationDetail,
+      currentVersionId: 'version-2',
+      versions: [
+        { ...copyFinalizedVersion, id: 'version-1', versionNumber: 1 },
+        { ...copyFinalizedVersion, id: 'version-2', versionNumber: 2 },
+      ],
+      documents: [
+        {
+          id: 'document-v1',
+          quotationVersionId: 'version-1',
+          fileName: 'QT-2026-000001-v1.pdf',
+          mimeType: 'application/pdf',
+          fileSize: 4096,
+          checksum: 'aaa',
+          documentType: 'QUOTATION_PDF',
+          status: 'AVAILABLE',
+          createdAt: '2026-07-21T00:00:00.000Z',
+        },
+        {
+          id: 'document-v2',
+          quotationVersionId: 'version-2',
+          fileName: 'QT-2026-000001-v2.pdf',
+          mimeType: 'application/pdf',
+          fileSize: 8192,
+          checksum: 'bbb',
+          documentType: 'QUOTATION_PDF',
+          status: 'AVAILABLE',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'document-photo',
+          quotationVersionId: null,
+          fileName: 'passport-scan.png',
+          mimeType: 'image/png',
+          fileSize: 1024,
+          checksum: 'ccc',
+          documentType: 'SUPPORTING_ATTACHMENT',
+          status: 'AVAILABLE',
+          createdAt: '2026-07-23T00:00:00.000Z',
+        },
+      ],
+    };
+    const renderDetail = (detail: unknown) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: RequestInfo | URL, options?: RequestInit) => {
+          if (!options || options.method === 'GET') return response(detail);
+          return response({});
+        }),
+      );
+      renderWithProviders(
+        <Routes>
+          <Route path="/quotations/:quotationId" element={<QuotationDetailsPage />} />
+        </Routes>,
+        { route: '/quotations/quotation-1' },
+      );
+    };
+
+    it('shows the current version PDF and attachments but hides older version PDFs', async () => {
+      renderDetail(multiVersionDetail);
+      await screen.findByText('Documents');
+      expect(screen.getByText('QT-2026-000001-v2.pdf')).toBeInTheDocument();
+      expect(screen.getByText('passport-scan.png')).toBeInTheDocument();
+      expect(screen.queryByText('QT-2026-000001-v1.pdf')).not.toBeInTheDocument();
+    });
+
+    it('shows no older PDF as fallback when the current version has no PDF', async () => {
+      renderDetail({
+        ...multiVersionDetail,
+        documents: multiVersionDetail.documents.filter((doc) => doc.id !== 'document-v2'),
+      });
+      await screen.findByText('Documents');
+      expect(screen.queryByText('QT-2026-000001-v1.pdf')).not.toBeInTheDocument();
+      expect(screen.queryByText('QT-2026-000001-v2.pdf')).not.toBeInTheDocument();
+      // Attachments remain visible.
+      expect(screen.getByText('passport-scan.png')).toBeInTheDocument();
+    });
+
+    it('keeps supporting attachments downloadable', async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('/download-url')) return response({ url: 'http://localhost:5173/docs/x' });
+        if (!options || options.method === 'GET') return response(multiVersionDetail);
+        return response({});
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderWithProviders(
+        <Routes>
+          <Route path="/quotations/:quotationId" element={<QuotationDetailsPage />} />
+        </Routes>,
+        { route: '/quotations/quotation-1' },
+      );
+      await screen.findByText('passport-scan.png');
+      const article = screen.getByText('passport-scan.png').closest('article')!;
+      await userEvent.click(within(article).getByRole('button', { name: 'Download' }));
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([url]) =>
+            String(url).includes('/documents/document-photo/download-url'),
+          ),
+        ).toBe(true),
+      );
+    });
+
+    it('leaves Version History and Duplicate actions unaffected', async () => {
+      renderDetail(multiVersionDetail);
+      await screen.findByText('Version 1');
+      expect(screen.getByText('Version 2')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Duplicate' })).toHaveLength(2);
+    });
+
+    it('keeps the attachment upload control working', async () => {
+      renderDetail(multiVersionDetail);
+      await screen.findByText('Add PDF or image attachment');
+      expect(screen.getByText('QT-2026-000001-v2.pdf')).toBeInTheDocument();
+    });
+
+    it('does not render the Email history section', async () => {
+      renderDetail(multiVersionDetail);
+      await screen.findByText('Documents');
+      expect(screen.queryByText('Email history')).not.toBeInTheDocument();
+      expect(screen.queryByText('No emails sent yet.')).not.toBeInTheDocument();
+      // Neighboring sections remain intact.
+      expect(screen.getByText('Activity timeline')).toBeInTheDocument();
+      expect(screen.getByText('QT-2026-000001-v2.pdf')).toBeInTheDocument();
+    });
   });
 
   it('calculates a live builder summary and hides costing without permission', async () => {
@@ -18852,7 +18982,7 @@ describe('Finalize quotation from the details page', () => {
   });
 });
 
-describe('Quotation Builder — traveller names', () => {
+describe('Quotation Builder — traveller names removed from UI', () => {
   const namedQuotation = {
     ...builderQuotation(),
     adults: 2,
@@ -18870,38 +19000,24 @@ describe('Quotation Builder — traveller names', () => {
     auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
   });
 
-  it('exposes the carried traveller names and saves edits to the quotation', async () => {
+  it('does not render the Traveller Names section even when stored names exist', async () => {
     const fetchMock = masterFetch(namedQuotation);
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
-    expect(await screen.findByText('Traveller Names (optional)')).toBeInTheDocument();
-    expect(screen.getByLabelText('Adult 1 — Name')).toHaveValue('Rahul Sharma');
-    expect(screen.getByLabelText('Adult 2 — Name')).toHaveValue('Priya Sharma');
-    expect(screen.getByLabelText('Child With Bed 1 — Name')).toHaveValue('Aarav Sharma');
-    expect(screen.getByLabelText('Infant 1 — Name')).toHaveValue('');
+    // Wait for the builder to load via the preserved summary section.
+    expect(await screen.findByText('Quotation Summary')).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText('Infant 1 — Name'), 'Ira Sharma');
-    await userEvent.click(screen.getByRole('button', { name: 'Save traveller names' }));
-    await waitFor(() => {
-      const patch = fetchMock.mock.calls.find(
-        ([url, options]) =>
-          String(url).endsWith('/quotations/quotation-1') && options?.method === 'PATCH',
-      );
-      expect(patch).toBeDefined();
-    });
-    const patch = fetchMock.mock.calls.find(
-      ([url, options]) =>
-        String(url).endsWith('/quotations/quotation-1') && options?.method === 'PATCH',
-    );
-    expect(JSON.parse(String(patch![1]!.body))).toMatchObject({
-      adultNames: ['Rahul Sharma', 'Priya Sharma'],
-      childWithBedNames: ['Aarav Sharma'],
-      infantNames: ['Ira Sharma'],
-    });
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.queryByText('Traveller Names (optional)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save traveller names' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Adult 1 — Name')).not.toBeInTheDocument();
+    expect(screen.queryByText('No travellers on this quotation.')).not.toBeInTheDocument();
+
+    // Preserved builder chrome stays intact.
+    expect(screen.getAllByRole('button', { name: /Save quotation/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
-  it('shows no name inputs without travellers and keeps the card readable', async () => {
+  it('keeps the section absent when there are no travellers', async () => {
     const fetchMock = masterFetch({
       ...builderQuotation(),
       adults: 0,
@@ -18911,7 +19027,10 @@ describe('Quotation Builder — traveller names', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
-    expect(await screen.findByText('Traveller Names (optional)')).toBeInTheDocument();
-    expect(screen.getByText('No travellers on this quotation.')).toBeInTheDocument();
+    expect(await screen.findByText('Quotation Summary')).toBeInTheDocument();
+
+    expect(screen.queryByText('Traveller Names (optional)')).not.toBeInTheDocument();
+    expect(screen.queryByText('No travellers on this quotation.')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Save quotation/ }).length).toBeGreaterThan(0);
   });
 });

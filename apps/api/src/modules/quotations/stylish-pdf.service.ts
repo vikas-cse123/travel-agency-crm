@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import sharp from 'sharp';
 import {
   formatAgeList,
+  formatInfantAgeList,
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
   normalizeFaqs,
@@ -1325,8 +1326,8 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
         formatAgeList(input.quotation.childrenWithoutBedAges)
           ? `CWOB: ${formatAgeList(input.quotation.childrenWithoutBedAges)}`
           : null,
-        formatAgeList(input.quotation.infantAges)
-          ? `Inf: ${formatAgeList(input.quotation.infantAges)}`
+        formatInfantAgeList(input.quotation.infantAges)
+          ? `Inf: ${formatInfantAgeList(input.quotation.infantAges)}`
           : null,
       ].filter(Boolean) as string[];
       if (!ageBits.length) return [];

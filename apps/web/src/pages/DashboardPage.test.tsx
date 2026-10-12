@@ -302,12 +302,62 @@ describe('Phase 16 dashboard page', () => {
     );
   });
 
+  it('blocks Apply for an incomplete custom range and keeps the previous filter', async () => {
+    const mock = stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    await userEvent.selectOptions(screen.getByLabelText('Dashboard period'), 'CUSTOM');
+    // Missing both dates: inline message, disabled Apply, no request.
+    expect(screen.getByRole('alert')).toHaveTextContent(/both a start and an end date/i);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(mock.mock.calls.some(([url]) => String(url).includes('period=CUSTOM'))).toBe(false);
+    // Only the start filled: still blocked, still no request.
+    await userEvent.type(screen.getByLabelText('Custom from date'), '2026-01-01');
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(mock.mock.calls.some(([url]) => String(url).includes('period=CUSTOM'))).toBe(false);
+    // The previous applied filter (THIS_YEAR) is still displayed.
+    expect(screen.getByText('Total Leads')).toBeInTheDocument();
+  });
+
+  it('blocks Apply for a reversed custom range', async () => {
+    const mock = stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    await userEvent.selectOptions(screen.getByLabelText('Dashboard period'), 'CUSTOM');
+    await userEvent.type(screen.getByLabelText('Custom from date'), '2026-06-30');
+    await userEvent.type(screen.getByLabelText('Custom to date'), '2026-01-01');
+    expect(screen.getByRole('alert')).toHaveTextContent(/on or before the end date/i);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(mock.mock.calls.some(([url]) => String(url).includes('period=CUSTOM'))).toBe(false);
+  });
+
+  it('applies a complete custom range', async () => {
+    const mock = stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    await userEvent.selectOptions(screen.getByLabelText('Dashboard period'), 'CUSTOM');
+    await userEvent.type(screen.getByLabelText('Custom from date'), '2026-01-01');
+    await userEvent.type(screen.getByLabelText('Custom to date'), '2026-06-30');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() =>
+      expect(
+        mock.mock.calls.some(([url]) =>
+          String(url).includes('period=CUSTOM&from=2026-01-01&to=2026-06-30'),
+        ),
+      ).toBe(true),
+    );
+  });
+
   it('shows an error state when analytics fails', async () => {
     stub(analytics(), operations(), false);
     renderDashboard();
     expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i);
   });
-
   it('shows empty panel states', async () => {
     stub(analytics({ leadSources: [], topDestinations: [], staffConversions: [] }), operations());
     renderDashboard();
@@ -362,6 +412,38 @@ describe('Phase 16 dashboard page', () => {
         mock.mock.calls.some(([url]) => String(url).includes('period=THIS_MONTH')),
       ).toBe(true),
     );
+  });
+
+  it('refreshes analytics and upcoming travel together without changing the period', async () => {
+    const mock = stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    await userEvent.selectOptions(screen.getByLabelText('Dashboard period'), 'THIS_MONTH');
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() =>
+      expect(
+        mock.mock.calls.some(([url]) => String(url).includes('period=THIS_MONTH')),
+      ).toBe(true),
+    );
+    const callsBefore = mock.mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      const urls = mock.mock.calls.slice(callsBefore).map(([url]) => String(url));
+      // Analytics refetch keeps the applied period; travel cards refetch too.
+      expect(
+        urls.some((url) => url.includes('/dashboard/analytics?') && url.includes('period=THIS_MONTH')),
+      ).toBe(true);
+      expect(urls.some((url) => url.includes('/dashboard/upcoming-travel'))).toBe(true);
+      // No draft leak: the untouched custom fields are never submitted.
+      expect(urls.some((url) => url.includes('period=CUSTOM'))).toBe(false);
+    });
+  });
+
+  it('explains that upcoming travel ignores the dashboard period', async () => {
+    stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    expect(screen.getByText(/regardless of the selected period/i)).toBeInTheDocument();
   });
 
   it('hides the Net Profit card when its value is zero', async () => {

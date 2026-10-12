@@ -24,7 +24,11 @@ export function VerticalBarChart({
         aria-label={data.map((row) => `${row.label}: ${formatValue(row.value)}`).join(', ')}
       >
         {data.map((row, index) => (
-          <div key={row.label} className="flex w-20 shrink-0 flex-col items-center">
+          // Rows can legitimately share a display label (e.g. same-named
+          // destinations in different countries), so the index keeps keys
+          // unique. Order is stable (backend sorts descending), and labels,
+          // values and grouping are untouched.
+          <div key={`${row.label}-${index}`} className="flex w-20 shrink-0 flex-col items-center">
             <span className="mb-1 text-center text-xs font-medium text-slate-900">
               {formatValue(row.value)}
             </span>

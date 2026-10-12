@@ -407,3 +407,25 @@ export function formatAgeList(ages: unknown): string | null {
     .filter((age) => Number.isFinite(age) && age >= 0);
   return list.length ? list.join(', ') : null;
 }
+
+/**
+ * Format a stored infant-age array for display: `8 months`, `8 months, 10 months`.
+ *
+ * Infant ages are contractually stored in months (the Lead form collects
+ * "Infant N Age (Months)", capped at 24, validated to a max of 30 — bounds
+ * that only make sense as months — and values flow verbatim from lead to
+ * quotation to PDF/weblink with no conversion anywhere in the chain). The
+ * unit is therefore rendered explicitly per value so outputs can never be
+ * misread as years. Same null/empty semantics as {@link formatAgeList}:
+ * absent data yields null and the age line is omitted. CWB/CWOB ages stay on
+ * {@link formatAgeList} untouched.
+ */
+export function formatInfantAgeList(ages: unknown): string | null {
+  if (!Array.isArray(ages)) return null;
+  const list = ages
+    .filter((age) => age != null && `${age}`.trim() !== '')
+    .map((age) => Number(age))
+    .filter((age) => Number.isFinite(age) && age >= 0);
+  if (!list.length) return null;
+  return list.map((age) => `${age} month${age === 1 ? '' : 's'}`).join(', ');
+}

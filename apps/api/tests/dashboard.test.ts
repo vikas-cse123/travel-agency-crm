@@ -1105,6 +1105,90 @@ describe('Quotation KPIs: unique count and agency revenue', () => {
     expect((await kpisOf(client)).agencyRevenue).toBe('0.00');
   });
 
+  it('excludes a confirmed lead created outside the period even with a new quotation', async () => {
+    // Regression for the Converted-0 / Revenue-90000 mismatch: revenue must
+    // follow the lead creation-date range exactly like Converted Leads, so a
+    // quotation raised now on an older confirmed lead contributes nothing.
+    const client = await owner('owner@rev-old-lead.test', 'Revenue Old Lead');
+    const old = await seedLead(client, { customerName: 'Old Lead' });
+    await db.query.update({
+      where: { id: old.id },
+      data: { createdAt: new Date('2020-01-05T00:00:00Z') },
+    });
+    await setStage(old.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(client, old.id, 90000);
+    const res = await client.get('/api/dashboard/analytics?period=THIS_YEAR');
+    expect(res.status).toBe(200);
+    expect(res.body.data.leads.convertedLeads).toBe(0);
+    expect(res.body.data.quotations.agencyRevenue).toBe('0.00');
+  });
+
+  it('counts an in-period confirmed lead once while excluding an older one', async () => {
+    const client = await owner('owner@rev-mixed.test', 'Revenue Mixed');
+    const old = await seedLead(client, { customerName: 'Old Lead' });
+    await db.query.update({
+      where: { id: old.id },
+      data: { createdAt: new Date('2020-01-05T00:00:00Z') },
+    });
+    await setStage(old.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(client, old.id, 90000);
+    const fresh = await seedLead(client, { customerName: 'Fresh Lead' });
+    await setStage(fresh.id, 'BOOKING_CONFIRMED');
+    await quoteWithMargin(client, fresh.id, 25000);
+    const res = await client.get('/api/dashboard/analytics?period=THIS_YEAR');
+    expect(res.body.data.leads.convertedLeads).toBe(1);
+    expect(res.body.data.quotations.agencyRevenue).toBe('25000.00');
+  });
+
+  it('counts only the latest version of one quotation and the latest quotation per lead', async () => {
+    const client = await owner('owner@rev-versions.test', 'Revenue Versions');
+    const lead = await seedLead(client, { customerName: 'Versioned Lead' });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    const first = await quoteWithMargin(client, lead.id, 10000);
+    const second = await client.post(`/api/quotations/${first.id}/versions`, {
+      sourceVersionId: first.versions[0]!.id,
+    });
+    expect(second.status).toBe(201);
+    const secondVersion = await db.quotationVersion.findFirstOrThrow({
+      where: { quotationId: first.id },
+      orderBy: { versionNumber: 'desc' },
+    });
+    expect(secondVersion.versionNumber).toBeGreaterThan(1);
+    await db.quotationVersion.update({
+      where: { id: secondVersion.id },
+      data: { marginAmount: 60000 },
+    });
+    // A second quotation is newer, so only its margin counts — the lead's
+    // revenue is never the sum of its quotations or versions.
+    await quoteWithMargin(client, lead.id, 25000);
+    expect((await kpisOf(client)).agencyRevenue).toBe('25000.00');
+  });
+
+  it('applies the lead creation range consistently for ALL_TIME and custom periods', async () => {
+    const client = await owner('owner@rev-ranges.test', 'Revenue Ranges');
+    const lead = await seedLead(client, { customerName: 'Ranged Lead' });
+    await db.query.update({
+      where: { id: lead.id },
+      data: { createdAt: new Date('2020-01-05T00:00:00Z') },
+    });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    const quotation = await quoteWithMargin(client, lead.id, 90000);
+    await db.quotation.update({
+      where: { id: quotation.id },
+      data: { createdAt: new Date('2026-05-10T00:00:00Z') },
+    });
+    // Quotation in May but lead created in January 2020: a May-only window
+    // excludes it (lead range), and so does a January-2020-only window
+    // (quotation range). ALL_TIME includes it.
+    expect(
+      (await kpisOf(client, 'period=CUSTOM&from=2026-05-01&to=2026-05-31')).agencyRevenue,
+    ).toBe('0.00');
+    expect(
+      (await kpisOf(client, 'period=CUSTOM&from=2020-01-01&to=2020-01-31')).agencyRevenue,
+    ).toBe('0.00');
+    expect((await kpisOf(client, 'period=ALL_TIME')).agencyRevenue).toBe('90000.00');
+  });
+
   it('returns zero revenue safely when margins are missing', async () => {
     const client = await owner();
     // Confirmed lead with no quotation at all.

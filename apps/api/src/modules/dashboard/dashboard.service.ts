@@ -537,7 +537,7 @@ export const dashboardService = {
       rejectedQuotations: rejected,
       totalQuotedValue: money(valueAgg._sum.finalAmount),
       quotationAcceptanceRate: percent(accepted, accepted + rejected),
-      agencyRevenue: await this.agencyRevenue(auth, where),
+      agencyRevenue: await this.agencyRevenue(auth, where, dateFilter),
     };
   },
 
@@ -552,24 +552,30 @@ export const dashboardService = {
    * percentage: `marginAmount` is the persisted earnings amount. Latest
    * quotation = newest `createdAt` (the application's quotation ordering);
    * latest version = highest `versionNumber`. Scoping mirrors
-   * quotationMetrics (company, visibility, caller filters); only the stage
-   * gate is added. Missing versions or null margins contribute nothing, so
-   * the KPI is always a number, never NaN.
+   * quotationMetrics (company, visibility, caller filters) plus the lead
+   * creation-date range, so the KPI covers exactly the same lead population
+   * as Converted Leads: only the stage gate is added beyond that. Missing
+   * versions or null margins contribute nothing, so the KPI is always a
+   * number, never NaN.
    */
   async agencyRevenue(
     auth: AuthContext,
     quotationWhere: Prisma.QuotationWhereInput,
+    leadDateFilter: CreatedFilter,
   ): Promise<string> {
     const rows = await prisma.quotation.findMany({
       where: {
         ...quotationWhere,
         // Replaces quotationWhere.query: same company + visibility scoping,
-        // plus the current-stage gate (no history, no booking join).
+        // plus the current-stage gate (no history, no booking join) and the
+        // lead creation-date range shared with Converted Leads — a quotation
+        // raised in-period on an older lead contributes nothing.
         query: {
           is: {
             companyId: auth.companyId,
             ...(await queryVisibility(auth)),
             leadStage: 'BOOKING_CONFIRMED',
+            ...leadDateFilter,
           },
         },
       },

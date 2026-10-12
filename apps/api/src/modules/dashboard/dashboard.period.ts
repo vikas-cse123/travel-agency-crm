@@ -11,6 +11,11 @@ export interface ResolvedPeriod {
   timezone: string;
 }
 
+/** Calendar Y/M/D read from the UTC instant itself, ignoring any timezone. */
+function utcParts(date: Date) {
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
 /** Local calendar Y/M/D for a UTC instant in the given timezone. */
 function localParts(timezone: string, reference: Date) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -27,8 +32,11 @@ function localParts(timezone: string, reference: Date) {
  * Resolve a dashboard period into a half-open [from, to) UTC range in the
  * company timezone. All boundaries align to local midnight, matching the
  * conventions used by the follow-up and reminder analytics. ALL_TIME applies no
- * created-date filter (both bounds null). CUSTOM uses the supplied dates, taking
- * the start of `from`'s local day and the start of the day after `to`.
+ * created-date filter (both bounds null). CUSTOM uses the supplied dates as
+ * company-timezone calendar days: date-only inputs arrive as UTC-midnight
+ * instants, so their UTC calendar components — not the zoned wall clock —
+ * define the intended day. This keeps Asia/Kolkata behavior identical while
+ * fixing an off-by-one for company timezones behind UTC.
  */
 export function resolvePeriod(
   period: DashboardPeriod,
@@ -40,7 +48,6 @@ export function resolvePeriod(
   const { start: todayStart, end: todayEnd } = localDayBounds(timezone, reference);
   const { year, month } = localParts(timezone, reference);
   const startOfDay = (date: Date) => localDayBounds(timezone, date).start;
-  const dayAfter = (date: Date) => localDayBounds(timezone, date).end;
 
   switch (period) {
     case 'TODAY':
@@ -85,7 +92,19 @@ export function resolvePeriod(
       if (!from || !to)
         throw new ValidationError('A custom period requires both from and to dates.');
       if (from > to) throw new ValidationError('The start date must be on or before the end date.');
-      return { key: period, from: startOfDay(from), to: dayAfter(to), timezone };
+      const fromParts = utcParts(from);
+      const toParts = utcParts(to);
+      return {
+        key: period,
+        from: zonedTimeToUtc(timezone, fromParts.year, fromParts.month, fromParts.day),
+        to: zonedTimeToUtc(
+          timezone,
+          toParts.year,
+          toParts.month,
+          toParts.day + 1,
+        ),
+        timezone,
+      };
     }
     default:
       return {

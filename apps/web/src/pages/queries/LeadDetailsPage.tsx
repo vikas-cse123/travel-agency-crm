@@ -81,17 +81,6 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
-const formatMoney = (value: string | number | null | undefined, currency = 'INR'): string => {
-  if (value === null || value === undefined || value === '') return '—';
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return '—';
-  try {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(amount);
-  } catch {
-    return String(amount);
-  }
-};
-
 /** Passenger count with optional per-child ages: "2 (ages 4, 6)", "1 (age 8)", "1 (9 months)". */
 const countWithAges = (
   count: number,
@@ -181,10 +170,6 @@ export function LeadDetailsPage() {
       timeZone: workspace.data.timezone,
     }).format(new Date(value));
 
-  const latestQuotation =
-    workspace.data.quotations.latest ?? workspace.data.quotations.items[0] ?? null;
-  const latestVersion = latestQuotation?.versions[0] ?? null;
-
   const travelDateLabel =
     [
       leadTravelDatesLabel(
@@ -208,17 +193,6 @@ export function LeadDetailsPage() {
     'age',
   );
   const infantsLabel = countWithAges(q.infants, q.infantAges, 'month');
-  const hasAdditionalData =
-    Boolean(q.tripType) ||
-    latestVersion != null ||
-    Boolean(q.expectedAmount) ||
-    Boolean(q.budgetMin) ||
-    Boolean(q.budgetMax) ||
-    Boolean(q.expectedMargin) ||
-    Boolean(q.lastContactedAt) ||
-    q.customer != null ||
-    Boolean(q.internalRemarks?.trim()) ||
-    Boolean(q.supplierCostingNotes?.trim());
 
   return (
     <div className="space-y-5">
@@ -354,63 +328,6 @@ export function LeadDetailsPage() {
             </Section>
           )}
 
-          {hasAdditionalData && (
-            <Section title="Additional Information" icon={FileText}>
-              <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {q.tripType && <Info label="Trip type">{q.tripType}</Info>}
-                {latestVersion && latestQuotation && (
-                  <Info label="Latest quotation">
-                    <Link
-                      className="text-brand-700 hover:underline"
-                      to={`/quotations/${latestQuotation.id}`}
-                    >
-                      {latestQuotation.quotationNumber}
-                    </Link>{' '}
-                    · {formatMoney(latestVersion.finalAmount, latestVersion.currency)}
-                  </Info>
-                )}
-                {q.expectedAmount && (
-                  <Info label="Expected amount">
-                    {formatMoney(q.expectedAmount, q.currency)}
-                  </Info>
-                )}
-                {(q.budgetMin || q.budgetMax) && (
-                  <Info label="Budget">
-                    {`${formatMoney(q.budgetMin ?? q.budgetMax, q.currency)} – ${formatMoney(q.budgetMax ?? q.budgetMin, q.currency)}`}
-                  </Info>
-                )}
-                {q.expectedMargin && (
-                  <Info label="Expected margin">
-                    {formatMoney(q.expectedMargin, q.currency)}
-                  </Info>
-                )}
-                {q.lastContactedAt && (
-                  <Info label="Last contacted">{dateTime(q.lastContactedAt)}</Info>
-                )}
-                {q.customer && (
-                  <Info label="Customer record">
-                    {`${q.customer.customerNumber} · ${q.customer.displayName}`}
-                  </Info>
-                )}
-              </dl>
-              {q.internalRemarks?.trim() && (
-                <div className="mt-4">
-                  <h3 className="text-sm font-semibold text-slate-800">Internal remarks</h3>
-                  <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    {q.internalRemarks}
-                  </p>
-                </div>
-              )}
-              {q.supplierCostingNotes?.trim() && (
-                <div className="mt-4">
-                  <h3 className="text-sm font-semibold text-slate-800">Supplier costing notes</h3>
-                  <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    {q.supplierCostingNotes}
-                  </p>
-                </div>
-              )}
-            </Section>
-          )}
         </div>
       )}
 

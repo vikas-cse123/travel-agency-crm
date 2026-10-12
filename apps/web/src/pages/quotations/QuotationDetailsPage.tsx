@@ -1,28 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  Bold,
   Copy,
   Download,
   Pencil,
   ExternalLink,
   FileText,
-  Heading1,
   Image as ImageIcon,
-  Italic,
-  List,
-  Mail,
   MessageCircle,
-  Plane,
   Plus,
   Send,
-  Ship,
   Sparkles,
   TicketCheck,
-  CarFront,
-  RotateCcw,
   Trash2,
-  X,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { labelForLookup, PERMISSIONS, validateQuotationPricing } from '@interscale/shared';
@@ -45,12 +35,11 @@ import { apiClient } from '@/api/client';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { quotationKeys } from '@/features/quotations/quotations.api';
 import { WeblinkVisitors } from '@/features/quotations/WeblinkVisitors';
+import { WhatsappSummaryDialog } from './WhatsappSummaryDialog';
 import { resolveTravelDates } from '@/features/quotations/travel-dates';
 import { formatDateTime12Hour } from '@/utils/dateTime';
 import {
   buildWhatsAppSummary,
-  richHtmlToWhatsappMarkdown,
-  whatsappMarkdownToHtml,
 } from '@/features/quotations/whatsappSummary';
 
 /** Trigger a normal browser download for a generated document URL. */
@@ -137,14 +126,6 @@ export function QuotationDetailsPage() {
     }
   };
   const [whatsappOpen, setWhatsappOpen] = useState(false);
-  const [summaryCopied, setSummaryCopied] = useState(false);
-  const summaryCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [includeFlights, setIncludeFlights] = useState(false);
-  const [includeCruises, setIncludeCruises] = useState(false);
-  const [includeVehicles, setIncludeVehicles] = useState(false);
-  const [whatsappHtml, setWhatsappHtml] = useState('');
-  const whatsappEditorRef = useRef<HTMLDivElement | null>(null);
-  const [whatsappResetKey, setWhatsappResetKey] = useState(0);
   const [hasAttemptedFinalize, setHasAttemptedFinalize] = useState(false);
   // Public weblink URL once provisioned, tagged with the version it belongs to.
   // Reset whenever the current version changes so Copy/Open always target the
@@ -184,42 +165,6 @@ export function QuotationDetailsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.data, publicLinkVersionId, publicLinkUrl]);
 
-  // Keep editable WhatsApp HTML in sync when optional toggles or weblink change while dialog is open.
-  // Must be before any early return to keep hook order stable.
-  useEffect(() => {
-    if (!whatsappOpen) return;
-    const data = query.data;
-    if (!data) return;
-    const currentV =
-      (data as unknown as { versions: typeof data.versions; currentVersionId: string | null }).versions.find(
-        (v) => v.id === (data as unknown as { currentVersionId: string | null }).currentVersionId,
-      ) ?? data.versions[0];
-    if (!currentV) return;
-    const base = buildWhatsAppSummary({
-      quotation: data as unknown as Parameters<typeof buildWhatsAppSummary>[0]['quotation'],
-      version: currentV as unknown as Parameters<typeof buildWhatsAppSummary>[0]['version'],
-      weblinkUrl: publicLinkUrl,
-      companyName: user?.company.name ?? 'Travel Agency CRM',
-      preparedByName:
-        (data as unknown as { createdBy?: { fullName?: string | null } }).createdBy?.fullName ??
-        (currentV as unknown as { createdBy?: { fullName?: string | null } }).createdBy?.fullName ??
-        user?.fullName ??
-        null,
-      options: { includeFlights, includeCruises, includeVehicles },
-    });
-    setWhatsappHtml(whatsappMarkdownToHtml(base));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [whatsappOpen, includeFlights, includeCruises, includeVehicles, publicLinkUrl, query.data]);
-
-  // Push generated HTML into the contentEditable DOM (avoids controlled re-render cursor jumps)
-  useEffect(() => {
-    if (!whatsappOpen) return;
-    if (!whatsappEditorRef.current) return;
-    if (whatsappEditorRef.current.innerHTML !== whatsappHtml) {
-      whatsappEditorRef.current.innerHTML = whatsappHtml;
-    }
-  }, [whatsappHtml, whatsappOpen]);
-
   useEffect(() => {
     setHasAttemptedFinalize(false);
   }, [query.data?.id, query.data?.currentVersionId]);
@@ -229,6 +174,16 @@ export function QuotationDetailsPage() {
     return <div className="rounded-xl bg-card p-12 text-center">Quotation unavailable.</div>;
   const q = query.data;
   const current = q.versions.find((version) => version.id === q.currentVersionId) ?? q.versions[0];
+  // Documents panel shows only the current version's generated PDF plus
+  // manually uploaded attachments. Generated PDFs carry their version in
+  // `quotationVersionId`, so older versions' PDFs are excluded by that
+  // reliable metadata (never by filename) while nothing is deleted from
+  // storage or the database.
+  const visibleDocuments = q.documents.filter(
+    (document) =>
+      document.documentType !== 'QUOTATION_PDF' ||
+      (current != null && document.quotationVersionId === current.id),
+  );
   const pricingIssues = (() => {
     if (!current) return [] as ReturnType<typeof validateQuotationPricing>;
     try {
@@ -334,65 +289,12 @@ export function QuotationDetailsPage() {
       // Copy failed — do not show "Copied!".
     }
   };
-  const buildBaseWhatsAppSummary = (overrides?: {
-    weblinkUrl?: string | null;
-    includeFlights?: boolean;
-    includeCruises?: boolean;
-    includeVehicles?: boolean;
-  }) =>
-    q && current
-      ? buildWhatsAppSummary({
-          quotation: q,
-          version: current,
-          weblinkUrl: overrides?.weblinkUrl !== undefined ? overrides.weblinkUrl : publicLinkUrl,
-          companyName: user?.company.name ?? 'Travel Agency CRM',
-          preparedByName: q.createdBy?.fullName ?? current.createdBy?.fullName ?? user?.fullName ?? null,
-          options: {
-            includeFlights: overrides?.includeFlights ?? includeFlights,
-            includeCruises: overrides?.includeCruises ?? includeCruises,
-            includeVehicles: overrides?.includeVehicles ?? includeVehicles,
-          },
-        })
-      : '';
-
   const openWhatsappSummary = async () => {
-    let url = publicLinkUrl;
-    if (current?.status !== 'DRAFT' && !url) {
-      url = await ensurePublicLink();
+    if (current?.status !== 'DRAFT' && !publicLinkUrl) {
+      await ensurePublicLink();
     }
-    const base = buildBaseWhatsAppSummary({ weblinkUrl: url });
-    setWhatsappHtml(whatsappMarkdownToHtml(base));
+    // The shared dialog builds the message itself from the quotation data.
     setWhatsappOpen(true);
-  };
-
-  const execRichCommand = (command: string, value?: string) => {
-    const editor = whatsappEditorRef.current;
-    if (!editor) return;
-    editor.focus();
-    try {
-      document.execCommand(command, false, value);
-    } catch {
-      // Fallback no-op; toolbar still focuses editor for manual typing.
-    }
-    // Sync HTML state after command
-    setWhatsappHtml(editor.innerHTML);
-  };
-
-  const copyWhatsappSummary = async () => {
-    const editor = whatsappEditorRef.current;
-    // Prefer the live rich HTML from the editor (includes user edits), fallback to stored html
-    const html = editor?.innerHTML ?? whatsappHtml;
-    const fallbackMarkdown = buildBaseWhatsAppSummary();
-    const text = html ? richHtmlToWhatsappMarkdown(html) : fallbackMarkdown;
-    if (!text.trim()) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setSummaryCopied(true);
-      if (summaryCopyTimerRef.current) clearTimeout(summaryCopyTimerRef.current);
-      summaryCopyTimerRef.current = setTimeout(() => setSummaryCopied(false), 1800);
-    } catch {
-      // Copy failed — do not show "Copied!".
-    }
   };
   const generateIntoNewTab = async (
     style: 'CLASSIC' | 'STYLISH',
@@ -694,12 +596,7 @@ export function QuotationDetailsPage() {
             )}
             {current && (
               <TooltipProvider delayDuration={0}>
-                <Tooltip
-                  open={summaryCopied}
-                  onOpenChange={(open) => {
-                    if (!open) setSummaryCopied(false);
-                  }}
-                >
+                <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       className="w-full sm:w-auto"
@@ -710,7 +607,7 @@ export function QuotationDetailsPage() {
                       WhatsApp Message
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>{summaryCopied ? 'Copied!' : 'WhatsApp Message'}</TooltipContent>
+                  <TooltipContent>WhatsApp Message</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             )}
@@ -822,8 +719,8 @@ export function QuotationDetailsPage() {
           )}
           {uploadError && <p className="mt-2 text-xs text-red-700">{uploadError}</p>}
           <div className="mt-3 space-y-3">
-            {q.documents.length ? (
-              q.documents.map((document) => (
+            {visibleDocuments.length ? (
+              visibleDocuments.map((document) => (
                 <article key={document.id} className="rounded-lg bg-slate-50 p-3">
                   <p className="truncate text-sm font-medium">{document.fileName}</p>
                   <p className="text-xs text-slate-500">
@@ -857,32 +754,6 @@ export function QuotationDetailsPage() {
           </div>
         </section>
       </div>
-      <section className="rounded-xl border bg-card p-5">
-        <h2 className="flex items-center gap-2 font-semibold">
-          <Mail className="h-4 w-4" />
-          Email history
-        </h2>
-        <div className="mt-3 divide-y">
-          {q.emailLogs.length ? (
-            q.emailLogs.map((log) => (
-              <article key={log.id} className="py-3">
-                <div className="flex justify-between">
-                  <strong>{log.recipientEmail}</strong>
-                  <span className="text-xs">{labelForLookup(log.status)}</span>
-                </div>
-                <p className="text-sm text-slate-600">{log.subject}</p>
-                <p className="text-xs text-slate-500">
-                  {log.sentAt
-                    ? formatDateTime12Hour(log.sentAt)
-                    : formatDateTime12Hour(log.createdAt)}
-                </p>
-              </article>
-            ))
-          ) : (
-            <p className="text-sm text-slate-500">No emails sent yet.</p>
-          )}
-        </div>
-      </section>
       <section className="rounded-xl border bg-card p-5">
         <h2 className="font-semibold">Activity timeline</h2>
         <div className="mt-3 space-y-3">
@@ -1215,180 +1086,17 @@ export function QuotationDetailsPage() {
         </div>
       )}
       {whatsappOpen && current && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="whatsapp-summary-title"
-            className="flex max-h-[85vh] w-full max-w-[640px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
-          >
-            {/* Header — compact and CRM-aligned */}
-            <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4">
-              <div className="flex gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100">
-                  <MessageCircle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 id="whatsapp-summary-title" className="text-[15px] font-semibold leading-none text-slate-900">
-                    WhatsApp Message
-                  </h2>
-                  <p className="mt-1 text-xs leading-4 text-slate-500">
-                    Clean share text — pricing stays in the weblink. Edit freely.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => setWhatsappOpen(false)}
-                className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Add sections — subtle pill control */}
-            <div className="flex items-center gap-2 border-y border-slate-100 bg-slate-50/60 px-6 py-2.5">
-              <span className="shrink-0 text-xs font-medium text-slate-500">Add sections</span>
-              <div className="flex items-center gap-1.5">
-                {[
-                  { key: 'flights', label: 'Flights', Icon: Plane, active: includeFlights, setter: setIncludeFlights },
-                  { key: 'cruises', label: 'Cruises', Icon: Ship, active: includeCruises, setter: setIncludeCruises },
-                  { key: 'vehicles', label: 'Vehicles', Icon: CarFront, active: includeVehicles, setter: setIncludeVehicles },
-                ].map(({ key, label, Icon, active, setter }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => (setter as (v: boolean) => void)(!active)}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
-                      active
-                        ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  // Regenerate from current quotation data, discarding manual edits in the editor
-                  const base = buildBaseWhatsAppSummary();
-                  const html = whatsappMarkdownToHtml(base);
-                  // Increment key to force remount and ensure immediate visual update, works repeatedly
-                  setWhatsappResetKey((k) => k + 1);
-                  setWhatsappHtml(html);
-                  // Ensure DOM is updated even if html is same as before (repeated resets)
-                  requestAnimationFrame(() => {
-                    if (whatsappEditorRef.current) {
-                      whatsappEditorRef.current.innerHTML = html;
-                    }
-                  });
-                }}
-                className="ml-auto inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:bg-white hover:text-slate-700"
-                title="Reset to generated default"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Reset
-              </button>
-            </div>
-
-            {/* Toolbar — compact, intuitive */}
-            <div className="flex items-center gap-1 border-b border-slate-100 bg-white px-3 py-2">
-              <button
-                type="button"
-                title="Bold"
-                aria-label="Bold"
-                onClick={() => execRichCommand('bold')}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100"
-              >
-                <Bold className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                title="Italic"
-                aria-label="Italic"
-                onClick={() => execRichCommand('italic')}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100"
-              >
-                <Italic className="h-4 w-4" />
-              </button>
-              <div className="mx-1 h-4 w-px bg-slate-200" />
-              <button
-                type="button"
-                title="Bulleted list"
-                aria-label="Bulleted list"
-                onClick={() => execRichCommand('insertUnorderedList')}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100"
-              >
-                <List className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                title="Heading"
-                aria-label="Heading"
-                onClick={() => execRichCommand('formatBlock', '<h3>')}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100"
-              >
-                <Heading1 className="h-4 w-4" />
-              </button>
-              <span className="ml-auto hidden text-xs text-slate-400 sm:inline">Select text to format</span>
-            </div>
-
-            {/* Rich-text editor — shows formatted text, not markdown */}
-            <div className="flex-1 overflow-auto bg-[#fcfcfc] p-4">
-              <div
-                key={whatsappResetKey}
-                ref={whatsappEditorRef}
-                contentEditable
-                suppressContentEditableWarning
-                role="textbox"
-                aria-multiline="true"
-                aria-label="WhatsApp summary editor"
-                data-placeholder="Summary will appear here…"
-                onInput={(e) => setWhatsappHtml((e.currentTarget as HTMLDivElement).innerHTML)}
-                className="rich-text-content min-h-[320px] rounded-xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-800 shadow-sm prose prose-sm max-w-none prose-p:my-1.5 prose-headings:mt-6 prose-headings:mb-2 prose-hr:my-5 prose-li:my-1 prose-strong:font-semibold prose-strong:text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-300 [&:empty:before]:content-[attr(data-placeholder)] [&:empty:before]:text-slate-400"
-              />
-              <p className="mt-3 text-center text-xs text-slate-400">
-                Styled for you — bold, bullets and headings are rendered. Copied as WhatsApp-ready text.
-              </p>
-            </div>
-
-            {/* Footer — cleanly positioned */}
-            <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-white px-6 py-4">
-              <span className="text-xs text-slate-400">
-                {publicLinkUrl ? 'Weblink included' : 'Weblink pending'} • No pricing
-              </span>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setWhatsappOpen(false)} className="text-slate-600">
-                  Close
-                </Button>
-                <TooltipProvider delayDuration={0}>
-                  <Tooltip
-                    open={summaryCopied}
-                    onOpenChange={(open) => {
-                      if (!open) setSummaryCopied(false);
-                    }}
-                  >
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={() => void copyWhatsappSummary()}
-                        className="bg-slate-900 px-5 text-white shadow-sm hover:bg-slate-800"
-                      >
-                        <Copy className="h-4 w-4" />
-                        {summaryCopied ? 'Copied!' : 'Copy'}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{summaryCopied ? 'Copied!' : 'Copy to clipboard'}</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-            </div>
-          </div>
-        </div>
+        <WhatsappSummaryDialog
+          open={whatsappOpen}
+          onClose={() => setWhatsappOpen(false)}
+          quotation={q as unknown as Parameters<typeof buildWhatsAppSummary>[0]['quotation']}
+          version={current as unknown as Parameters<typeof buildWhatsAppSummary>[0]['version']}
+          weblinkUrl={publicLinkUrl}
+          companyName={user?.company.name ?? 'Travel Agency CRM'}
+          preparedByName={
+            q.createdBy?.fullName ?? current.createdBy?.fullName ?? user?.fullName ?? null
+          }
+        />
       )}
       {deleteConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

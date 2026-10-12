@@ -2243,7 +2243,7 @@ describe('Phase 17 lead workspace tabs', () => {
     expect(screen.getByRole('link', { name: 'Convert to booking' })).toBeInTheDocument();
   });
 
-  it('shows a unified Lead Information tab with contact, travel and additional sections', async () => {
+  it('shows a unified Lead Information tab with contact, travel and trip sections', async () => {
     stubWorkspace();
     renderWorkspace();
     await screen.findByText('Contact Information');
@@ -2252,8 +2252,9 @@ describe('Phase 17 lead workspace tabs', () => {
     expect(screen.getByText('Services Required')).toBeInTheDocument();
     expect(screen.getByText('Itinerary')).toBeInTheDocument();
     expect(screen.getByText(/Bangkok/)).toBeInTheDocument();
-    expect(screen.getByText('Additional Information')).toBeInTheDocument();
-    expect(screen.getByText('Latest quotation')).toBeInTheDocument();
+    // Additional Information was removed from the page entirely.
+    expect(screen.queryByText('Additional Information')).not.toBeInTheDocument();
+    expect(screen.queryByText('Latest quotation')).not.toBeInTheDocument();
     // Old Overview/Travel tabs are gone; history lives under Timeline.
     expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Travel & Itinerary' })).not.toBeInTheDocument();

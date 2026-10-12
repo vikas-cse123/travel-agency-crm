@@ -3,6 +3,7 @@ import {
   cabinLuggageLabel,
   formatAgeList,
   formatDayPrefixedTitle,
+  formatInfantAgeList,
   formatItineraryDayTitle,
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
@@ -1658,7 +1659,9 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
     ...(formatAgeList(q.childrenWithoutBedAges)
       ? [['CWOB Ages', formatAgeList(q.childrenWithoutBedAges) as string]]
       : []),
-    ...(formatAgeList(q.infantAges) ? [['Infant Ages', formatAgeList(q.infantAges) as string]] : []),
+    ...(formatInfantAgeList(q.infantAges)
+      ? [['Infant Ages', formatInfantAgeList(q.infantAges) as string]]
+      : []),
     ['Quotation ID', q.quotationNumber],
   ].filter(([, val]) => Boolean(val)) as Array<[string, string]>;
 

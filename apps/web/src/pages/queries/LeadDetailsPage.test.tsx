@@ -370,14 +370,12 @@ describe('Lead Detail page redesign', () => {
     // No "Dates open" placeholder anywhere in the itinerary.
     expect(screen.queryByText('Dates open')).not.toBeInTheDocument();
 
-    // Additional Information without duplication.
-    expect(screen.getByText('Additional Information')).toBeInTheDocument();
-    expect(screen.getByText('Leisure')).toBeInTheDocument();
-    expect(screen.getByText('Latest quotation')).toBeInTheDocument();
-    expect(screen.getByText(/2,50,000/)).toBeInTheDocument();
-    expect(screen.getByText(/1,00,000/)).toBeInTheDocument();
-    expect(screen.getByText('VIP customer, handle with care')).toBeInTheDocument();
-    expect(screen.getByText('Prefer morning flights')).toBeInTheDocument();
+    // Additional Information was removed from the page entirely.
+    expect(screen.queryByText('Additional Information')).not.toBeInTheDocument();
+    expect(screen.queryByText('Latest quotation')).not.toBeInTheDocument();
+    expect(screen.queryByText('Leisure')).not.toBeInTheDocument();
+    expect(screen.queryByText('VIP customer, handle with care')).not.toBeInTheDocument();
+    expect(screen.queryByText('Prefer morning flights')).not.toBeInTheDocument();
     view.unmount();
   });
 

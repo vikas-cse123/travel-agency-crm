@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowRight,
@@ -365,13 +366,37 @@ export function DashboardPage() {
   const [applied, setApplied] = useState<DashboardParams>({ period: 'THIS_YEAR' });
 
   const analytics = useDashboardAnalytics(applied);
+  const queryClient = useQueryClient();
 
-  const apply = () =>
+  // A custom range is only submittable with both dates in order (date
+  // inputs emit YYYY-MM-DD, so lexicographic comparison is chronological).
+  // Anything else keeps the previous applied range instead of firing a
+  // request the backend would reject with a 400.
+  const customRangeError =
+    period === 'CUSTOM'
+      ? !from || !to
+        ? 'Select both a start and an end date.'
+        : from > to
+          ? 'The start date must be on or before the end date.'
+          : null
+      : null;
+
+  const apply = () => {
+    if (customRangeError) return;
     setApplied({
       period,
       ...(period === 'CUSTOM' && from ? { from } : {}),
       ...(period === 'CUSTOM' && to ? { to } : {}),
     });
+  };
+
+  // Refresh refetches the analytics and the independent Upcoming Travel
+  // queries together. The applied period is untouched, so no draft state
+  // leaks in; each query keeps its own key, cancellation and error state.
+  const refreshAll = () => {
+    void analytics.refetch();
+    void queryClient.refetchQueries({ queryKey: ['dashboard', 'upcoming-travel'] });
+  };
 
   const data = analytics.data;
   const caps = data?.capabilities;
@@ -408,6 +433,7 @@ export function DashboardPage() {
               <input
                 aria-label="Custom from date"
                 type="date"
+                aria-invalid={customRangeError ? true : undefined}
                 className="rounded-md border border-slate-300 bg-card px-2 py-1.5 text-sm"
                 value={from}
                 onChange={(event) => setFrom(event.target.value)}
@@ -415,16 +441,22 @@ export function DashboardPage() {
               <input
                 aria-label="Custom to date"
                 type="date"
+                aria-invalid={customRangeError ? true : undefined}
                 className="rounded-md border border-slate-300 bg-card px-2 py-1.5 text-sm"
                 value={to}
                 onChange={(event) => setTo(event.target.value)}
               />
             </>
           )}
-          <Button size="sm" onClick={apply}>
+          <Button size="sm" onClick={apply} disabled={customRangeError !== null}>
             Apply
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => void analytics.refetch()}>
+          {customRangeError && (
+            <p role="alert" className="w-full text-xs font-medium text-red-600">
+              {customRangeError}
+            </p>
+          )}
+          <Button size="sm" variant="secondary" onClick={refreshAll}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
@@ -515,9 +547,14 @@ export function DashboardPage() {
           )}
 
           {caps?.canViewLeads && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <UpcomingTravelCard kind="confirmed" />
-              <UpcomingTravelCard kind="others" />
+            <div>
+              <p className="mb-2 text-xs text-slate-500">
+                Upcoming travel always shows all future trips, regardless of the selected period.
+              </p>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <UpcomingTravelCard kind="confirmed" />
+                <UpcomingTravelCard kind="others" />
+              </div>
             </div>
           )}
 

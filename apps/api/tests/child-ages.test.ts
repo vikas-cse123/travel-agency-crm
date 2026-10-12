@@ -5,7 +5,7 @@ import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
-import { formatAgeList } from '@interscale/shared';
+import { formatAgeList, formatInfantAgeList } from '@interscale/shared';
 
 let app: Express;
 let db: PrismaClient;
@@ -106,6 +106,20 @@ async function setup(leadOverrides: Record<string, unknown> = {}) {
   return { client, lead: lead.body.data, quotation, version: quotation.versions[0] };
 }
 
+/** Latest generated PDF bytes for a quotation (tests use the in-memory storage). */
+async function latestQuotationPdfBytes(quotationId: string): Promise<Buffer> {
+  const document = await db.quotationDocument.findFirst({
+    where: { quotationId },
+    orderBy: { createdAt: 'desc' },
+  });
+  expect(document).toBeTruthy();
+  const { storageService } = await import('../src/services/storage/storage.service.js');
+  const memory = storageService as unknown as { read(key: string): Buffer | undefined };
+  const bytes = memory.read(document!.objectKey);
+  expect(bytes).toBeTruthy();
+  return bytes as Buffer;
+}
+
 describe('child ages: lead → quotation → PDF + weblink', () => {
   it('TEST 1: stores CWB ages on the lead and carries them into the quotation', async () => {
     const { client, lead, quotation } = await setup({
@@ -178,20 +192,6 @@ describe('child ages: lead → quotation → PDF + weblink', () => {
     expect(publicView.body.data.quotation.childrenWithBedAges).toEqual([9, 12]);
   });
 
-  /** Latest generated PDF bytes for a quotation (tests use the in-memory storage). */
-  async function latestQuotationPdfBytes(quotationId: string): Promise<Buffer> {
-    const document = await db.quotationDocument.findFirst({
-      where: { quotationId },
-      orderBy: { createdAt: 'desc' },
-    });
-    expect(document).toBeTruthy();
-    const { storageService } = await import('../src/services/storage/storage.service.js');
-    const memory = storageService as unknown as { read(key: string): Buffer | undefined };
-    const bytes = memory.read(document!.objectKey);
-    expect(bytes).toBeTruthy();
-    return bytes as Buffer;
-  }
-
   it('generates a classic PDF with the ages on the cover (CWB Ages: 8, 10)', async () => {
     const { client, quotation, version } = await setup({ childrenWithBedAges: [8, 10] });
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
@@ -223,6 +223,72 @@ describe('child ages: lead → quotation → PDF + weblink', () => {
       const visible = pdfText(bytes);
       expect(visible).toContain('CWB Ages');
       expect(visible).toContain('8, 10');
+    },
+  );
+});
+
+describe('infant ages: months unit in PDF + weblink', () => {
+  it('formats every infant age with an explicit month unit', () => {
+    expect(formatInfantAgeList([8])).toBe('8 months');
+    expect(formatInfantAgeList([8, 10])).toBe('8 months, 10 months');
+    expect(formatInfantAgeList([1])).toBe('1 month');
+    expect(formatInfantAgeList(null)).toBeNull();
+    expect(formatInfantAgeList([])).toBeNull();
+    expect(formatInfantAgeList([8, null, 10])).toBe('8 months, 10 months');
+    // CWB/CWOB formatting is unchanged (years, no unit).
+    expect(formatAgeList([8, 10])).toBe('8, 10');
+  });
+
+  it('carries infant ages lead → quotation → public weblink data unchanged', async () => {
+    const { client, lead, quotation, version } = await setup({
+      infants: 1,
+      infantAges: [8],
+    });
+    expect(lead.infantAges).toEqual([8]);
+    const reloaded = (await client.get(`/api/quotations/${quotation.id}`)).body.data;
+    expect(reloaded.infantAges).toEqual([8]);
+    await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
+    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+      quotationVersionId: version.id,
+    });
+    expect(link.status).toBe(200);
+    const token = link.body.data.url.split('/q/')[1];
+    const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
+    expect(publicView.status).toBe(200);
+    expect(publicView.body.data.quotation.infantAges).toEqual([8]);
+  });
+
+  it('generates a classic PDF with infant ages in months on the cover', async () => {
+    const { client, quotation, version } = await setup({ infants: 1, infantAges: [8] });
+    await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
+    const pdf = await client.post(
+      `/api/quotations/${quotation.id}/versions/${version.id}/generate-pdf`,
+      { force: true, style: 'CLASSIC' },
+    );
+    expect(pdf.status, JSON.stringify(pdf.body)).toBe(200);
+    const bytes = await latestQuotationPdfBytes(quotation.id);
+    expect(bytes.length).toBeGreaterThan(1000);
+    if (hasPdftotext) {
+      const visible = pdfText(bytes);
+      expect(visible).toContain('Infant Ages');
+      expect(visible).toContain('8 months');
+    }
+  });
+
+  itWithPdftotext(
+    'classic PDF prints "Infant Ages: 8 months, 10 months" for several infants',
+    async () => {
+      const { client, quotation, version } = await setup({ infants: 2, infantAges: [8, 10] });
+      await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
+      const pdf = await client.post(
+        `/api/quotations/${quotation.id}/versions/${version.id}/generate-pdf`,
+        { force: true, style: 'CLASSIC' },
+      );
+      expect(pdf.status).toBe(200);
+      const bytes = await latestQuotationPdfBytes(quotation.id);
+      const visible = pdfText(bytes);
+      expect(visible).toContain('Infant Ages');
+      expect(visible).toContain('8 months, 10 months');
     },
   );
 });

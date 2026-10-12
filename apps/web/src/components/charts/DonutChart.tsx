@@ -43,7 +43,8 @@ export function DonutChart({ data, size = 132 }: { data: DonutSlice[]; size?: nu
           const dash = fraction * circumference;
           const segment = (
             <circle
-              key={slice.label}
+              // Labels can repeat across slices; index keeps keys unique.
+              key={`${slice.label}-${index}`}
               cx={radius}
               cy={radius}
               r={inner}

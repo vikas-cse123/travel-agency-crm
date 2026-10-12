@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Pagination } from '@/components/ui/Pagination';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useQuotations } from '@/features/quotations/quotations.api';
+import { QuotationRowActions } from './QuotationRowActions';
 
 const field = 'h-10 rounded-lg border border-slate-300 bg-card px-3 text-sm';
 export function QuotationsPage() {
@@ -81,23 +82,20 @@ export function QuotationsPage() {
           <>
             <div className="hidden overflow-x-auto md:block">
               <table className="min-w-[760px] w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <thead className="bg-[#0dbb7a] text-xs uppercase text-white">
                   <tr>
-                    {['Quotation', 'Lead', 'Destination', 'Version', 'Created by', 'Created'].map(
-                      (value) => (
-                        <th key={value} className="px-4 py-3">
-                          {value}
-                        </th>
-                      ),
-                    )}
+                    {['Quotation', 'Lead', 'Destination', 'Created by', 'Actions'].map((value) => (
+                      <th key={value} className="border-r border-white/30 px-4 py-3 last:border-r-0">
+                        {value}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {list.data.data.map((quotation) => {
-                    const version = quotation.versions[0];
                     return (
                       <tr key={quotation.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-4">
+                        <td className="border-r border-slate-200 px-4 py-4 last:border-r-0">
                           <Link
                             className="font-semibold text-brand-700"
                             to={`/quotations/${quotation.id}`}
@@ -105,17 +103,16 @@ export function QuotationsPage() {
                             {quotation.quotationNumber}
                           </Link>
                         </td>
-                        <td className="px-4 py-4">
+                        <td className="border-r border-slate-200 px-4 py-4 last:border-r-0">
                           <Link className="text-brand-700" to={`/queries/${quotation.query.id}`}>
                             {quotation.query.queryNumber}
                           </Link>
                           <p>{quotation.customerName}</p>
                         </td>
-                        <td className="px-4 py-4">{quotation.destinationSummary}</td>
-                        <td className="px-4 py-4">v{version?.versionNumber ?? '—'}</td>
-                        <td className="px-4 py-4">{quotation.createdBy.fullName}</td>
-                        <td className="px-4 py-4">
-                          {new Date(quotation.createdAt).toLocaleDateString()}
+                        <td className="border-r border-slate-200 px-4 py-4 last:border-r-0">{quotation.destinationSummary}</td>
+                        <td className="border-r border-slate-200 px-4 py-4 last:border-r-0">{quotation.createdBy.fullName}</td>
+                        <td className="border-r border-slate-200 px-4 py-4 last:border-r-0">
+                          <QuotationRowActions quotation={quotation} />
                         </td>
                       </tr>
                     );
