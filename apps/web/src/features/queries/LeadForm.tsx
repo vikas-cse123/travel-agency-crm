@@ -213,7 +213,6 @@ function TravellerNameInputs({
   field,
   label,
   register,
-  placeholder = 'Full name (optional)',
 }: {
   count: number;
   field: (
@@ -225,7 +224,6 @@ function TravellerNameInputs({
     | `infantNames.${number}`;
   label: (index: number) => string;
   register: UseFormRegister<FormValues>;
-  placeholder?: string;
 }) {
   if (count <= 0) return null;
   return (
@@ -234,7 +232,6 @@ function TravellerNameInputs({
         <Field key={field(index)} label={label(index)}>
           <input
             className={inputClass}
-            placeholder={placeholder}
             maxLength={120}
             {...register(field(index))}
           />
@@ -940,28 +937,24 @@ export function LeadForm({
                   count={adultCount}
                   field={(index) => `adultNames.${index}` as const}
                   label={(index) => `Adult ${index + 1}`}
-                  placeholder="Full name"
                   register={register}
                 />
                 <TravellerNameInputs
                   count={childrenWithBedCount}
                   field={(index) => `childWithBedNames.${index}` as const}
                   label={(index) => `Child With Bed ${index + 1}`}
-                  placeholder="Full name"
                   register={register}
                 />
                 <TravellerNameInputs
                   count={childrenWithoutBedCount}
                   field={(index) => `childWithoutBedNames.${index}` as const}
                   label={(index) => `Child Without Bed ${index + 1}`}
-                  placeholder="Full name"
                   register={register}
                 />
                 <TravellerNameInputs
                   count={infantCount}
                   field={(index) => `infantNames.${index}` as const}
                   label={(index) => `Infant ${index + 1}`}
-                  placeholder="Full name"
                   register={register}
                 />
               </div>

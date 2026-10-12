@@ -1800,7 +1800,7 @@ describe('Phase 6 lead pages', () => {
       </Routes>,
       { route: `/queries/${lead.id}` },
     );
-    expect(await screen.findByRole('heading', { name: 'Aarav Mehta' })).toBeInTheDocument();
+    expect(await screen.findByText('Contact Information')).toBeInTheDocument();
     // Lead Information is the default tab; action controls are gated off by permissions.
     expect(screen.queryByRole('button', { name: 'Delete Lead' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
@@ -1974,77 +1974,63 @@ describe('Phase 17 lead list enrichment', () => {
     expect(screen.queryByRole('link', { name: 'Create follow-up' })).not.toBeInTheDocument();
   });
 
-  it('selects rows and performs a bulk assignment', async () => {
-    const mock = stubLeadList([enrichedLead]);
+  it('renders no checkbox column and starts the table with Lead ID', async () => {
+    stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('QRY-000001');
-    await userEvent.click(screen.getAllByLabelText('Select QRY-2026-000001')[0]!);
-    expect(screen.getByText('1 selected')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Assign' }));
-    await userEvent.selectOptions(screen.getByLabelText('Bulk assignee'), 'me');
-    await userEvent.click(screen.getByRole('button', { name: 'Assign leads' }));
-    await waitFor(() =>
-      expect(
-        mock.mock.calls.some(
-          ([url, options]) =>
-            String(url).endsWith('/queries/bulk-assignment') && options?.method === 'POST',
-        ),
-      ).toBe(true),
-    );
-  });
-
-  it('performs a bulk stage change', async () => {
-    const mock = stubLeadList([enrichedLead]);
-    renderWithProviders(<LeadsPage />);
-    await screen.findAllByText('QRY-000001');
-    await userEvent.click(screen.getAllByLabelText('Select page')[0]!);
-    await userEvent.click(screen.getByRole('button', { name: 'Change stage' }));
-    await userEvent.selectOptions(screen.getByLabelText('Bulk stage'), 'NEW_LEAD');
-    await userEvent.click(screen.getByRole('button', { name: 'Update stage' }));
-    await waitFor(() =>
-      expect(mock.mock.calls.some(([url]) => String(url).endsWith('/queries/bulk-stage'))).toBe(
-        true,
-      ),
-    );
+    // No header checkbox and no row checkboxes anywhere in the table.
+    // (The unrelated "Hot leads only" filter checkbox stays.)
+    const table = screen.getByRole('table');
+    expect(within(table).queryByRole('checkbox')).not.toBeInTheDocument();
+    // No bulk-actions UI without selection.
+    expect(screen.queryByText(/selected$/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Bulk actions' })).not.toBeInTheDocument();
+    // The first header cell is Lead ID, followed by the untouched columns.
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers[0]).toHaveTextContent('Lead ID');
+    // Row actions stay intact.
+    expect(screen.getAllByRole('link', { name: 'View lead' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: 'Edit lead' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Delete lead' }).length).toBeGreaterThan(0);
   });
 
   it('shows the export menu item only with export permission', async () => {
     stubLeadList([enrichedLead]);
     const view = renderWithProviders(<LeadsPage />);
     await screen.findAllByText('QRY-000001');
-    // Export lives inside the More actions menu, next to Create.
+    // Export Leads lives inside the More actions menu, next to Create.
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
     expect(screen.getByRole('menuitem', { name: /Export/ })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Import CSV/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Import Leads/i })).toBeInTheDocument();
     view.unmount();
     authState.permissions = new Set(['queries.view']);
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('QRY-000001');
-    // Without create/export permissions there is no More menu and no Export.
+    // Without create/export permissions there is no More menu and no Export Leads.
     expect(screen.queryByRole('button', { name: /More actions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /Export/ })).not.toBeInTheDocument();
-    // Without assign permission there are no selection checkboxes.
+    // The selection UI was removed: no checkboxes with or without permission.
     expect(screen.queryByLabelText('Select page')).not.toBeInTheDocument();
   });
 
-  it('keeps Create visible while Export and Import CSV live in the More menu', async () => {
+  it('keeps Create visible while Export Leads and Import Leads live in the More menu', async () => {
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('QRY-000001');
     expect(screen.getByRole('link', { name: /Add Lead/i })).toBeInTheDocument();
-    // No always-visible Export / Import CSV buttons.
+    // No always-visible Export Leads / Import Leads buttons.
     expect(
       screen.queryByRole('button', { name: /^Export$/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /Import CSV/i }),
+      screen.queryByRole('button', { name: /Import Leads/i }),
     ).not.toBeInTheDocument();
     const more = screen.getByRole('button', { name: /More actions/i });
     expect(more).toHaveAttribute('aria-haspopup', 'menu');
     await userEvent.click(more);
     expect(screen.getByRole('menu', { name: /More lead actions/i })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Import CSV/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Import Leads/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Export/ })).toBeInTheDocument();
   });
 
@@ -2054,8 +2040,8 @@ describe('Phase 17 lead list enrichment', () => {
     await screen.findAllByText('QRY-000001');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
     expect(screen.getByRole('menu', { name: /More lead actions/i })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
-    // Selecting Import CSV closes the menu and opens the import modal.
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
+    // Selecting Import Leads closes the menu and opens the import modal.
     expect(screen.queryByRole('menu', { name: /More lead actions/i })).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Import Leads' })).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
@@ -2211,9 +2197,10 @@ describe('Phase 17 lead workspace tabs', () => {
   it('defaults to the Lead Information tab and switches between tabs', async () => {
     stubWorkspace();
     renderWorkspace();
-    expect(await screen.findByRole('heading', { name: 'Aarav Mehta' })).toBeInTheDocument();
-    // Lead Information shows the lead-actions panel.
-    expect(screen.getByText('Lead actions')).toBeInTheDocument();
+    expect(await screen.findByText('Contact Information')).toBeInTheDocument();
+    // The right-side panels are gone: no Lead actions, no Payments card.
+    expect(screen.queryByText('Lead actions')).not.toBeInTheDocument();
+    expect(screen.queryByText('No payments recorded')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Lead Information' }));
     expect(await screen.findByText('Travel Details')).toBeInTheDocument();
@@ -2235,7 +2222,7 @@ describe('Phase 17 lead workspace tabs', () => {
   it('shows the quotations tab with a convert-to-booking action', async () => {
     stubWorkspace();
     renderWorkspace();
-    await screen.findByRole('heading', { name: 'Aarav Mehta' });
+    await screen.findByText('Contact Information');
     await userEvent.click(screen.getByRole('button', { name: 'Quotations' }));
     expect(await screen.findByRole('link', { name: 'QT-2026-000001' })).toBeInTheDocument();
     const convert = screen.getByRole('link', { name: 'Convert to booking' });
@@ -2245,7 +2232,7 @@ describe('Phase 17 lead workspace tabs', () => {
   it('hides the Booking tab from Lead Details while keeping quotation conversion', async () => {
     stubWorkspace();
     renderWorkspace();
-    await screen.findByRole('heading', { name: 'Aarav Mehta' });
+    await screen.findByText('Contact Information');
     // Booking UI is removed from Lead Details; the backend and the
     // accepted-quotation conversion rule are untouched.
     expect(screen.queryByRole('button', { name: 'Booking' })).not.toBeInTheDocument();
@@ -2256,14 +2243,16 @@ describe('Phase 17 lead workspace tabs', () => {
     expect(screen.getByRole('link', { name: 'Convert to booking' })).toBeInTheDocument();
   });
 
-  it('shows a unified Lead Information tab with contact, travel and commercial sections', async () => {
+  it('shows a unified Lead Information tab with contact, travel and additional sections', async () => {
     stubWorkspace();
     renderWorkspace();
-    await screen.findByRole('heading', { name: 'Aarav Mehta' });
-    expect(screen.getByText('Contact & Lead')).toBeInTheDocument();
+    await screen.findByText('Contact Information');
+    expect(screen.getByText('Contact Information')).toBeInTheDocument();
     expect(screen.getByText('Travel Details')).toBeInTheDocument();
+    expect(screen.getByText('Services Required')).toBeInTheDocument();
+    expect(screen.getByText('Itinerary')).toBeInTheDocument();
     expect(screen.getByText(/Bangkok/)).toBeInTheDocument();
-    expect(screen.getByText('Commercial Information')).toBeInTheDocument();
+    expect(screen.getByText('Additional Information')).toBeInTheDocument();
     expect(screen.getByText('Latest quotation')).toBeInTheDocument();
     // Old Overview/Travel tabs are gone; history lives under Timeline.
     expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
@@ -4541,13 +4530,13 @@ describe('Lead CSV import', () => {
     );
   });
 
-  it('offers Import CSV inside the More actions menu and opens the import modal', async () => {
+  it('offers Import Leads inside the More actions menu and opens the import modal', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    // Import CSV is no longer an always-visible button; it lives in the menu.
-    expect(screen.queryByRole('menuitem', { name: /Import CSV/i })).not.toBeInTheDocument();
+    // Import Leads is no longer an always-visible button; it lives in the menu.
+    expect(screen.queryByRole('menuitem', { name: /Import Leads/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    const button = screen.getByRole('menuitem', { name: /Import CSV/i });
+    const button = screen.getByRole('menuitem', { name: /Import Leads/i });
     await userEvent.click(button);
     expect(screen.getByRole('dialog', { name: 'Import Leads' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download Sample CSV/i })).toBeInTheDocument();
@@ -4557,7 +4546,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     const file = new File(
       ['Customer Name,Phone,Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -4577,7 +4566,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     const file = new File(
       ['Name,Phone,Lead Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -4600,7 +4589,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     const file = new File(['Name,Phone\nAarav Mehta,+91 98765 43210\n'], 'leads.csv', {
       type: 'text/csv',
@@ -4621,7 +4610,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     const file = new File(
       ['Name,Phone,Lead Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -4669,7 +4658,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
     const file = new File(
       [
         'Name,Phone,Lead Source,Origin City,Excluded\nAarav Mehta,+91 98765 43210,Referral,Hyderabad,Do not save\n',
@@ -4744,7 +4733,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
     const file = new File(
       ['Name,Phone,Lead Source,Email\nAarav Mehta,+91 98765 43210,Referral,invalid-email\n'],
       'leads.csv',
@@ -4777,7 +4766,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     const file = new File(
       ['Name,Phone,Lead Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -4803,7 +4792,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     // All three mapped, but the only row has a blank phone.
     const file = new File(['Name,Phone,Lead Source\nAarav Mehta,,Referral\n'], 'leads.csv', {
@@ -4821,7 +4810,7 @@ describe('Lead CSV import', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
     await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import Leads/i }));
 
     const file = new File(['not a csv'], 'notes.txt', { type: 'text/plain' });
     fireEvent.change(screen.getByLabelText(/Choose a CSV file/i), { target: { files: [file] } });
@@ -4921,7 +4910,7 @@ describe('Lead traveller names', () => {
     expect(screen.queryByLabelText('Child Without Bed 1')).not.toBeInTheDocument();
   });
 
-  it('shows compact traveller names heading, labels and placeholders in create mode', async () => {
+  it('shows compact traveller names heading and labels without placeholders in create mode', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
@@ -4939,10 +4928,12 @@ describe('Lead traveller names', () => {
       'Child Without Bed 1',
       'Infant 1',
     ]) {
-      expect(screen.getByLabelText(label)).toBeInTheDocument();
+      const input = screen.getByLabelText(label);
+      expect(input).toBeInTheDocument();
+      expect(input).not.toHaveAttribute('placeholder');
     }
     expect(screen.queryByLabelText('Adult 1 — Name')).not.toBeInTheDocument();
-    expect(screen.getAllByPlaceholderText('Full name')).toHaveLength(5);
+    expect(screen.queryByPlaceholderText('Full name')).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Full name (optional)')).not.toBeInTheDocument();
   });
   it('submits blank name lists sized to the counts when nothing is entered', async () => {

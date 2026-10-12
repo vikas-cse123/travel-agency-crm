@@ -28,8 +28,6 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import { InlineLeadField } from './InlineLeadField';
 import {
   useDeleteLead,
-  useBulkAssign,
-  useBulkStage,
   useLeadAnalytics,
   useLeadExport,
   useLeadLookups,
@@ -657,22 +655,14 @@ export function LeadsPage() {
   const leads = useLeads(params);
   const analytics = useLeadAnalytics(params);
   const { data: lookups } = useLeadLookups();
-  const bulkAssign = useBulkAssign();
-  const bulkStage = useBulkStage();
   const exportLeads = useLeadExport();
 
-  const canAssign = hasPermission('queries.assign');
   const canUpdate = hasPermission('queries.update');
   const canDelete = hasPermission('queries.delete');
   const canExport = hasPermission('queries.export');
   const canCreateBooking = hasPermission('bookings.create');
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState<null | 'assign' | 'stage'>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [assignTo, setAssignTo] = useState('');
-  const [bulkStageValue, setBulkStageValue] = useState('');
-  const [bulkReason, setBulkReason] = useState('');
   // Per-row weblink overrides (create success + analytics count sync) keyed by
   // lead id, so the column updates immediately without a full page refresh.
   const [weblinkState, setWeblinkState] = useState<Record<string, WeblinkOverride>>({});
@@ -690,11 +680,9 @@ export function LeadsPage() {
     });
   }, []);
 
-  // A change in filters or page invalidates the current selection.
+  // A change in filters or page invalidates transient UI.
   const paramsKey = params.toString();
   useEffect(() => {
-    setSelected(new Set());
-    setDialog(null);
     setAnalyticsFor(null);
     setMoreMenuOpen(false);
   }, [paramsKey]);
@@ -822,57 +810,6 @@ export function LeadsPage() {
   };
 
   const rows = useMemo(() => leads.data?.data ?? [], [leads.data]);
-  const pageIds = useMemo(() => rows.map((lead) => lead.id), [rows]);
-  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
-  const toggleRow = (id: string) =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else if (next.size < 100) next.add(id);
-      return next;
-    });
-  const togglePage = () =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (allOnPageSelected) pageIds.forEach((id) => next.delete(id));
-      else pageIds.forEach((id) => next.size < 100 && next.add(id));
-      return next;
-    });
-
-  const closeDialog = () => {
-    setDialog(null);
-    setAssignTo('');
-    setBulkStageValue('');
-    setBulkReason('');
-  };
-  const runAssign = () => {
-    if (!assignTo) return;
-    bulkAssign.mutate(
-      { queryIds: [...selected], assignedToId: assignTo },
-      {
-        onSuccess: () => {
-          setSelected(new Set());
-          closeDialog();
-        },
-      },
-    );
-  };
-  const runStage = () => {
-    if (!bulkStageValue) return;
-    bulkStage.mutate(
-      {
-        queryIds: [...selected],
-        leadStage: bulkStageValue,
-        ...(bulkReason ? { reason: bulkReason } : {}),
-      },
-      {
-        onSuccess: () => {
-          setSelected(new Set());
-          closeDialog();
-        },
-      },
-    );
-  };
 
   const chips = analytics.data
     ? [
@@ -944,22 +881,18 @@ export function LeadsPage() {
 
   return (
     <div className="leads-page">
-      <div>
+      <div className="flex items-center gap-3">
         <h1 className="leads-page-title">Leads</h1>
-      </div>
-
-      <section className="leads-card">
-        <header className="leads-card-header">
-          <div className="ml-auto flex items-center gap-2">
-            {canCreate && (
-              <Link aria-label="Add Lead" to="/queries/new">
-                <Button size="sm">
-                  <Plus className="h-4 w-4" /> Create
-                </Button>
-              </Link>
-            )}
-            {showMoreMenu && (
-              <div className="leads-more-wrap" ref={moreMenuRef}>
+        <div className="ml-auto flex items-center gap-2">
+          {canCreate && (
+            <Link aria-label="Add Lead" to="/queries/new">
+              <Button size="sm">
+                <Plus className="h-4 w-4" /> Create
+              </Button>
+            </Link>
+          )}
+          {showMoreMenu && (
+            <div className="leads-more-wrap" ref={moreMenuRef}>
                 <Button
                   size="sm"
                   variant="secondary"
@@ -991,7 +924,7 @@ export function LeadsPage() {
                           setImportOpen(true);
                         }}
                       >
-                        <FileSpreadsheet className="h-4 w-4" aria-hidden="true" /> Import CSV
+                        <FileSpreadsheet className="h-4 w-4" aria-hidden="true" /> Import Leads
                       </button>
                     )}
                     {canExport && (
@@ -1010,16 +943,17 @@ export function LeadsPage() {
                         ) : (
                           <Download className="h-4 w-4" aria-hidden="true" />
                         )}{' '}
-                        {exportLeads.isPending ? 'Exporting…' : 'Export'}
+                        {exportLeads.isPending ? 'Exporting leads…' : 'Export Leads'}
                       </button>
                     )}
                   </div>
                 )}
               </div>
             )}
-          </div>
-        </header>
+        </div>
+      </div>
 
+      <section className="leads-card">
         <div className="leads-toolbar">
           <label className="leads-search">
             <Search className="leads-search-icon h-4 w-4" aria-hidden="true" />
@@ -1263,33 +1197,6 @@ export function LeadsPage() {
           })}
         </div>
 
-        {selected.size > 0 && (
-          <div className="leads-bulkbar" role="region" aria-label="Bulk actions">
-            <span className="font-medium">{selected.size} selected</span>
-            {canAssign && (
-              <Button size="sm" variant="secondary" onClick={() => setDialog('assign')}>
-                Assign
-              </Button>
-            )}
-            {canUpdate && (
-              <Button size="sm" variant="secondary" onClick={() => setDialog('stage')}>
-                Change stage
-              </Button>
-            )}
-            <button
-              className="flex items-center gap-1 text-slate-600 hover:text-slate-900"
-              onClick={() => setSelected(new Set())}
-            >
-              <X className="h-3.5 w-3.5" /> Clear
-            </button>
-          </div>
-        )}
-        {(bulkAssign.isError || bulkStage.isError) && (
-          <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">
-            {(bulkAssign.error as Error)?.message ?? (bulkStage.error as Error)?.message}
-          </div>
-        )}
-
         {leads.isLoading ? (
           <div className="space-y-3 p-5" aria-label="Loading leads">
             {[1, 2, 3, 4].map((i) => (
@@ -1315,16 +1222,6 @@ export function LeadsPage() {
               <table className="leads-table">
                 <thead className="leads-thead">
                   <tr>
-                    {canAssign && (
-                      <th className="text-center" style={{ width: 38 }}>
-                        <input
-                          type="checkbox"
-                          aria-label="Select page"
-                          checked={allOnPageSelected}
-                          onChange={togglePage}
-                        />
-                      </th>
-                    )}
                     {headers.map(([label, sortBy]) => (
                       <th key={label}>
                         {sortBy ? (
@@ -1346,16 +1243,6 @@ export function LeadsPage() {
                 <tbody className="leads-tbody">
                   {rows.map((lead) => (
                     <tr key={lead.id}>
-                      {canAssign && (
-                        <td className="text-center" style={{ width: 38 }}>
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${lead.queryNumber}`}
-                            checked={selected.has(lead.id)}
-                            onChange={() => toggleRow(lead.id)}
-                          />
-                        </td>
-                      )}
                       <td className="leads-id">
                         <Link className="leads-link" to={`/queries/${lead.id}`}>
                           {leadListId(lead.queryNumber)}
@@ -1460,71 +1347,6 @@ export function LeadsPage() {
         )}
       </section>
 
-      {dialog && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label={dialog === 'assign' ? 'Bulk assign leads' : 'Bulk change stage'}
-        >
-          <div className="w-full max-w-md rounded-xl bg-card p-5 shadow-lg">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">
-                {dialog === 'assign' ? 'Assign' : 'Change stage for'} {selected.size} leads
-              </h2>
-              <button aria-label="Close" onClick={closeDialog}>
-                <X className="h-4 w-4 text-slate-500" />
-              </button>
-            </div>
-            {dialog === 'assign' ? (
-              <div className="mt-4 space-y-3">
-                <select
-                  aria-label="Bulk assignee"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  value={assignTo}
-                  onChange={(e) => setAssignTo(e.target.value)}
-                >
-                  <option value="">Select a user</option>
-                  {lookups?.assignableUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.fullName}
-                    </option>
-                  ))}
-                </select>
-                <Button className="w-full" isLoading={bulkAssign.isPending} onClick={runAssign}>
-                  Assign leads
-                </Button>
-              </div>
-            ) : (
-              <div className="mt-4 space-y-3">
-                <select
-                  aria-label="Bulk stage"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  value={bulkStageValue}
-                  onChange={(e) => setBulkStageValue(e.target.value)}
-                >
-                  <option value="">Select a stage</option>
-                  {(lookups?.leadStages ?? []).map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  aria-label="Bulk stage reason"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="Reason (required for lost/cancelled/invalid)"
-                  value={bulkReason}
-                  onChange={(e) => setBulkReason(e.target.value)}
-                />
-                <Button className="w-full" isLoading={bulkStage.isPending} onClick={runStage}>
-                  Update stage
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {analyticsFor && (
         <WeblinkAnalyticsModal
           quotationId={analyticsFor.quotationId}

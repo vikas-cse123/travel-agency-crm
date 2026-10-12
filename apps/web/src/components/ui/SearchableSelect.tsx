@@ -183,11 +183,21 @@ export function SearchableSelect({
   const clear = () => {
     close();
     if (value) onChange('');
+    // The focus below must not reopen the menu (same guard as commit):
+    // `onChange('')` hasn't committed yet, so an unguarded focus would seed
+    // the query from the stale selection and pop the list back open.
+    justCommitted.current = true;
     inputRef.current?.focus();
+    justCommitted.current = false;
   };
 
   // While the user is typing show the query; otherwise show the selection.
-  const display = query || (selected?.label ?? '');
+  // `open` (not `query` truthiness) decides: an empty query while open must
+  // stay empty so clearing/backspacing to nothing never snaps back to the old
+  // selection, and typing right after a clear starts from ''. When closed the
+  // committed selection is shown. `query` is synced to the selection every
+  // time the menu opens so editing starts from the current value.
+  const display = open ? query : (selected?.label ?? '');
 
   return (
     <div ref={rootRef} className="relative">
@@ -206,9 +216,29 @@ export function SearchableSelect({
           placeholder={placeholder}
           value={display}
           onFocus={() => {
-            if (!justCommitted.current) setOpen(true);
+            if (justCommitted.current) return;
+            if (!open) {
+              // Fresh open: start editing from the current selection so
+              // Backspace/middle-edits apply to it and clearing to '' stays
+              // empty (display follows `query` while open).
+              setQuery(selected?.label ?? '');
+              setOpen(true);
+            }
           }}
-          onMouseDown={() => setOpen((isOpen) => !isOpen)}
+          onMouseDown={(event) => {
+            if (disabled) return;
+            if (open) {
+              // Toggle closed: keep focus where it is and revert to the
+              // committed selection.
+              event.preventDefault();
+              close();
+            } else {
+              // Opening via click: seed the query when the field already has
+              // focus (no focus event will follow to do it).
+              setQuery(selected?.label ?? '');
+              setOpen(true);
+            }
+          }}
           onChange={(event) => {
             setQuery(event.target.value);
             setOpen(true);
@@ -216,8 +246,10 @@ export function SearchableSelect({
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') {
               event.preventDefault();
-              if (!open) setOpen(true);
-              else if (filtered.length) setHighlight((row) => (row + 1) % filtered.length);
+              if (!open) {
+                setQuery(selected?.label ?? '');
+                setOpen(true);
+              } else if (filtered.length) setHighlight((row) => (row + 1) % filtered.length);
             } else if (event.key === 'ArrowUp') {
               event.preventDefault();
               if (filtered.length)

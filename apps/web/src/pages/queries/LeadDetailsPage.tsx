@@ -1,34 +1,25 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  ClipboardList,
   FileText,
   History,
-  Landmark,
-  Mail,
   MapPin,
   MessageSquarePlus,
-  Pencil,
-  Phone,
-  Trash2,
+  Route as RouteIcon,
   UserRound,
-  UserRoundCog,
   Users,
-  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import {
   CONTACT_METHODS,
-  PERMISSIONS,
   labelForLookup,
   type ContactMethodValue,
 } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useDeleteLead,
-  useLeadAction,
-  useLeadLookups,
   useLeadWorkspace,
   useNoteAction,
   useNotes,
@@ -36,8 +27,6 @@ import {
   type Lead,
 } from '@/features/queries/queries.api';
 import { formatTravelMonthYear, leadTravelDatesLabel } from '@/features/quotations/travel-dates';
-import { useLeadPaymentCase } from '@/features/payments/payments.api';
-import { LeadPaymentsCard, RecordLeadPaymentDialog } from './LeadPayments';
 
 const inputClass = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
 
@@ -103,14 +92,22 @@ const formatMoney = (value: string | number | null | undefined, currency = 'INR'
   }
 };
 
-const travellerCountLabel = (lead: Lead): string => {
-  const parts: string[] = [];
-  if (lead.adults > 0) parts.push(`${lead.adults} Adult${lead.adults === 1 ? '' : 's'}`);
-  if (lead.childrenWithBed > 0) parts.push(`${lead.childrenWithBed} Child with Bed`);
-  if (lead.childrenWithoutBed > 0) parts.push(`${lead.childrenWithoutBed} Child without Bed`);
-  if (lead.infants > 0) parts.push(`${lead.infants} Infant${lead.infants === 1 ? '' : 's'}`);
-  if (lead.rooms > 0) parts.push(`${lead.rooms} Room${lead.rooms === 1 ? '' : 's'}`);
-  return parts.join(' · ');
+/** Passenger count with optional per-child ages: "2 (ages 4, 6)", "1 (age 8)", "1 (9 months)". */
+const countWithAges = (
+  count: number,
+  ages: Array<number | null> | null,
+  unit: 'age' | 'month',
+): string | null => {
+  if (count <= 0) return null;
+  const cleaned = (ages ?? []).filter((age): age is number => age != null && Number.isFinite(age));
+  if (cleaned.length === 0) return `${count}`;
+  if (unit === 'month') {
+    const label = cleaned.length === 1 && cleaned[0] === 1 ? 'month' : 'months';
+    return `${count} (${cleaned.join(', ')} ${label})`;
+  }
+  return cleaned.length === 1
+    ? `${count} (age ${cleaned[0]})`
+    : `${count} (ages ${cleaned.join(', ')})`;
 };
 
 /** Named travellers collected on the lead form, kept positional per category. */
@@ -131,15 +128,15 @@ const namedTravellers = (lead: Lead): string[] => {
 
 /**
  * Lead sales workspace: who the lead is, how to reach them, where and when
- * they travel, the current stage, quotations, collected money and history.
+ * they travel, the current stage, quotations, notes and history.
  *
- * UI-only composition over the existing workspace, notes, timeline, payments
- * and quotation APIs. Booking, Follow-ups, reminders and Priority are
- * intentionally not rendered here — their backends are untouched.
+ * UI-only composition over the existing workspace, notes, timeline and
+ * quotation APIs. Stage changes, reassignment, payments and deletion are
+ * managed outside this page — their backends are untouched. Booking,
+ * Follow-ups, reminders and Priority are intentionally not rendered here.
  */
 export function LeadDetailsPage() {
   const { queryId = '' } = useParams();
-  const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = (
@@ -154,25 +151,13 @@ export function LeadDetailsPage() {
   const workspace = useLeadWorkspace(queryId);
   const notes = useNotes(queryId);
   const timeline = useTimeline(queryId);
-  const lookups = useLeadLookups();
-  const action = useLeadAction(queryId);
-  const remove = useDeleteLead(queryId);
   const noteAction = useNoteAction(queryId);
 
-  const canViewPayments = hasPermission(PERMISSIONS.PAYMENTS_VIEW);
-  const canRecordPayment = hasPermission(PERMISSIONS.PAYMENTS_CREATE);
-  // Pure read of the server-resolved payment case; never creates anything.
-  const paymentCase = useLeadPaymentCase(queryId, canViewPayments);
-
-  const [stage, setStage] = useState('');
-  const [stageReason, setStageReason] = useState('');
-  const [assignee, setAssignee] = useState('');
   const [note, setNote] = useState('');
   const [noteIsContact, setNoteIsContact] = useState(false);
   const [contactMethod, setContactMethod] = useState<ContactMethodValue>('PHONE');
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteText, setEditingNoteText] = useState('');
-  const [payOpen, setPayOpen] = useState(false);
 
   if (workspace.isLoading) return <div className="h-96 animate-pulse rounded-xl bg-card" />;
   if (workspace.isError || !workspace.data)
@@ -196,12 +181,6 @@ export function LeadDetailsPage() {
       timeZone: workspace.data.timezone,
     }).format(new Date(value));
 
-  const handleBack = () => {
-    if (window.history.length > 1) navigate(-1);
-    else navigate('/queries');
-  };
-
-  const trip = paymentCase.data?.case ?? null;
   const latestQuotation =
     workspace.data.quotations.latest ?? workspace.data.quotations.items[0] ?? null;
   const latestVersion = latestQuotation?.versions[0] ?? null;
@@ -219,119 +198,56 @@ export function LeadDetailsPage() {
     ]
       .filter(Boolean)
       .join(' • ') || '';
-  const monthYearLabel = formatTravelMonthYear(q.travelMonth, q.travelYear) ?? '';
   const orderedItinerary = [...q.itinerary].sort((a, b) => a.sequence - b.sequence);
-  const countsLabel = travellerCountLabel(q);
   const travellerNames = namedTravellers(q);
   const serviceLabels = q.services.map((s) => labelForLookup(s.serviceType));
-  const hasTravelData =
-    travelDateLabel !== '' ||
-    monthYearLabel !== '' ||
-    (q.departureCountry ?? '') !== '' ||
-    (q.departureCity ?? '') !== '' ||
-    orderedItinerary.length > 0 ||
-    countsLabel !== '' ||
-    serviceLabels.length > 0;
-  const hasCommercialData =
+  const childrenWithBedLabel = countWithAges(q.childrenWithBed, q.childrenWithBedAges, 'age');
+  const childrenWithoutBedLabel = countWithAges(
+    q.childrenWithoutBed,
+    q.childrenWithoutBedAges,
+    'age',
+  );
+  const infantsLabel = countWithAges(q.infants, q.infantAges, 'month');
+  const hasAdditionalData =
+    Boolean(q.tripType) ||
     latestVersion != null ||
     Boolean(q.expectedAmount) ||
     Boolean(q.budgetMin) ||
     Boolean(q.budgetMax) ||
     Boolean(q.expectedMargin) ||
-    (canViewPayments && trip != null && trip.paymentCount > 0);
+    Boolean(q.lastContactedAt) ||
+    q.customer != null ||
+    Boolean(q.internalRemarks?.trim()) ||
+    Boolean(q.supplierCostingNotes?.trim());
 
   return (
     <div className="space-y-5">
-      {/* A. Compact lead header */}
-      <header className="flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-sm sm:p-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <button
-            type="button"
-            aria-label="Back"
-            onClick={handleBack}
-            className="shrink-0 rounded-lg p-2 hover:bg-slate-50"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Lead details
-            </p>
-            <h1 className="mt-1 break-words text-2xl font-semibold text-slate-950">
-              {q.customerName}
-            </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-              <span className="font-medium text-slate-700">{q.queryNumber}</span>
-              <span aria-hidden="true">•</span>
-              <span>Created {dateTime(q.createdAt)}</span>
-              <span className="rounded-full bg-brand-50 px-2.5 py-1 font-semibold text-brand-700">
-                {labelForLookup(q.leadStage)}
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-              {q.phone && (
-                <a
-                  href={`tel:${q.phone.replace(/\s+/g, '')}`}
-                  className="inline-flex items-center gap-1.5 font-medium text-brand-700 hover:underline"
-                >
-                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-                  {q.phone}
-                </a>
-              )}
-              {q.email && (
-                <a
-                  href={`mailto:${q.email}`}
-                  className="inline-flex min-w-0 items-center gap-1.5 font-medium text-brand-700 hover:underline"
-                >
-                  <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="break-all">{q.email}</span>
-                </a>
-              )}
-            </div>
-            {q.customer && (
-              <span className="mt-2 inline-block text-xs font-medium text-slate-500">
-                {q.customer.customerNumber} customer record
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2 sm:pl-11 lg:pl-0">
-          {canRecordPayment && (
-            <Button onClick={() => setPayOpen(true)}>
-              <Landmark className="h-4 w-4" />
-              Record Payment
-            </Button>
-          )}
-          {allowed.canEdit && (
-            <Link to={`/queries/${q.id}/edit`}>
-              <Button variant="secondary">
-                <Pencil className="h-4 w-4" />
-                Edit
-              </Button>
-            </Link>
-          )}
-          {allowed.canDelete && (
-            <Button
-              variant="danger"
-              isLoading={remove.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Permanently delete lead ${q.queryNumber}? This cannot be undone.`,
-                  )
-                ) {
-                  remove.mutate(undefined, { onSuccess: () => navigate('/queries') });
-                }
-              }}
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete Lead
-            </Button>
-          )}
-        </div>
-      </header>
+      {/* A. Back to the Leads list */}
+      <div>
+        <Link
+          to="/queries"
+          aria-label="Back to Leads"
+          title="Back to Leads"
+          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Back to Leads
+        </Link>
+      </div>
 
-      {/* B. Section navigation */}
+      {/* B. Lead identity */}
+      <div>
+        <h1 className="break-words text-2xl font-semibold text-slate-950">
+          {q.customerName}
+        </h1>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span className="font-medium text-slate-700">{q.queryNumber}</span>
+          <span aria-hidden="true">•</span>
+          <span>Created {dateTime(q.createdAt)}</span>
+        </div>
+      </div>
+
+      {/* C. Section navigation */}
       <nav
         className="flex gap-1 overflow-x-auto rounded-xl border bg-card p-1"
         aria-label="Lead sections"
@@ -349,243 +265,152 @@ export function LeadDetailsPage() {
         ))}
       </nav>
 
-      {/* C. Lead Information — unified contact, travel and commercial view */}
+      {/* C. Lead Information — full-width contact, travel and trip view */}
       {tab === 'lead-information' && (
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
-          <div className="min-w-0 space-y-5">
-            <Section title="Contact & Lead" icon={UserRound}>
-              <dl className="grid gap-4 sm:grid-cols-2">
-                <Info label="Lead source">{labelForLookup(q.leadSource)}</Info>
-                <Info label="Assignee">{q.assignedTo?.fullName ?? 'Unassigned'}</Info>
+        <div className="min-w-0 space-y-5">
+          <Section title="Contact Information" icon={UserRound}>
+            <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {q.phone && <Info label="Phone">{q.phone}</Info>}
+              {q.alternatePhone && <Info label="Alternate phone">{q.alternatePhone}</Info>}
+              {q.email && <Info label="Email">{q.email}</Info>}
+              <Info label="Lead source">{labelForLookup(q.leadSource)}</Info>
+              <Info label="Lead type">{labelForLookup(q.leadType)}</Info>
+              <Info label="Stage">{labelForLookup(q.leadStage)}</Info>
+              <Info label="Assignee">{q.assignedTo?.fullName ?? 'Unassigned'}</Info>
+              <Info label="Created by">{q.createdBy.fullName}</Info>
+            </dl>
+          </Section>
+
+          <Section title="Travel Details" icon={MapPin}>
+            <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {travelDateLabel !== '' && <Info label="Travel date">{travelDateLabel}</Info>}
+              {q.departureCountry && (
+                <Info label="Departure country">{q.departureCountry}</Info>
+              )}
+              {q.departureCity && <Info label="Departure city">{q.departureCity}</Info>}
+              <Info label="Adults">{`${q.adults}`}</Info>
+              {childrenWithBedLabel && (
+                <Info label="Children with bed">{childrenWithBedLabel}</Info>
+              )}
+              {childrenWithoutBedLabel && (
+                <Info label="Children without bed">{childrenWithoutBedLabel}</Info>
+              )}
+              {infantsLabel && <Info label="Infants">{infantsLabel}</Info>}
+              {q.extraBeds > 0 && <Info label="Extra beds">{`${q.extraBeds}`}</Info>}
+            </dl>
+          </Section>
+          {travellerNames.length > 0 && (
+            <Section title="Traveller Names" icon={Users}>
+              <ul className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+                {travellerNames.map((name) => (
+                  <li key={name} className="min-w-0 break-words">
+                    {name}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+          {serviceLabels.length > 0 && (
+            <Section title="Services Required" icon={ClipboardList}>
+              <ul className="flex flex-wrap gap-2">
+                {serviceLabels.map((label) => (
+                  <li
+                    key={label}
+                    className="rounded-full bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700"
+                  >
+                    {label}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {orderedItinerary.length > 0 && (
+            <Section title="Itinerary" icon={RouteIcon}>
+              <ol className="space-y-2">
+                {orderedItinerary.map((row) => (
+                  <li
+                    key={row.id}
+                    className="flex flex-wrap items-center gap-3 p-3 text-sm"
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100 font-semibold text-brand-700">
+                      {row.sequence}
+                    </span>
+                    <strong>
+                      {row.destination}, {row.country}
+                    </strong>
+                    <span>
+                      {row.nights} night{row.nights === 1 ? '' : 's'}
+                    </span>
+                    {row.arrivalDate && (
+                      <span className="text-slate-500">
+                        {new Date(row.arrivalDate).toLocaleDateString()}
+                      </span>
+                    )}
+                    {row.notes && <span className="w-full text-slate-500">{row.notes}</span>}
+                  </li>
+                ))}
+              </ol>
+            </Section>
+          )}
+
+          {hasAdditionalData && (
+            <Section title="Additional Information" icon={FileText}>
+              <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {q.tripType && <Info label="Trip type">{q.tripType}</Info>}
+                {latestVersion && latestQuotation && (
+                  <Info label="Latest quotation">
+                    <Link
+                      className="text-brand-700 hover:underline"
+                      to={`/quotations/${latestQuotation.id}`}
+                    >
+                      {latestQuotation.quotationNumber}
+                    </Link>{' '}
+                    · {formatMoney(latestVersion.finalAmount, latestVersion.currency)}
+                  </Info>
+                )}
+                {q.expectedAmount && (
+                  <Info label="Expected amount">
+                    {formatMoney(q.expectedAmount, q.currency)}
+                  </Info>
+                )}
+                {(q.budgetMin || q.budgetMax) && (
+                  <Info label="Budget">
+                    {`${formatMoney(q.budgetMin ?? q.budgetMax, q.currency)} – ${formatMoney(q.budgetMax ?? q.budgetMin, q.currency)}`}
+                  </Info>
+                )}
+                {q.expectedMargin && (
+                  <Info label="Expected margin">
+                    {formatMoney(q.expectedMargin, q.currency)}
+                  </Info>
+                )}
                 {q.lastContactedAt && (
                   <Info label="Last contacted">{dateTime(q.lastContactedAt)}</Info>
                 )}
+                {q.customer && (
+                  <Info label="Customer record">
+                    {`${q.customer.customerNumber} · ${q.customer.displayName}`}
+                  </Info>
+                )}
               </dl>
-            </Section>
-
-            {hasTravelData && (
-              <Section title="Travel Details" icon={MapPin}>
-                <div className="space-y-5">
-                  <dl className="grid gap-4 sm:grid-cols-2">
-                    {travelDateLabel !== '' && <Info label="Dates">{travelDateLabel}</Info>}
-                    {monthYearLabel !== '' && (
-                      <Info label="Travel month">{monthYearLabel}</Info>
-                    )}
-                    {q.departureCountry && (
-                      <Info label="Departure country">{q.departureCountry}</Info>
-                    )}
-                    {q.departureCity && <Info label="Departure city">{q.departureCity}</Info>}
-                    {countsLabel !== '' && (
-                      <Info label="Travellers" icon={<Users className="h-4 w-4" />}>
-                        {countsLabel}
-                      </Info>
-                    )}
-                    {serviceLabels.length > 0 && (
-                      <Info label="Services">{serviceLabels.join(', ')}</Info>
-                    )}
-                    {q.tripType && <Info label="Trip type">{q.tripType}</Info>}
-                  </dl>
-                  {travellerNames.length > 0 && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-800">Traveller names</h3>
-                      <ul className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
-                        {travellerNames.map((name) => (
-                          <li key={name} className="rounded-lg bg-slate-50 px-3 py-2">
-                            {name}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {orderedItinerary.length > 0 && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-800">Destinations</h3>
-                      <div className="mt-2 space-y-2">
-                        {orderedItinerary.map((row) => (
-                          <div
-                            key={row.id}
-                            className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 p-3 text-sm"
-                          >
-                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100 font-semibold text-brand-700">
-                              {row.sequence}
-                            </span>
-                            <strong>
-                              {row.destination}, {row.country}
-                            </strong>
-                            <span>{row.nights} nights</span>
-                            <span className="text-slate-500">
-                              {row.arrivalDate
-                                ? new Date(row.arrivalDate).toLocaleDateString()
-                                : 'Dates open'}
-                            </span>
-                            {row.notes && (
-                              <span className="w-full text-slate-500">{row.notes}</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+              {q.internalRemarks?.trim() && (
+                <div className="mt-4">
+                  <h3 className="text-sm font-semibold text-slate-800">Internal remarks</h3>
+                  <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    {q.internalRemarks}
+                  </p>
                 </div>
-              </Section>
-            )}
-
-            {hasCommercialData && (
-              <Section title="Commercial Information" icon={Wallet}>
-                <dl className="grid gap-4 sm:grid-cols-2">
-                  {latestVersion && latestQuotation && (
-                    <Info label="Latest quotation">
-                      <Link
-                        className="text-brand-700 hover:underline"
-                        to={`/quotations/${latestQuotation.id}`}
-                      >
-                        {latestQuotation.quotationNumber}
-                      </Link>{' '}
-                      · {formatMoney(latestVersion.finalAmount, latestVersion.currency)}
-                    </Info>
-                  )}
-                  {q.expectedAmount && (
-                    <Info label="Expected amount">
-                      {formatMoney(q.expectedAmount, q.currency)}
-                    </Info>
-                  )}
-                  {(q.budgetMin || q.budgetMax) && (
-                    <Info label="Budget">
-                      {`${formatMoney(q.budgetMin ?? q.budgetMax, q.currency)} – ${formatMoney(q.budgetMax ?? q.budgetMin, q.currency)}`}
-                    </Info>
-                  )}
-                  {q.expectedMargin && (
-                    <Info label="Expected margin">
-                      {formatMoney(q.expectedMargin, q.currency)}
-                    </Info>
-                  )}
-                  {canViewPayments && trip && trip.paymentCount > 0 && (
-                    <Info label="Collected">{formatMoney(trip.collected, trip.currency)}</Info>
-                  )}
-                  {canViewPayments && trip && trip.tripAmount != null && trip.paymentCount > 0 && (
-                    <Info label="Outstanding">
-                      {formatMoney(trip.outstanding, trip.currency)}
-                    </Info>
-                  )}
-                </dl>
-              </Section>
-            )}
-          </div>
-
-          <aside className="min-w-0 space-y-5">
-            <section className="rounded-xl border bg-card shadow-sm">
-              <div className="border-b px-4 py-3">
-                <h2 className="font-semibold text-slate-950">Lead actions</h2>
-                <p className="mt-0.5 text-xs text-slate-500">Update ownership and progress</p>
-              </div>
-              <div className="p-4">
-                {allowed.canChangeStage && (
-                  <div className="space-y-3">
-                    <div>
-                      <label htmlFor="lead-stage" className="text-sm font-medium text-slate-700">
-                        Change stage
-                      </label>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Current:{' '}
-                        <span className="font-medium text-slate-700">
-                          {labelForLookup(q.leadStage)}
-                        </span>
-                      </p>
-                    </div>
-                    <select
-                      id="lead-stage"
-                      aria-label="New stage"
-                      className={inputClass}
-                      value={stage}
-                      onChange={(e) => setStage(e.target.value)}
-                    >
-                      <option value="">Change stage…</option>
-                      {(lookups.data?.leadStages ?? []).map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                    {['LOST', 'CANCELLED', 'INVALID'].includes(stage) && (
-                      <input
-                        aria-label="Stage reason"
-                        className={inputClass}
-                        placeholder="Reason required"
-                        value={stageReason}
-                        onChange={(e) => setStageReason(e.target.value)}
-                      />
-                    )}
-                    <Button
-                      fullWidth
-                      disabled={
-                        !stage ||
-                        (['LOST', 'CANCELLED', 'INVALID'].includes(stage) && !stageReason)
-                      }
-                      isLoading={action.isPending}
-                      onClick={() =>
-                        action.mutate(
-                          {
-                            path: 'stage',
-                            body: {
-                              stage,
-                              reason: stageReason || undefined,
-                              lostReason: stage === 'LOST' ? stageReason : undefined,
-                            },
-                          },
-                          {
-                            onSuccess: () => {
-                              setStage('');
-                              setStageReason('');
-                            },
-                          },
-                        )
-                      }
-                    >
-                      Update stage
-                    </Button>
-                  </div>
-                )}
-                {allowed.canAssign && (
-                  <div className="mt-5 border-t pt-4">
-                    <label className="text-sm font-medium text-slate-700">Reassign lead</label>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      Current: {q.assignedTo?.fullName ?? 'Unassigned'}
-                    </p>
-                    <select
-                      className={`${inputClass} mt-2`}
-                      value={assignee || q.assignedToId || ''}
-                      onChange={(e) => setAssignee(e.target.value)}
-                    >
-                      <option value="">Unassigned</option>
-                      {lookups.data?.assignableUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.fullName}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      className="mt-2"
-                      fullWidth
-                      variant="secondary"
-                      onClick={() =>
-                        action.mutate({
-                          path: 'assignment',
-                          body: { assignedToId: assignee || null, movePendingFollowUps: true },
-                        })
-                      }
-                    >
-                      <UserRoundCog className="h-4 w-4" />
-                      Assign
-                    </Button>
-                  </div>
-                )}
-                {!allowed.canChangeStage && !allowed.canAssign && (
-                  <p className="text-sm text-slate-500">No lead actions are available.</p>
-                )}
-              </div>
-            </section>
-            <LeadPaymentsCard queryId={q.id} onRecord={() => setPayOpen(true)} />
-          </aside>
+              )}
+              {q.supplierCostingNotes?.trim() && (
+                <div className="mt-4">
+                  <h3 className="text-sm font-semibold text-slate-800">Supplier costing notes</h3>
+                  <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    {q.supplierCostingNotes}
+                  </p>
+                </div>
+              )}
+            </Section>
+          )}
         </div>
       )}
 
@@ -859,7 +684,6 @@ export function LeadDetailsPage() {
           )}
         </Section>
       )}
-      {payOpen && <RecordLeadPaymentDialog queryId={q.id} onClose={() => setPayOpen(false)} />}
     </div>
   );
 }

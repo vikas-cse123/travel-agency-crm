@@ -366,7 +366,7 @@ describe('Lead details payment entry point', () => {
     );
   }
 
-  it('shows Record Payment in the header and the payments card on overview', async () => {
+  it('shows no payment entry points on the redesigned overview', async () => {
     stubDetails(leadState({ case: null, requiresAmount: true }));
     renderWithProviders(
       <Routes>
@@ -374,16 +374,13 @@ describe('Lead details payment entry point', () => {
       </Routes>,
       { route: '/queries/lead-1' },
     );
-    const header = await screen.findByText('Lead details');
-    expect(header).toBeInTheDocument();
-    expect(await screen.findByText('No payments recorded')).toBeInTheDocument();
-    // Header action + card header + empty-state action.
-    const actions = screen.getAllByRole('button', { name: /record payment/i });
-    expect(actions.length).toBeGreaterThanOrEqual(2);
-    // Opening the action shows the server-resolved lead context.
-    await userEvent.click(actions[0]!);
-    expect(await screen.findByRole('dialog', { name: 'Record payment' })).toBeInTheDocument();
-    expect(screen.getAllByText(/QT-001034/).length).toBeGreaterThanOrEqual(1);
+    await screen.findByText('Contact Information');
+    // The Payments card, its empty state and every Record Payment button were
+    // removed from the Lead Detail page; the standalone Payments module is
+    // untouched and still covered by the card/dialog tests above.
+    expect(screen.queryByRole('button', { name: /record payment/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('No payments recorded')).not.toBeInTheDocument();
+    expect(screen.queryByText('Payments')).not.toBeInTheDocument();
   });
 
   it('hides the Record action without the create permission', async () => {
@@ -395,7 +392,7 @@ describe('Lead details payment entry point', () => {
       </Routes>,
       { route: '/queries/lead-1' },
     );
-    await screen.findByText('Lead details');
+    await screen.findByText('Contact Information');
     expect(screen.queryByRole('button', { name: /record payment/i })).not.toBeInTheDocument();
   });
 });
