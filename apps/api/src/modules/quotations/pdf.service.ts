@@ -8,6 +8,7 @@ import {
   isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
   normalizeFaqs,
+  normalizeFlightDetails,
   resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
@@ -667,7 +668,23 @@ type FlightDetails = {
   journeyType?: string;
   outbound?: FlightJourney;
   returnJourney?: FlightJourney;
+  flights?: Array<{
+    bookmarkCode?: string | null;
+    journeyType?: string;
+    outbound?: FlightJourney;
+    returnJourney?: FlightJourney;
+  }>;
 };
+/** Every flight record in display order; legacy single-flight rows wrap into one. */
+function flightRecordsOf(flightData: FlightDetails | null | undefined): Array<{
+  bookmarkCode?: string | null;
+  journeyType?: string;
+  outbound?: FlightJourney;
+  returnJourney?: FlightJourney;
+}> {
+  const normalized = normalizeFlightDetails(flightData) as FlightDetails | null | undefined;
+  return normalized?.flights ?? [];
+}
 type SightActivity = {
   sightseeingId?: string | null;
   imageDocumentId?: string | null;
@@ -1822,12 +1839,16 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
     { include?: boolean; days?: SightDay[] } | null | undefined;
   // Hotels only render when included in the quotation (hotelDetails.include).
   const hotelIncluded = v.hotelDetails?.include !== false && v.hotels.length > 0;
+  const flightRecords = flightRecordsOf(flightData);
   const hasFlights =
     !!flightData?.include &&
     (flightImageMode
       ? Boolean(flightData.imageDocumentId || flightData.images?.length)
-      : (flightData.outbound?.segments?.length ?? 0) > 0 ||
-        (flightData.returnJourney?.segments?.length ?? 0) > 0);
+      : flightRecords.some(
+          (flight) =>
+            (flight.outbound?.segments?.length ?? 0) > 0 ||
+            (flight.returnJourney?.segments?.length ?? 0) > 0,
+        ));
   const sightDays = (sightData?.include !== false ? (sightData?.days ?? []) : []).filter(
     (d) => d.title || (d.activities ?? []).some((a) => a.name || a.description),
   );
@@ -1915,22 +1936,32 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
   }
 
   // ==========================================================================
-  // FLIGHTS — one journey, measured segment cards, continuation at boundaries
+  // FLIGHTS — every flight record in order, each with its own journeys;
+  // measured segment cards, continuation at boundaries
   // ==========================================================================
   const drawFlightsSection = () => {
     const segHasData = (s: FlightSegment) =>
       Boolean(s.airlineName || s.from || s.to || s.flightNumber);
     const legs = hasFlights
-      ? (
-          [
-            flightData?.journeyType === 'ONEWAY_RETURN'
+      ? flightRecords.flatMap((flight, flightIndex) => {
+          const prefix = flightRecords.length > 1 ? `Flight ${flightIndex + 1} · ` : '';
+          return [
+            flight.journeyType === 'ONEWAY_RETURN'
               ? null
-              : { title: 'Outbound Journey', journey: flightData?.outbound, color: BLUE },
-            flightData?.journeyType === 'ONEWAY_OUTBOUND'
+              : {
+                  title: `${prefix}Outbound Journey`,
+                  journey: flight.outbound,
+                  color: BLUE,
+                },
+            flight.journeyType === 'ONEWAY_OUTBOUND'
               ? null
-              : { title: 'Return Journey', journey: flightData?.returnJourney, color: GREEN },
-          ] as Array<{ title: string; journey?: FlightJourney; color: string } | null>
-        ).filter((l): l is { title: string; journey?: FlightJourney; color: string } => Boolean(l))
+              : {
+                  title: `${prefix}Return Journey`,
+                  journey: flight.returnJourney,
+                  color: GREEN,
+                },
+          ] as Array<{ title: string; journey?: FlightJourney; color: string } | null>;
+        }).filter((l): l is { title: string; journey?: FlightJourney; color: string } => Boolean(l))
       : [];
     const drawableLegs = legs.filter((l) => (l.journey?.segments ?? []).some(segHasData));
 

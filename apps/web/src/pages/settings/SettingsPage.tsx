@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { formatDateTime12Hour } from '@/utils/dateTime';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { SearchUsagePage } from '@/pages/administration/SearchUsagePage';
+import { EmailConfigurationForm } from './EmailConfigurationForm';
 import {
   useAddSearchApiKey,
   useRemoveSearchApiKey,
@@ -57,6 +58,7 @@ const TABS = [
   ...(SHOW_BANK_ACCOUNT_SETTINGS ? ([['bank', 'Bank Account']] as const) : []),
   ['live-search', 'Live Search'],
   ['api-usage', 'API Usage'],
+  ['email', 'Email'],
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
@@ -1196,6 +1198,7 @@ export function SettingsPage() {
       )}
       {tab === 'live-search' && <LiveSearchKeyTab />}
       {tab === 'api-usage' && isOwner && <SearchUsagePage />}
+      {tab === 'email' && <EmailConfigurationForm />}
     </div>
   );
 }

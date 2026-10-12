@@ -3,7 +3,6 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm, useWatch, type FieldPath, type UseFormReturn } from 'react-hook-form';
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -29,12 +28,12 @@ import {
   calculateFlightTotal,
   calculateHotelRowTotal,
   getFlightPerTravelerBreakdown,
-  cabinLuggageLabel,
   formatItineraryDayTitle,
   hotelRoomLinesTotalRooms,
   hotelStayNights,
   labelForLookup,
   normalizePricingMode,
+  normalizeFlightDetails,
   QUOTATION_BOOKING_TERMS_MAX_LENGTH,
   quotationVersionInputSchema,
   quotationSnapshotImageIdentity,
@@ -112,7 +111,6 @@ import {
   type ServiceRowPatch,
 } from '@/features/quotations/MasterFields';
 import {
-  BookmarkLoadField,
   HotelBookmarkListField,
   flightBookmarkSegmentAirlines,
   flightBookmarkToDetails,
@@ -120,6 +118,7 @@ import {
   normalizeAirlineName,
   resolveFlightSegmentAirlines,
 } from '@/features/quotations/BookmarkImport';
+import { FlightRecordCard } from './FlightRecordCard';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -221,9 +220,9 @@ const ADDON_TYPES: ServiceType[] = [
   'OTHER_ADD_ON',
   'GENERAL_ENQUIRY',
 ];
-const CLASS_OPTIONS = ['Economy', 'Premium Economy', 'Business', 'First'];
-const CABIN_LUGGAGE_OPTIONS = ['7kg', '10kg', 'No Cabin Baggage'];
-const CHECKIN_LUGGAGE_OPTIONS = ['0kg', '15kg', '20kg', '23kg', '25kg', '30kg', '40kg+', '46kg'];
+export const CLASS_OPTIONS = ['Economy', 'Premium Economy', 'Business', 'First'];
+export const CABIN_LUGGAGE_OPTIONS = ['7kg', '10kg', 'No Cabin Baggage'];
+export const CHECKIN_LUGGAGE_OPTIONS = ['0kg', '15kg', '20kg', '23kg', '25kg', '30kg', '40kg+', '46kg'];
 // Alternative combinations remain fully supported by the data model and save path.
 // Keep this false to hide only the Hotel Options UI until the feature is needed again.
 const SHOW_HOTEL_OPTIONS = false;
@@ -239,7 +238,7 @@ const SHOW_VISA_QUOTATION_TAB = false;
 const SHOW_DESTINATION_EXPERT_TAB = false;
 
 /** "Xh Ym" flight duration from date+time strings, or '' if incomputable/negative. */
-const computeDuration = (
+export const computeDuration = (
   depDate?: string | null,
   depTime?: string | null,
   arrDate?: string | null,
@@ -254,7 +253,7 @@ const computeDuration = (
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
 
-const flightTimesAreChronological = (
+export const flightTimesAreChronological = (
   depDate?: string | null,
   depTime?: string | null,
   arrDate?: string | null,
@@ -266,9 +265,13 @@ const flightTimesAreChronological = (
   return Number.isNaN(departure) || Number.isNaN(arrival) || arrival > departure;
 };
 
-const hasInvalidFlightTiming = (details: QuotationVersionInput['flightDetails']) =>
-  [details?.outbound, details?.returnJourney].some((journey) =>
-    (journey?.segments ?? []).some(
+const hasInvalidFlightTiming = (details: QuotationVersionInput['flightDetails']) => {
+  const journeys = (details?.flights?.length
+    ? details.flights.flatMap((flight) => [flight.outbound, flight.returnJourney])
+    : [details?.outbound, details?.returnJourney]
+  ).filter((journey): journey is NonNullable<typeof journey> => Boolean(journey));
+  return journeys.some((journey) =>
+    (journey.segments ?? []).some(
       (segment) =>
         !flightTimesAreChronological(
           segment.departureDate,
@@ -278,8 +281,9 @@ const hasInvalidFlightTiming = (details: QuotationVersionInput['flightDetails'])
         ),
     ),
   );
+};
 
-const FLIGHT_JOURNEY_TYPE_LABELS: Record<string, string> = {
+export const FLIGHT_JOURNEY_TYPE_LABELS: Record<string, string> = {
   ROUND_TRIP: 'Round Trip (Outbound + Return)',
   ONEWAY_OUTBOUND: 'One Way - Outbound Only',
   ONEWAY_RETURN: 'One Way - Return Only',
@@ -287,7 +291,7 @@ const FLIGHT_JOURNEY_TYPE_LABELS: Record<string, string> = {
 type FlightSegmentInput = NonNullable<
   QuotationVersionInput['flightDetails']
 >['outbound']['segments'][number];
-const emptySegment = (): FlightSegmentInput => ({
+export const emptySegment = (): FlightSegmentInput => ({
   airlineId: null,
   airlineName: null,
   flightNumber: null,
@@ -303,6 +307,25 @@ const emptySegment = (): FlightSegmentInput => ({
   checkInLuggage: '20kg',
   notes: null,
   connectionVia: null,
+});
+type FlightJourneyInput = NonNullable<
+  QuotationVersionInput['flightDetails']
+>['outbound'];
+export type FlightRecordInput = NonNullable<
+  NonNullable<QuotationVersionInput['flightDetails']>['flights']
+>[number];
+const emptyFlightJourney = (): FlightJourneyInput => ({
+  fromCity: null,
+  toCity: null,
+  travelClass: 'Economy',
+  segments: [emptySegment()],
+});
+/** A blank manual flight record (bookmark loads replace its journeys). */
+export const emptyFlightRecord = (): FlightRecordInput => ({
+  bookmarkCode: null,
+  journeyType: 'ROUND_TRIP',
+  outbound: emptyFlightJourney(),
+  returnJourney: emptyFlightJourney(),
 });
 const defaultFlightDetails = (): NonNullable<QuotationVersionInput['flightDetails']> => ({
   include: true,
@@ -322,6 +345,7 @@ const defaultFlightDetails = (): NonNullable<QuotationVersionInput['flightDetail
     travelClass: 'Economy',
     segments: [emptySegment()],
   },
+  flights: [],
 });
 const defaultHotelDetails = (): NonNullable<QuotationVersionInput['hotelDetails']> => ({
   include: true,
@@ -512,8 +536,6 @@ const normalizeImageSnapshot = <T extends object>(row: T) => {
 export function normalizeQuotationVersionForBuilder(version: QuotationVersion): QuotationVersion {
   const raw = version as QuotationVersion & Record<string, unknown>;
   const flight = objectOrNull(raw.flightDetails);
-  const outbound = objectOrNull(flight?.outbound);
-  const returnJourney = objectOrNull(flight?.returnJourney);
   const hotelDetails = objectOrNull(raw.hotelDetails);
   const sightseeing = objectOrNull(raw.sightseeingDetails);
   const addOnDetails = objectOrNull(raw.addOnDetails);
@@ -534,29 +556,46 @@ export function normalizeQuotationVersionForBuilder(version: QuotationVersion): 
     childPolicy: typeof raw.childPolicy === 'string' ? raw.childPolicy : null,
     flightDetails: flight
       ? ({
-          ...flight,
+          ...normalizeFlightDetails(flight),
           images: arrayOrEmpty(
-            flight.images as
-              NonNullable<QuotationVersionInput['flightDetails']>['images'] | null | undefined,
+            (flight as { images?: unknown }).images as
+              | NonNullable<QuotationVersionInput['flightDetails']>['images']
+              | null
+              | undefined,
           ),
-          outbound: {
-            ...outbound,
-            segments: arrayOrEmpty(
-              outbound?.segments as
-                | NonNullable<QuotationVersionInput['flightDetails']>['outbound']['segments']
-                | null
-                | undefined,
-            ),
-          },
-          returnJourney: {
-            ...returnJourney,
-            segments: arrayOrEmpty(
-              returnJourney?.segments as
-                | NonNullable<QuotationVersionInput['flightDetails']>['returnJourney']['segments']
-                | null
-                | undefined,
-            ),
-          },
+          flights: (
+            (
+              normalizeFlightDetails(flight) as {
+                flights?: Array<Record<string, unknown>>;
+              }
+            ).flights ?? []
+          ).map((record) => {
+            const outbound = objectOrNull(record.outbound);
+            const returnJourney = objectOrNull(record.returnJourney);
+            return {
+              ...record,
+              outbound: {
+                ...outbound,
+                segments: arrayOrEmpty(
+                  outbound?.segments as
+                    | NonNullable<QuotationVersionInput['flightDetails']>['outbound']['segments']
+                    | null
+                    | undefined,
+                ),
+              },
+              returnJourney: {
+                ...returnJourney,
+                segments: arrayOrEmpty(
+                  returnJourney?.segments as
+                    | NonNullable<
+                        QuotationVersionInput['flightDetails']
+                      >['returnJourney']['segments']
+                    | null
+                    | undefined,
+                ),
+              },
+            };
+          }),
         } as QuotationVersion['flightDetails'])
       : null,
     hotelDetails: hotelDetails
@@ -2610,19 +2649,7 @@ export function QuotationBuilderPage() {
   };
   const services = useFieldArray({ control: form.control, name: 'services' });
   const faqs = useFieldArray({ control: form.control, name: 'faqs' });
-  const outboundSegments = useFieldArray({
-    control: form.control,
-    name: 'flightDetails.outbound.segments',
-  });
-  const returnSegments = useFieldArray({
-    control: form.control,
-    name: 'flightDetails.returnJourney.segments',
-  });
-  const [expandedJourneys, setExpandedJourneys] = useState<Record<'outbound' | 'returnJourney', boolean>>({
-    outbound: true,
-    returnJourney: true,
-  });
-  const [expandedSegments, setExpandedSegments] = useState<Record<string, boolean>>({});
+  const flightRecords = useFieldArray({ control: form.control, name: 'flightDetails.flights' });
   const airlines = useAirlines(
     useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
   );
@@ -3116,6 +3143,40 @@ export function QuotationBuilderPage() {
     const base = defaultFlightDetails();
     const prefilledFlight: NonNullable<QuotationVersionInput['flightDetails']> = {
       ...base,
+      flights: [
+        {
+          bookmarkCode: null,
+          journeyType: 'ROUND_TRIP',
+          outbound: {
+            ...base.outbound,
+            fromCity: depCity || null,
+            toCity: destCity || null,
+            segments: [
+              {
+                ...emptySegment(),
+                from: depCity || null,
+                to: destCity || null,
+                departureDate: startStr,
+                arrivalDate: startStr,
+              },
+            ],
+          },
+          returnJourney: {
+            ...base.returnJourney,
+            fromCity: destCity || null,
+            toCity: depCity || null,
+            segments: [
+              {
+                ...emptySegment(),
+                from: destCity || null,
+                to: depCity || null,
+                departureDate: returnStr,
+                arrivalDate: returnStr,
+              },
+            ],
+          },
+        },
+      ],
       outbound: {
         ...base.outbound,
         fromCity: depCity || null,
@@ -3233,7 +3294,7 @@ export function QuotationBuilderPage() {
       flightDetails: version.flightDetails
         ? {
             ...defaultFlightDetails(),
-            ...version.flightDetails,
+            ...normalizeFlightDetails(version.flightDetails),
             images: version.flightDetails.images?.length
               ? version.flightDetails.images.map((image) => ({
                   ...image,
@@ -3250,20 +3311,44 @@ export function QuotationBuilderPage() {
                     },
                   ]
                 : [],
-            outbound: {
-              ...defaultFlightDetails().outbound,
-              ...version.flightDetails.outbound,
-              segments: version.flightDetails.outbound?.segments?.length
-                ? version.flightDetails.outbound.segments
-                : [emptySegment()],
-            },
-            returnJourney: {
-              ...defaultFlightDetails().returnJourney,
-              ...version.flightDetails.returnJourney,
-              segments: version.flightDetails.returnJourney?.segments?.length
-                ? version.flightDetails.returnJourney.segments
-                : [emptySegment()],
-            },
+            flights: (
+              (
+                normalizeFlightDetails(version.flightDetails) as unknown as {
+                  flights?: Array<{
+                  bookmarkCode?: string | null;
+                  journeyType?: 'ROUND_TRIP' | 'ONEWAY_OUTBOUND' | 'ONEWAY_RETURN';
+                  outbound?: {
+                    fromCity?: string | null;
+                    toCity?: string | null;
+                    travelClass?: string | null;
+                    segments?: FlightSegmentInput[];
+                  };
+                  returnJourney?: {
+                    fromCity?: string | null;
+                    toCity?: string | null;
+                    travelClass?: string | null;
+                    segments?: FlightSegmentInput[];
+                  };
+                }>;
+              }
+            ).flights ?? []).map((record) => ({
+              bookmarkCode: record.bookmarkCode ?? null,
+              journeyType: record.journeyType ?? 'ROUND_TRIP',
+              outbound: {
+                ...defaultFlightDetails().outbound,
+                ...record.outbound,
+                segments: record.outbound?.segments?.length
+                  ? record.outbound.segments
+                  : [emptySegment()],
+              },
+              returnJourney: {
+                ...defaultFlightDetails().returnJourney,
+                ...record.returnJourney,
+                segments: record.returnJourney?.segments?.length
+                  ? record.returnJourney.segments
+                  : [emptySegment()],
+              },
+            })),
           }
         : prefilledFlight,
       hotelDetails: version.hotelDetails
@@ -4238,14 +4323,14 @@ export function QuotationBuilderPage() {
       const flightDetails = value.flightDetails
         ? {
             ...value.flightDetails,
-            outbound:
-              value.flightDetails.entryMode === 'IMAGE'
-                ? value.flightDetails.outbound
-                : withDurations(value.flightDetails.outbound),
-            returnJourney:
-              value.flightDetails.entryMode === 'IMAGE'
-                ? value.flightDetails.returnJourney
-                : withDurations(value.flightDetails.returnJourney),
+            flights: (value.flightDetails.flights ?? []).map((flight) => {
+              const keepRaw = value.flightDetails?.entryMode === 'IMAGE';
+              return {
+                ...flight,
+                outbound: keepRaw ? flight.outbound : withDurations(flight.outbound),
+                returnJourney: keepRaw ? flight.returnJourney : withDurations(flight.returnJourney),
+              };
+            }),
           }
         : value.flightDetails;
       const submittedServices = value.services;
@@ -5666,30 +5751,38 @@ export function QuotationBuilderPage() {
     });
     const isFlightSectionWise = (form.watch('pricingMode') as string) === 'SECTION_WISE';
     const flightImages = form.watch('flightDetails.images') ?? [];
-    const journeyType = form.watch('flightDetails.journeyType') ?? 'ROUND_TRIP';
-    const showOutbound = journeyType === 'ROUND_TRIP' || journeyType === 'ONEWAY_OUTBOUND';
-    const showReturn = journeyType === 'ROUND_TRIP' || journeyType === 'ONEWAY_RETURN';
     const airlineList = airlines.data?.data ?? [];
-    const labelCls = 'text-xs font-semibold uppercase tracking-wide text-slate-500';
 
     /**
-     * Import a saved flight bookmark into the quotation form (DB only). Each
-     * segment's airline is matched against the Airline Master and created
-     * automatically when missing, so the Airline dropdown is never left blank.
+     * Import saved flight bookmarks into the quotation form (DB only). The
+     * first bookmark fills the card it was loaded from; any additional IDs
+     * pasted into the same input append further independent flight records.
+     * Previously loaded flights are never overwritten. Each segment's airline
+     * is matched against the Airline Master and created automatically when
+     * missing, so the Airline dropdown is never left blank.
      */
-    const importFlightBookmark = async (bookmarks: LiveSearchBookmark[]) => {
-      const bookmark = bookmarks[0];
-      if (!bookmark) return;
-      const details = flightBookmarkToDetails(bookmark);
-      form.setValue('flightDetails', details, { shouldDirty: true });
-      // `setValue` on the parent path does not re-sync the segment field
-      // arrays, so replace them with every imported segment. Otherwise only the
-      // default single segment would render until the next "Add Connection".
-      outboundSegments.replace(details.outbound.segments);
-      returnSegments.replace(details.returnJourney.segments);
-      if (bookmark.currency) form.setValue('currency', bookmark.currency, { shouldDirty: true });
+    const importFlightBookmarks = async (flightIndex: number, bookmarks: LiveSearchBookmark[]) => {
+      const [first, ...rest] = bookmarks;
+      if (!first) return;
+      const toRecord = (bookmark: LiveSearchBookmark): FlightRecordInput => {
+        const details = flightBookmarkToDetails(bookmark);
+        return {
+          bookmarkCode: bookmark.bookmarkCode,
+          journeyType: details.journeyType,
+          outbound: details.outbound,
+          returnJourney: details.returnJourney,
+        };
+      };
+      const records = [...((form.getValues('flightDetails.flights') ?? []) as FlightRecordInput[])];
+      records[flightIndex] = toRecord(first);
+      for (const bookmark of rest) records.push(toRecord(bookmark));
+      flightRecords.replace(records as never[]);
+      if (first.currency) form.setValue('currency', first.currency, { shouldDirty: true });
 
-      const refs = flightBookmarkSegmentAirlines(bookmark);
+      const refs = bookmarks.flatMap((bookmark, position) => {
+        const targetIndex = position === 0 ? flightIndex : records.length - rest.length + position - 1;
+        return flightBookmarkSegmentAirlines(bookmark).map((ref) => ({ ...ref, flightIndex: targetIndex }));
+      });
       if (refs.length === 0) return;
       try {
         const resolved = await resolveFlightSegmentAirlines(refs, {
@@ -5713,7 +5806,7 @@ export function QuotationBuilderPage() {
           const key = normalizeAirlineName(ref.name ?? '');
           const airline = resolved.get(key);
           if (!airline?.airlineId) continue;
-          const path = `flightDetails.${ref.leg}.segments.${ref.segmentIndex}`;
+          const path = `flightDetails.flights.${ref.flightIndex}.${ref.leg}.segments.${ref.segmentIndex}`;
           form.setValue(fp(`${path}.airlineId`), airline.airlineId as never, { shouldDirty: true });
           form.setValue(fp(`${path}.airlineName`), (airline.airlineName ?? ref.name) as never, {
             shouldDirty: true,
@@ -5725,278 +5818,8 @@ export function QuotationBuilderPage() {
       }
     };
 
-    const segmentCard = (
-      leg: 'outbound' | 'returnJourney',
-      arr: typeof outboundSegments | typeof returnSegments,
-      index: number,
-      id: string,
-    ) => {
-      const base = `flightDetails.${leg}.segments.${index}`;
-      const via =
-        index > 0
-          ? (form.watch(fp(`${base}.from`)) as string) ||
-            (form.watch(fp(`flightDetails.${leg}.segments.${index - 1}.to`)) as string) ||
-            ''
-          : '';
-      const departureDate = form.watch(fp(`${base}.departureDate`)) as string | null;
-      const departureTime = form.watch(fp(`${base}.departureTime`)) as string | null;
-      const arrivalDate = form.watch(fp(`${base}.arrivalDate`)) as string | null;
-      const arrivalTime = form.watch(fp(`${base}.arrivalTime`)) as string | null;
-      const computedDuration = computeDuration(
-        departureDate,
-        departureTime,
-        arrivalDate,
-        arrivalTime,
-      );
-      const invalidArrival = !flightTimesAreChronological(
-        departureDate,
-        departureTime,
-        arrivalDate,
-        arrivalTime,
-      );
-      const segmentKey = `${leg}-${index}`;
-      const isSegmentExpanded = expandedSegments[segmentKey] ?? true;
-      return (
-        <article key={id} className="overflow-hidden rounded-lg border border-border/60 bg-card">
-          <button
-            type="button"
-            onClick={() =>
-              setExpandedSegments((prev) => ({ ...prev, [segmentKey]: !isSegmentExpanded }))
-            }
-            className="flex w-full items-center justify-between bg-muted/30 px-4 py-3 text-left hover:bg-muted/50"
-          >
-            <span className="flex items-center gap-2">
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground transition-transform ${isSegmentExpanded ? 'rotate-180' : ''}`}
-              />
-              <strong className={`${subsectionHeading} normal-case tracking-normal`}>Segment {index + 1}</strong>
-            </span>
-            {index > 0 && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  arr.remove(index);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.stopPropagation();
-                    arr.remove(index);
-                  }
-                }}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" /> Remove
-              </span>
-            )}
-          </button>
-          {isSegmentExpanded && (
-            <div className="space-y-3 p-4">
-              {index > 0 && (
-            <p className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white">
-              🔗 Connection{via ? `: Connected via ${via}` : ''}
-            </p>
-          )}
-          <div className="grid gap-3 md:grid-cols-3">
-            <label className={labelCls}>
-              Airline <span className="text-red-500">*</span>
-              <select
-                aria-label="Airline"
-                className={`${field} mt-1`}
-                value={(form.watch(fp(`${base}.airlineId`)) as string) ?? ''}
-                onChange={(event) => {
-                  const picked = airlineList.find((row) => row.id === event.target.value);
-                  form.setValue(fp(`${base}.airlineId`), (event.target.value || null) as never, {
-                    shouldDirty: true,
-                  });
-                  form.setValue(fp(`${base}.airlineName`), (picked?.name ?? null) as never, {
-                    shouldDirty: true,
-                  });
-                }}
-              >
-                <option value="">Select Airline</option>
-                {airlineList.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={labelCls}>
-              Flight Number
-              <input
-                placeholder="e.g. AI101"
-                className={`${field} mt-1`}
-                {...form.register(fp(`${base}.flightNumber`))}
-              />
-            </label>
-            <label className={labelCls}>
-              Class
-              <select className={`${field} mt-1`} {...form.register(fp(`${base}.travelClass`))}>
-                {CLASS_OPTIONS.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className={labelCls}>
-              From <span className="text-red-500">*</span>
-              <input className={`${field} mt-1`} {...form.register(fp(`${base}.from`))} />
-            </label>
-            <label className={labelCls}>
-              To <span className="text-red-500">*</span>
-              <input className={`${field} mt-1`} {...form.register(fp(`${base}.to`))} />
-            </label>
-          </div>
-          <div className="grid gap-3 md:grid-cols-4">
-            <label className={labelCls}>
-              Departure Date
-              <input
-                type="date"
-                className={`${field} mt-1`}
-                {...form.register(fp(`${base}.departureDate`))}
-              />
-            </label>
-            <label className={labelCls}>
-              Departure Time
-              <input
-                type="time"
-                lang="en-US"
-                className={`${field} mt-1`}
-                {...form.register(fp(`${base}.departureTime`))}
-              />
-            </label>
-            <label className={labelCls}>
-              Arrival Date
-              <input
-                type="date"
-                className={`${field} mt-1`}
-                {...form.register(fp(`${base}.arrivalDate`))}
-              />
-            </label>
-            <label className={labelCls}>
-              Arrival Time
-              <input
-                type="time"
-                lang="en-US"
-                className={`${field} mt-1`}
-                {...form.register(fp(`${base}.arrivalTime`))}
-              />
-            </label>
-            {invalidArrival && (
-              <p
-                role="alert"
-                className="flex items-center gap-1 text-xs font-medium text-amber-600 md:col-span-4"
-              >
-                <AlertTriangle className="h-3.5 w-3.5" /> Arrival time must be after departure time.
-              </p>
-            )}
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <label className={labelCls}>
-              <span className={calculatedLabel}>Duration</span>
-              <input
-                readOnly
-                placeholder="Auto-calculated"
-                value={computedDuration}
-                className={`${fieldMuted} mt-1`}
-              />
-              <span className="text-[11px] text-muted-foreground">calculated from dates</span>
-            </label>
-            <label className={labelCls}>
-              Cabin Luggage
-              <select className={`${field} mt-1`} {...form.register(fp(`${base}.cabinLuggage`))}>
-                {CABIN_LUGGAGE_OPTIONS.map((value) => (
-                  <option key={value} value={value}>
-                    {cabinLuggageLabel(value)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={labelCls}>
-              Check-in Luggage
-              <select className={`${field} mt-1`} {...form.register(fp(`${base}.checkInLuggage`))}>
-                {CHECKIN_LUGGAGE_OPTIONS.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div>
-            <span className={labelCls}>Additional Notes</span>
-            <div className="mt-1">
-              <RichTextEditor
-                ariaLabel={`Segment ${index + 1} notes`}
-                value={(form.watch(fp(`${base}.notes`)) as string) ?? ''}
-                onChange={(html) =>
-                  form.setValue(fp(`${base}.notes`), html as never, { shouldDirty: true })
-                }
-              />
-            </div>
-          </div>
-            </div>
-          )}
-        </article>
-      );
-    };
-
-    const journeyBlock = (
-      leg: 'outbound' | 'returnJourney',
-      arr: typeof outboundSegments | typeof returnSegments,
-      headerClass: string,
-      title: string,
-    ) => {
-      const base = `flightDetails.${leg}`;
-      const from = (form.watch(fp(`${base}.fromCity`)) as string) || '';
-      const to = (form.watch(fp(`${base}.toCity`)) as string) || '';
-      const isJourneyExpanded = expandedJourneys[leg] ?? true;
-      return (
-        <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() =>
-              setExpandedJourneys((prev) => ({ ...prev, [leg]: !isJourneyExpanded }))
-            }
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setExpandedJourneys((prev) => ({ ...prev, [leg]: !isJourneyExpanded }));
-              }
-            }}
-            className={`flex cursor-pointer select-none items-center justify-between px-5 py-3 font-semibold text-white ${headerClass}`}
-          >
-            <span className="flex items-center gap-2">
-              <ChevronDown
-                className={`h-4 w-4 text-white/80 transition-transform ${isJourneyExpanded ? 'rotate-180' : ''}`}
-              />
-              ✈ {title}
-            </span>
-            <span className="text-sm opacity-90">
-              {from && to ? `${from} → ${to}` : 'Route will appear here'}
-            </span>
-          </div>
-          {isJourneyExpanded && (
-            <div className="p-5">
-              <div className="space-y-4">
-                {arr.fields.map((segment, index) => segmentCard(leg, arr, index, segment.id))}
-              </div>
-              <div className="mt-4 flex justify-center">
-                <Button variant="secondary" onClick={() => arr.append(emptySegment())}>
-                  <Plus className="h-4 w-4" /> Add Connection
-                </Button>
-              </div>
-            </div>
-          )}
-        </section>
-      );
-    };
-
     return (
       <div className="space-y-5">
-        <BookmarkLoadField type="FLIGHT" placeholder="FLT-000456" onLoaded={importFlightBookmark} />
         <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
           <input type="checkbox" {...form.register('flightDetails.include')} />
           Include Flight in Quotation
@@ -6287,31 +6110,46 @@ export function QuotationBuilderPage() {
             )}
 
             {entryMode === 'MANUAL' && (
-              <label className="block max-w-md text-sm font-semibold text-slate-800">
-                Journey Type <span className="text-red-500">*</span>
-                <select
-                  aria-label="Journey type"
-                  className={`${field} mt-1`}
-                  {...form.register('flightDetails.journeyType')}
-                >
-                  {Object.entries(FLIGHT_JOURNEY_TYPE_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                <span className="mt-1 block text-xs font-normal text-slate-500">
-                  Select flight direction to show relevant sections.
-                </span>
-              </label>
+              <>
+                {flightRecords.fields.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/60 px-4 py-6 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      No flights yet. Add the first one below, or load it from a bookmark ID.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="mt-3"
+                      onClick={() => flightRecords.append(emptyFlightRecord())}
+                    >
+                      <Plus className="h-4 w-4" /> Add Flight
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {flightRecords.fields.map((fieldRow, index) => (
+                      <FlightRecordCard
+                        key={fieldRow.id}
+                        flightIndex={index}
+                        form={form}
+                        airlineList={airlineList}
+                        onLoadBookmarks={importFlightBookmarks}
+                        onRemoveFlight={(removeIndex) => flightRecords.remove(removeIndex)}
+                      />
+                    ))}
+                    <div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => flightRecords.append(emptyFlightRecord())}
+                      >
+                        <Plus className="h-4 w-4" /> Add Flight
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-
-            {entryMode === 'MANUAL' &&
-              showOutbound &&
-              journeyBlock('outbound', outboundSegments, 'bg-brand-600', 'Outbound Journey')}
-            {entryMode === 'MANUAL' &&
-              showReturn &&
-              journeyBlock('returnJourney', returnSegments, 'bg-emerald-600', 'Return Journey')}
           </>
         )}
       </div>

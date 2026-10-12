@@ -45,6 +45,7 @@ import {
   resolveQuotationPricing,
   resolveWeblinkSectionOrder,
   normalizeFaqs,
+  normalizeFlightDetails,
   getFlightPerTravelerBreakdown,
 } from '@interscale/shared';
 import { useFavicon } from '@/hooks/useFavicon';
@@ -2004,29 +2005,41 @@ export function PublicQuotationPage() {
         (service) => ADDON_SERVICE_TYPES.has(service.serviceType) && service.addOnServiceId != null,
       )
     : [];
-  // Reference "Flight Details" — structured journeys from flightDetails.
+  // Reference "Flight Details" — every flight record in order, each with
+  // its own journeys. Legacy single-flight rows normalize into one record.
   const fd = v.flightDetails;
+  const flightRecords = (
+    (normalizeFlightDetails(fd) as { flights?: unknown } | null)?.flights ?? []
+  ) as Array<{
+    bookmarkCode?: string | null;
+    journeyType?: string;
+    outbound?: FlightJourney;
+    returnJourney?: FlightJourney;
+  }>;
   const flightJourneys =
     fd && fd.include && fd.entryMode !== 'IMAGE'
-      ? ([
-          (fd.journeyType === 'ROUND_TRIP' || fd.journeyType === 'ONEWAY_OUTBOUND') && {
-            key: 'outbound',
-            title: 'Outbound Journey',
-            journey: fd.outbound,
-            color: '#2563eb',
-          },
-          (fd.journeyType === 'ROUND_TRIP' || fd.journeyType === 'ONEWAY_RETURN') && {
-            key: 'return',
-            title: 'Return Journey',
-            journey: fd.returnJourney,
-            color: '#16a34a',
-          },
-        ].filter(Boolean) as Array<{
-          key: string;
-          title: string;
-          journey: FlightJourney;
-          color: string;
-        }>)
+      ? flightRecords.flatMap((flight, flightIndex) => {
+          const prefix = flightRecords.length > 1 ? `Flight ${flightIndex + 1} · ` : '';
+          return ([
+            (flight.journeyType === 'ROUND_TRIP' || flight.journeyType === 'ONEWAY_OUTBOUND') && {
+              key: `flight-${flightIndex}-outbound`,
+              title: `${prefix}Outbound Journey`,
+              journey: flight.outbound,
+              color: '#2563eb',
+            },
+            (flight.journeyType === 'ROUND_TRIP' || flight.journeyType === 'ONEWAY_RETURN') && {
+              key: `flight-${flightIndex}-return`,
+              title: `${prefix}Return Journey`,
+              journey: flight.returnJourney,
+              color: '#16a34a',
+            },
+          ].filter(Boolean) as Array<{
+            key: string;
+            title: string;
+            journey: FlightJourney;
+            color: string;
+          }>);
+        })
       : [];
   const segmentHasData = (segment: FlightSegment) =>
     Boolean(

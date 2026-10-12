@@ -461,6 +461,33 @@ const sightseeingBaseSchema = z.object({
     .max(20)
     .optional(),
   status: z.enum(MASTER_STATUSES).default('ACTIVE'),
+  /**
+   * Default meals/transfer prefilled into quotation itinerary entries when
+   * this activity is selected. Values mirror the quotation builder's own
+   * modes (see SIGHTSEEING_MEAL_MODES / SIGHTSEEING_TRANSFER_MODES in
+   * quotations.ts, duplicated here to avoid a module cycle); absent/null
+   * means "no default", never an error.
+   */
+  mealDefaults: z
+    .object({
+      meals: z
+        .object({
+          breakfast: z.boolean().default(false),
+          lunch: z.boolean().default(false),
+          dinner: z.boolean().default(false),
+        })
+        .default({ breakfast: false, lunch: false, dinner: false }),
+      mealModes: z
+        .object({
+          breakfast: z.enum(['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER']).nullable().optional(),
+          lunch: z.enum(['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER']).nullable().optional(),
+          dinner: z.enum(['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER']).nullable().optional(),
+        })
+        .default({}),
+      transfer: z.enum(['PRIVATE', 'SHARED', 'NO_TRANSFER']).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const sightseeingInputSchema = sightseeingBaseSchema;
@@ -695,6 +722,7 @@ export type VehicleUpdateInput = z.infer<typeof vehicleUpdateSchema>;
 export type VehicleImageUploadInput = z.infer<typeof vehicleImageUploadSchema>;
 export type SightseeingInput = z.infer<typeof sightseeingInputSchema>;
 export type SightseeingUpdateInput = z.infer<typeof sightseeingUpdateSchema>;
+export type SightseeingMealDefaults = NonNullable<SightseeingInput['mealDefaults']>;
 export type SightseeingImageUploadInput = z.infer<typeof sightseeingImageUploadSchema>;
 export type SightseeingReorderInput = z.infer<typeof sightseeingReorderSchema>;
 export type AddOnServiceInput = z.infer<typeof addOnServiceInputSchema>;

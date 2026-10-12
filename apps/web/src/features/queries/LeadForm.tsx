@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFieldArray, useForm, type UseFormRegister } from 'react-hook-form';
 import {
   Car,
+  ChevronDown,
   FileText,
   Hotel,
   PackagePlus,
   Plane,
-  Search,
   Ship,
   Telescope,
   Trash2,
@@ -17,9 +17,11 @@ import { useSearchParams } from 'react-router-dom';
 import { type QueryInput } from '@interscale/shared';
 import countries from 'world-countries';
 import { Button } from '@/components/ui/Button';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import indianCityData from '@/data/indian-cities.json';
 import { TRAVEL_MONTH_NAMES } from '@/features/quotations/travel-dates';
 import { useAuth } from '@/features/auth/AuthProvider';
-import { useLead, useLeadLookups, usePhoneSearch, type Lead, type UserOption } from './queries.api';
+import { useLeadLookups, type Lead, type UserOption } from './queries.api';
 import { useCustomer } from '@/features/customers/customers.api';
 import { useDestinations } from '@/features/masters/masters.api';
 import { cn } from '@/utils/cn';
@@ -112,11 +114,16 @@ function namesFor(value: unknown, count: number): string[] {
 
 /** Month/year selects state loaded independently from the stored pair only.
  * An exact travelStartDate never populates these selects: Travel Date and
- * Travel Month are semantically separate pieces of information. */
+ * Travel Month are semantically separate pieces of information. The year
+ * defaults to the current calendar year (computed dynamically, never
+ * hardcoded); a saved travel year is always preserved and never overwritten. */
 function travelMonthYearDefaults(lead?: Lead): { travelMonth: string; travelYear: string } {
   if (lead?.travelMonth && lead?.travelYear)
     return { travelMonth: String(lead.travelMonth), travelYear: String(lead.travelYear) };
-  return { travelMonth: '', travelYear: '' };
+  return {
+    travelMonth: '',
+    travelYear: lead?.travelYear != null ? String(lead.travelYear) : String(new Date().getFullYear()),
+  };
 }
 
 type TravelTimingMode = 'exact' | 'month';
@@ -127,23 +134,6 @@ type TravelTimingMode = 'exact' | 'month';
  * conflicting values are ever submitted. */
 function travelTimingModeFor(lead?: Lead): TravelTimingMode {
   return lead?.travelMonth != null && lead?.travelYear != null ? 'month' : 'exact';
-}
-
-/**
- * Dropdown-only helper label for the Lead Itinerary destination selector.
- * Unselected options show "Destination Name — Private Name" so staff can
- * identify destinations internally; the selected option always renders the
- * plain public name because a native <select> displays the selected option's
- * text in its closed field. The stored/submitted value is always the
- * destination name — privateName never leaves this dropdown.
- */
-function destinationOptionLabel(
-  destination: { name: string; privateName?: string | null },
-  selected: boolean,
-): string {
-  if (selected) return destination.name;
-  const privateName = destination.privateName?.trim();
-  return privateName ? `${destination.name} — ${privateName}` : destination.name;
 }
 
 /** Year options: a small past window plus a generous future planning horizon. */
@@ -223,6 +213,7 @@ function TravellerNameInputs({
   field,
   label,
   register,
+  placeholder = 'Full name (optional)',
 }: {
   count: number;
   field: (
@@ -234,6 +225,7 @@ function TravellerNameInputs({
     | `infantNames.${number}`;
   label: (index: number) => string;
   register: UseFormRegister<FormValues>;
+  placeholder?: string;
 }) {
   if (count <= 0) return null;
   return (
@@ -242,7 +234,7 @@ function TravellerNameInputs({
         <Field key={field(index)} label={label(index)}>
           <input
             className={inputClass}
-            placeholder="Full name (optional)"
+            placeholder={placeholder}
             maxLength={120}
             {...register(field(index))}
           />
@@ -271,64 +263,21 @@ const Section = ({
     <div className="p-4">{children}</div>
   </section>
 );
-const INDIAN_DEPARTURE_CITIES = [
-  { value: 'Ahmedabad', label: 'Ahmedabad (AMD)' },
-  { value: 'Agra', label: 'Agra' },
-  { value: 'Ajmer', label: 'Ajmer' },
-  { value: 'Alappuzha', label: 'Alappuzha' },
-  { value: 'Amritsar', label: 'Amritsar (ATQ)' },
-  { value: 'Aurangabad', label: 'Aurangabad' },
-  { value: 'Bhopal', label: 'Bhopal (BHO)' },
-  { value: 'Bhubaneswar', label: 'Bhubaneswar (BBI)' },
-  { value: 'Bengaluru', label: 'Bengaluru (BLR)' },
-  { value: 'Calicut', label: 'Calicut (CCJ)' },
-  { value: 'Chandigarh', label: 'Chandigarh (IXC)' },
-  { value: 'Chennai', label: 'Chennai (MAA)' },
-  { value: 'Coimbatore', label: 'Coimbatore (CJB)' },
-  { value: 'Darjeeling', label: 'Darjeeling' },
-  { value: 'Dehradun', label: 'Dehradun (DED)' },
-  { value: 'Delhi', label: 'Delhi (DEL)' },
-  { value: 'Gangtok', label: 'Gangtok' },
-  { value: 'Goa', label: 'Goa (GOI)' },
-  { value: 'Guwahati', label: 'Guwahati (GAU)' },
-  { value: 'Gwalior', label: 'Gwalior (GWL)' },
-  { value: 'Hyderabad', label: 'Hyderabad (HYD)' },
-  { value: 'Indore', label: 'Indore (IDR)' },
-  { value: 'Jabalpur', label: 'Jabalpur (JLR)' },
-  { value: 'Jaipur', label: 'Jaipur (JAI)' },
-  { value: 'Jaisalmer', label: 'Jaisalmer (JSA)' },
-  { value: 'Jodhpur', label: 'Jodhpur (JDH)' },
-  { value: 'Kochi', label: 'Kochi (COK)' },
-  { value: 'Kodaikanal', label: 'Kodaikanal' },
-  { value: 'Kolkata', label: 'Kolkata (CCU)' },
-  { value: 'Leh', label: 'Leh (IXL)' },
-  { value: 'Lucknow', label: 'Lucknow (LKO)' },
-  { value: 'Madurai', label: 'Madurai (IXM)' },
-  { value: 'Manali', label: 'Manali' },
-  { value: 'Mangalore', label: 'Mangalore (IXE)' },
-  { value: 'Munnar', label: 'Munnar' },
-  { value: 'Mumbai', label: 'Mumbai (BOM)' },
-  { value: 'Mysuru', label: 'Mysuru (MYQ)' },
-  { value: 'Nagpur', label: 'Nagpur (NAG)' },
-  { value: 'Nainital', label: 'Nainital' },
-  { value: 'Ooty', label: 'Ooty' },
-  { value: 'Patna', label: 'Patna (PAT)' },
-  { value: 'Port Blair', label: 'Port Blair (IXZ)' },
-  { value: 'Pune', label: 'Pune (PNQ)' },
-  { value: 'Raipur', label: 'Raipur (RPR)' },
-  { value: 'Rajkot', label: 'Rajkot (RAJ)' },
-  { value: 'Ranchi', label: 'Ranchi (IXR)' },
-  { value: 'Rishikesh', label: 'Rishikesh' },
-  { value: 'Shimla', label: 'Shimla (SLV)' },
-  { value: 'Srinagar', label: 'Srinagar (SXR)' },
-  { value: 'Surat', label: 'Surat (STV)' },
-  { value: 'Tirupati', label: 'Tirupati (TIR)' },
-  { value: 'Trivandrum', label: 'Trivandrum (TRV)' },
-  { value: 'Udaipur', label: 'Udaipur (UDR)' },
-  { value: 'Varanasi', label: 'Varanasi (VNS)' },
-  { value: 'Vijayawada', label: 'Vijayawada (VGA)' },
-  { value: 'Visakhapatnam', label: 'Visakhapatnam (VTZ)' },
-];
+/**
+ * Comprehensive Indian city list (see `apps/web/src/data/indian-cities.json`,
+ * generated from country-state-city plus legacy spelling aliases). Values are
+ * always plain city names so previously stored departure cities keep working;
+ * labels add the state only where a name exists in more than one state.
+ */
+interface IndianCityEntry {
+  city: string;
+  state: string;
+}
+const INDIAN_CITIES: IndianCityEntry[] = indianCityData.entries;
+const INDIAN_CITY_STATE_COUNT: Record<string, number> = {};
+for (const entry of INDIAN_CITIES) {
+  INDIAN_CITY_STATE_COUNT[entry.city] = (INDIAN_CITY_STATE_COUNT[entry.city] ?? 0) + 1;
+}
 const CREATE_LEAD_SERVICES = [
   'CRUISE',
   'FLIGHT',
@@ -339,7 +288,7 @@ const CREATE_LEAD_SERVICES = [
   'OTHER_ADD_ON',
 ] as const;
 const SERVICE_LABELS: Partial<Record<string, string>> = {
-  VEHICLE_TRANSFER: 'Vehicle (disposal)',
+  VEHICLE_TRANSFER: 'Vehicle',
   OTHER_ADD_ON: 'Add-on Service (Rail, Passport, etc.)',
 };
 const SERVICE_ICONS: Partial<Record<string, LucideIcon>> = {
@@ -369,8 +318,6 @@ export function LeadForm({
   errorFields?: Record<string, string[]>;
 }) {
   const { hasPermission, user } = useAuth();
-  const [searchPhone, setSearchPhone] = useState('');
-  const [submittedSearchPhone, setSubmittedSearchPhone] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const requestedCustomerId = lead ? '' : (searchParams.get('customerId') ?? '');
@@ -393,6 +340,9 @@ export function LeadForm({
   const [travelTiming, setTravelTiming] = useState<TravelTimingMode>(() =>
     travelTimingModeFor(lead),
   );
+  // Traveller name inputs are hidden until the section is expanded. The
+  // inputs stay mounted (CSS-hidden) so typed or saved names are preserved.
+  const [travellerNamesOpen, setTravellerNamesOpen] = useState(false);
   const leadIdentity = lead?.id ?? null;
   useEffect(() => {
     setTravelTiming(travelTimingModeFor(lead));
@@ -406,6 +356,13 @@ export function LeadForm({
     setValue('email', requestedCustomer.data.email ?? '');
     setValue('alternatePhone', requestedCustomer.data.alternatePhone ?? '');
   }, [lead, requestedCustomer.data, setValue]);
+  // Create Lead preselects Assign To with the logged-in creator once the
+  // session user is known. Edit Lead is untouched, a manual pick is never
+  // overridden, and a later session-identity change re-applies cleanly.
+  // (The actual defaulting effect lives below, next to assigneeOptions, so it
+  // can also wait for the matching dropdown option to exist.)
+  const assignedToId = watch('assignedToId');
+  const defaultedAssigneeRef = useRef<string | null>(null);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (isDirty) event.preventDefault();
@@ -416,6 +373,7 @@ export function LeadForm({
   const { fields, append, remove } = useFieldArray({ control, name: 'itinerary' });
   const services = watch('services');
   const departureCountry = watch('departureCountry');
+  const departureCity = watch('departureCity');
   const counts = watch([
     'rooms',
     'adults',
@@ -424,24 +382,25 @@ export function LeadForm({
     'infants',
     'extraBeds',
   ]);
-  const searchedMatches = usePhoneSearch(submittedSearchPhone);
-  const searchMatchId = lead ? undefined : searchedMatches.data?.[0]?.id;
-  const searchedLead = useLead(searchMatchId);
-  const autofilledIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const found = searchedLead.data;
-    if (!found || lead) return;
-    if (autofilledIdRef.current === found.id) return;
-    autofilledIdRef.current = found.id;
-    reset(defaults(found));
-    setTravelTiming(travelTimingModeFor(found));
-  }, [searchedLead.data, lead, reset]);
   const countryOptions = useMemo(
     () => countries.map((country) => country.name.common).sort((a, b) => a.localeCompare(b)),
     [],
   );
+  // Searchable-select shape of the same country list (Create form only).
+  const countrySelectOptions = useMemo(
+    () => countryOptions.map((country) => ({ value: country, label: country })),
+    [countryOptions],
+  );
   const cityOptions = useMemo(() => {
-    if (departureCountry === 'India') return INDIAN_DEPARTURE_CITIES;
+    if (departureCountry === 'India')
+      return INDIAN_CITIES.map((entry) => ({
+        value: entry.city,
+        label:
+          (INDIAN_CITY_STATE_COUNT[entry.city] ?? 0) > 1
+            ? `${entry.city} (${entry.state})`
+            : entry.city,
+        searchText: entry.state,
+      }));
     return (lookups?.cities ?? [])
       .map((city) => ({ value: city, label: city }))
       .sort((a, b) => a.label.localeCompare(b.label));
@@ -462,6 +421,18 @@ export function LeadForm({
     }
     return map;
   }, [itineraryDestinations.data?.data]);
+  // Searchable-select shape of the same destination list (Create form only).
+  // The closed field shows the plain public name — the submitted value is
+  // always the destination name — while the private name stays searchable.
+  const destinationSelectOptions = useMemo(
+    () =>
+      (itineraryDestinations.data?.data ?? []).map((destination) => ({
+        value: destination.name,
+        label: destination.name,
+        searchText: destination.privateName ?? null,
+      })),
+    [itineraryDestinations.data?.data],
+  );
   const itineraryRows = watch('itinerary');
   const fieldErrorMessages = Object.entries(errorFields ?? {})
     .flatMap(([field, messages]) => messages.map((message) => ({ field, message })))
@@ -484,6 +455,21 @@ export function LeadForm({
     };
     return [me, ...others];
   }, [lookups, user]);
+  // Default Assign To to the session user once both the session ID and its
+  // valid dropdown option are available (the me-fallback above guarantees the
+  // option exists whenever the session does, so an ID is never set without a
+  // matching option). Runs on Create only; never touches a manual pick or a
+  // cleared field again once it has defaulted for the active session.
+  useEffect(() => {
+    if (lead) return;
+    const sessionId = user?.id;
+    if (!sessionId) return;
+    if (!assigneeOptions.some((option) => option.id === sessionId)) return;
+    if (defaultedAssigneeRef.current === sessionId) return;
+    if (assignedToId !== '' && assignedToId !== defaultedAssigneeRef.current) return;
+    defaultedAssigneeRef.current = sessionId;
+    if (assignedToId !== sessionId) setValue('assignedToId', sessionId);
+  }, [lead, user?.id, assigneeOptions, assignedToId, setValue]);
   const childrenWithBedCount = Math.max(0, Math.min(100, Number(counts[2]) || 0));
   const childrenWithoutBedCount = Math.max(0, Math.min(100, Number(counts[3]) || 0));
   const infantCount = Math.max(0, Math.min(100, Number(counts[4]) || 0));
@@ -626,39 +612,10 @@ export function LeadForm({
           )}
         </div>
       )}
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)]">
-        <Section title="Lead Information" tone="blue">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)]">
+        <div className="min-w-0 space-y-5">
+          <Section title="Lead Information" tone="blue">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {!lead && (
-              <div className="md:col-span-2 lg:col-span-3">
-                <p className="mb-2 text-sm font-semibold text-slate-900">
-                  Search Existing Lead by Phone
-                </p>
-                <div className="flex overflow-hidden rounded-lg border border-slate-300 bg-card">
-                  <input
-                    aria-label="Search existing lead by phone"
-                    className="min-w-0 flex-1 px-3 py-2 text-sm outline-none"
-                    inputMode="tel"
-                    value={searchPhone}
-                    onChange={(event) => setSearchPhone(event.target.value)}
-                    placeholder="Enter phone number to search"
-                  />
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700"
-                    onClick={() => setSubmittedSearchPhone(searchPhone.trim())}
-                  >
-                    <Search className="h-4 w-4" /> Search
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">
-                  Search existing leads by phone number to auto-fill form
-                </p>
-                {searchedMatches.data && searchedMatches.data.length === 0 && (
-                  <p className="mt-2 text-xs text-slate-500">No matching lead found.</p>
-                )}
-              </div>
-            )}
             <div className="md:col-span-2 lg:col-span-3">
               <Field label="Name *">
                 <input
@@ -668,7 +625,7 @@ export function LeadForm({
                 />
               </Field>
             </div>
-            <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 gap-4">
               <Field label="Phone *">
                 <input
                   aria-label="Phone"
@@ -677,15 +634,15 @@ export function LeadForm({
                   {...register('phone', { required: true, minLength: 5 })}
                 />
               </Field>
-              <Field label="Email">
-                <input className={inputClass} type="email" {...register('email')} />
-              </Field>
+              {/* Email is shown on neither form (UI-only). It stays registered
+                so the submitted payload shape is unchanged and saved email
+                data is preserved. */}
+              <input type="hidden" {...register('email')} />
             </div>
-            {(
-              lead
-                ? (['leadSource', 'leadType', 'leadStage', 'priority'] as const)
-                : (['leadSource', 'leadType', 'leadStage'] as const)
-            ).map((name) => (
+            {/* Priority is not part of the lead workflow: hidden from both the
+                create and edit forms. The value stays in form state and is
+                submitted unchanged so existing data and APIs are untouched. */}
+            {(['leadSource', 'leadType', 'leadStage'] as const).map((name) => (
               <Field
                 key={name}
                 label={
@@ -694,7 +651,6 @@ export function LeadForm({
                       leadSource: 'Lead Source *',
                       leadType: 'Type *',
                       leadStage: 'Stage *',
-                      priority: 'Priority *',
                     } as const
                   )[name]
                 }
@@ -705,9 +661,7 @@ export function LeadForm({
                       ? 'leadSources'
                       : name === 'leadType'
                         ? 'leadTypes'
-                        : name === 'leadStage'
-                          ? 'leadStages'
-                          : 'priorities'
+                        : 'leadStages'
                   ]
                     ?.map((o) => (
                       <option key={o.value} value={o.value}>
@@ -717,17 +671,6 @@ export function LeadForm({
                 </select>
               </Field>
             ))}
-            <div className="md:col-span-2 lg:col-span-3 space-y-3">
-              <p className="text-sm font-semibold text-slate-900">Assign Type</p>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="radio" checked readOnly /> Manual Assignment
-              </label>
-              {hasPermission('queries.assign') && (
-                <p className="text-xs text-slate-500">
-                  Assign this lead to yourself or another team member. This field is required.
-                </p>
-              )}
-            </div>
             <Field label="Assign To *">
               <select
                 aria-label="Assigned salesperson"
@@ -748,6 +691,40 @@ export function LeadForm({
             </Field>
           </div>
         </Section>
+        <Section title="Services Required *" tone="green">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {CREATE_LEAD_SERVICES.filter((value) => value !== 'VISA').map((value) => {
+              const Icon = SERVICE_ICONS[value] ?? PackagePlus;
+              const label =
+                SERVICE_LABELS[value] ??
+                lookups?.serviceTypes.find((service) => service.value === value)?.label ??
+                value;
+              return (
+                <label key={value} className="flex items-center gap-2 text-sm font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={services.includes(value)}
+                    onChange={(e) =>
+                      setValue(
+                        'services',
+                        e.target.checked
+                          ? [...services, value]
+                          : services.filter((service) => service !== value),
+                        { shouldDirty: true },
+                      )
+                    }
+                  />
+                  <Icon className="h-4 w-4 text-slate-700" />
+                  {label}
+                </label>
+              );
+            })}
+          </div>
+          {services.length === 0 && (
+            <p className="mt-3 text-sm text-red-600">Select at least one service.</p>
+          )}
+        </Section>
+        </div>
         <Section title="Travel Details" tone="teal">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
@@ -824,29 +801,27 @@ export function LeadForm({
               </div>
             )}
             <Field label="Departure country">
-              <select
-                className={inputClass}
-                {...register('departureCountry', {
-                  onChange: () => setValue('departureCity', '', { shouldDirty: true }),
-                })}
-              >
-                <option value="">Select country</option>
-                {countryOptions.map((country) => (
-                  <option key={country} value={country}>
-                    {country}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                ariaLabel="Departure country"
+                placeholder="Select country"
+                options={countrySelectOptions}
+                value={departureCountry}
+                onChange={(next) => {
+                  setValue('departureCountry', next, { shouldDirty: true });
+                  // Keep the existing behavior: a country change clears the
+                  // city, so a city from another country can never be kept.
+                  setValue('departureCity', '', { shouldDirty: true });
+                }}
+              />
             </Field>
-            <Field label="Departure city (Optional)">
-              <select className={inputClass} {...register('departureCity')}>
-                <option value="">Select city</option>
-                {cityOptions.map((city) => (
-                  <option key={`${city.value}-${city.label}`} value={city.value}>
-                    {city.label}
-                  </option>
-                ))}
-              </select>
+            <Field label="Departure city">
+              <SearchableSelect
+                ariaLabel="Departure city"
+                placeholder="Select city"
+                options={cityOptions}
+                value={departureCity}
+                onChange={(next) => setValue('departureCity', next, { shouldDirty: true })}
+              />
             </Field>
           </div>
           <div className="mt-5 rounded-lg bg-slate-50 p-4">
@@ -878,8 +853,7 @@ export function LeadForm({
               ))}
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              <strong>CWB</strong> = Child with Bed | <strong>CWOB</strong> = Child without Bed |{' '}
-              <strong>Infants</strong> = Visa charges only
+              <strong>CWB</strong> = Child with Bed | <strong>CWOB</strong> = Child without Bed
             </p>
             {childrenWithBedCount > 0 && (
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -918,12 +892,17 @@ export function LeadForm({
             {infantCount > 0 && (
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                 {Array.from({ length: infantCount }, (_, index) => (
-                  <Field key={`infant-age-${index}`} label={`Infant ${index + 1} Age`}>
+                  <Field
+                    key={`infant-age-${index}`}
+                    label={`Infant ${index + 1} Age (Months)`}
+                  >
                     <input
+                      aria-label={`Infant ${index + 1} Age (Months)`}
                       className={inputClass}
                       type="number"
                       min="0"
-                      placeholder="Age"
+                      max="24"
+                      placeholder="Age in months"
                       {...register(`infantAges.${index}`, {
                         setValueAs: (value) => (value === '' ? null : Number(value)),
                       })}
@@ -932,83 +911,64 @@ export function LeadForm({
                 ))}
               </div>
             )}
-            <div className="mt-4">
-              <p className="mb-1 text-sm font-semibold text-slate-800">
-                Traveller names <span className="font-normal text-slate-500">(optional)</span>
-              </p>
-              <p className="mb-2 text-xs text-slate-500">
-                One optional name per traveller, carried into quotations and email drafts.
-              </p>
-              <TravellerNameInputs
-                count={adultCount}
-                field={(index) => `adultNames.${index}` as const}
-                label={(index) => `Adult ${index + 1} — Name`}
-                register={register}
-              />
-              <TravellerNameInputs
-                count={childrenWithBedCount}
-                field={(index) => `childWithBedNames.${index}` as const}
-                label={(index) => `Child With Bed ${index + 1} — Name`}
-                register={register}
-              />
-              <TravellerNameInputs
-                count={childrenWithoutBedCount}
-                field={(index) => `childWithoutBedNames.${index}` as const}
-                label={(index) => `Child Without Bed ${index + 1} — Name`}
-                register={register}
-              />
-              <TravellerNameInputs
-                count={infantCount}
-                field={(index) => `infantNames.${index}` as const}
-                label={(index) => `Infant ${index + 1} — Name`}
-                register={register}
-              />
-            </div>
             <div className="mt-4 bg-slate-100 p-3">
               <p className="mb-2 text-sm font-semibold text-slate-800">Travelers:</p>
               <div className="rounded border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                 {summary || '1 Adult(s)'}
               </div>
             </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                aria-expanded={travellerNamesOpen}
+                aria-controls="traveller-names-panel"
+                onClick={() => setTravellerNamesOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-200"
+              >
+                <span>Traveller names</span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${travellerNamesOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+              {/* Hidden (not unmounted) when collapsed so typed or saved names
+                  stay registered and submit unchanged. The native hidden
+                  attribute keeps the inputs out of sight, tab order and the
+                  accessibility tree. */}
+              <div hidden={!travellerNamesOpen} id="traveller-names-panel">
+                <TravellerNameInputs
+                  count={adultCount}
+                  field={(index) => `adultNames.${index}` as const}
+                  label={(index) => `Adult ${index + 1}`}
+                  placeholder="Full name"
+                  register={register}
+                />
+                <TravellerNameInputs
+                  count={childrenWithBedCount}
+                  field={(index) => `childWithBedNames.${index}` as const}
+                  label={(index) => `Child With Bed ${index + 1}`}
+                  placeholder="Full name"
+                  register={register}
+                />
+                <TravellerNameInputs
+                  count={childrenWithoutBedCount}
+                  field={(index) => `childWithoutBedNames.${index}` as const}
+                  label={(index) => `Child Without Bed ${index + 1}`}
+                  placeholder="Full name"
+                  register={register}
+                />
+                <TravellerNameInputs
+                  count={infantCount}
+                  field={(index) => `infantNames.${index}` as const}
+                  label={(index) => `Infant ${index + 1}`}
+                  placeholder="Full name"
+                  register={register}
+                />
+              </div>
+            </div>
           </div>
         </Section>
       </div>
-      <Section title="Services Required *" tone="green">
-        <p className="mb-4 text-sm text-slate-500">
-          Select at least one service required for this lead, or check Add-on Service:
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {CREATE_LEAD_SERVICES.filter((value) => value !== 'VISA').map((value) => {
-            const Icon = SERVICE_ICONS[value] ?? PackagePlus;
-            const label =
-              SERVICE_LABELS[value] ??
-              lookups?.serviceTypes.find((service) => service.value === value)?.label ??
-              value;
-            return (
-              <label key={value} className="flex items-center gap-2 text-sm font-semibold">
-                <input
-                  type="checkbox"
-                  checked={services.includes(value)}
-                  onChange={(e) =>
-                    setValue(
-                      'services',
-                      e.target.checked
-                        ? [...services, value]
-                        : services.filter((service) => service !== value),
-                      { shouldDirty: true },
-                    )
-                  }
-                />
-                <Icon className="h-4 w-4 text-slate-700" />
-                {label}
-              </label>
-            );
-          })}
-        </div>
-        {services.length === 0 && (
-          <p className="mt-3 text-sm text-red-600">Select at least one service.</p>
-        )}
-      </Section>
       <Section title="Itinerary *" tone="blue">
         <div className="space-y-3">
           {fields.map((field, index) => (
@@ -1017,44 +977,37 @@ export function LeadForm({
               className="grid gap-3 rounded-lg border border-slate-200 bg-card p-4 md:grid-cols-[1fr_1fr_180px_240px]"
             >
               <Field label={`Destination ${index + 1}`}>
-                <select
-                  aria-label={`Destination ${index + 1}`}
-                  className={inputClass}
-                  {...register(`itinerary.${index}.country`, {
-                    onChange: () =>
-                      setValue(`itinerary.${index}.destination`, '', { shouldDirty: true }),
-                  })}
-                >
-                  <option value="">Select Destination</option>
-                  {(itineraryDestinations.data?.data ?? []).map((destination) => {
-                    const isSelected =
-                      itineraryRows?.[index]?.country === destination.name;
-                    return (
-                      <option key={destination.id} value={destination.name}>
-                        {destinationOptionLabel(destination, isSelected)}
-                      </option>
-                    );
-                  })}
-                </select>
+                <SearchableSelect
+                  ariaLabel={`Destination ${index + 1}`}
+                  placeholder="Select Destination"
+                  options={destinationSelectOptions}
+                  value={itineraryRows?.[index]?.country ?? ''}
+                  onChange={(next) => {
+                    setValue(`itinerary.${index}.country`, next, { shouldDirty: true });
+                    // Reset the city only when it is no longer valid for the
+                    // new destination, so a shared city survives the change.
+                    const currentCity = itineraryRows?.[index]?.destination ?? '';
+                    if (currentCity && !(destinationCityMap.get(next) ?? []).includes(currentCity)) {
+                      setValue(`itinerary.${index}.destination`, '', { shouldDirty: true });
+                    }
+                  }}
+                />
               </Field>
               <Field label={`City ${index + 1}`}>
-                <select
-                  aria-label={`City ${index + 1}`}
-                  className={inputClass}
+                <SearchableSelect
+                  ariaLabel={`City ${index + 1}`}
+                  placeholder={
+                    itineraryRows?.[index]?.country ? 'Select City' : 'Select a destination first'
+                  }
+                  options={(
+                    destinationCityMap.get(itineraryRows?.[index]?.country ?? '') ?? []
+                  ).map((cityName) => ({ value: cityName, label: cityName }))}
+                  value={itineraryRows?.[index]?.destination ?? ''}
                   disabled={!itineraryRows?.[index]?.country}
-                  {...register(`itinerary.${index}.destination`)}
-                >
-                  <option value="">
-                    {itineraryRows?.[index]?.country ? 'Select City' : 'Select a destination first'}
-                  </option>
-                  {(destinationCityMap.get(itineraryRows?.[index]?.country ?? '') ?? []).map(
-                    (cityName) => (
-                      <option key={cityName} value={cityName}>
-                        {cityName}
-                      </option>
-                    ),
-                  )}
-                </select>
+                  onChange={(next) =>
+                    setValue(`itinerary.${index}.destination`, next, { shouldDirty: true })
+                  }
+                />
               </Field>
               <Field label="Nights">
                 <input

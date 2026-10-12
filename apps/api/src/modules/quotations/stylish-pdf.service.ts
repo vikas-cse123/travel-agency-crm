@@ -7,6 +7,7 @@ import {
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
   normalizeFaqs,
+  normalizeFlightDetails,
   resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
@@ -147,7 +148,23 @@ type FlightDetails = {
   }>;
   outbound?: FlightJourney;
   returnJourney?: FlightJourney;
+  flights?: Array<{
+    bookmarkCode?: string | null;
+    journeyType?: string;
+    outbound?: FlightJourney;
+    returnJourney?: FlightJourney;
+  }>;
 };
+/** Every flight record in display order; legacy single-flight rows wrap into one. */
+function flightRecordsOf(flightData: FlightDetails | null | undefined): Array<{
+  bookmarkCode?: string | null;
+  journeyType?: string;
+  outbound?: FlightJourney;
+  returnJourney?: FlightJourney;
+}> {
+  const normalized = normalizeFlightDetails(flightData) as FlightDetails | null | undefined;
+  return normalized?.flights ?? [];
+}
 
 const formatClock12Hour = (value: string) => {
   const match = /^(\d{1,2}):(\d{2})/.exec(value);
@@ -1531,11 +1548,15 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
   // Flights ----------------------------------------------------------------
   const drawFlightsSection = () => {
     const flightDetails = input.version.flightDetails as FlightDetails | null;
+    const flights = flightRecordsOf(flightDetails);
     const journeys: Array<{ label: string; journey: FlightJourney }> = [];
-    if (flightDetails?.outbound?.segments?.length)
-      journeys.push({ label: 'OUTBOUND', journey: flightDetails.outbound });
-    if (flightDetails?.returnJourney?.segments?.length)
-      journeys.push({ label: 'RETURN', journey: flightDetails.returnJourney });
+    flights.forEach((flight, flightIndex) => {
+      const prefix = flights.length > 1 ? `FLIGHT ${flightIndex + 1} · ` : '';
+      if (flight.outbound?.segments?.length)
+        journeys.push({ label: `${prefix}OUTBOUND`, journey: flight.outbound });
+      if (flight.returnJourney?.segments?.length)
+        journeys.push({ label: `${prefix}RETURN`, journey: flight.returnJourney });
+    });
     let flightPage = 0;
     if (flightDetails?.include) {
       if (flightDetails.entryMode === 'IMAGE') {

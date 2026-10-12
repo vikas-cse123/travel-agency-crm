@@ -2,24 +2,23 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
-  CalendarClock,
-  CalendarPlus,
-  CheckCircle2,
-  CircleAlert,
   FileText,
+  History,
   Landmark,
   Mail,
+  MapPin,
   MessageSquarePlus,
-  Phone,
   Pencil,
-  StickyNote,
+  Phone,
   Trash2,
   UserRound,
   UserRoundCog,
+  Users,
+  Wallet,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   CONTACT_METHODS,
-  FOLLOW_UP_OUTCOMES,
   PERMISSIONS,
   labelForLookup,
   type ContactMethodValue,
@@ -27,33 +26,22 @@ import {
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  useFollowUpAction,
-  useFollowUps,
   useDeleteLead,
-  useLeadWorkspace,
   useLeadAction,
   useLeadLookups,
+  useLeadWorkspace,
   useNoteAction,
   useNotes,
   useTimeline,
+  type Lead,
 } from '@/features/queries/queries.api';
 import { formatTravelMonthYear, leadTravelDatesLabel } from '@/features/quotations/travel-dates';
+import { useLeadPaymentCase } from '@/features/payments/payments.api';
 import { LeadPaymentsCard, RecordLeadPaymentDialog } from './LeadPayments';
 
-const displayTravellerSummary = (summary: string | null | undefined): string => {
-  if (!summary) return '';
-  return summary
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0 && !/^\d+\s*Room/i.test(part))
-    .join(', ');
-};
-
 const inputClass = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
-const localDateTimeValue = (value: string) => {
-  const date = new Date(value);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-};
+
+/** Labelled read-only fact used across the sales summary cards. */
 const Info = ({
   label,
   children,
@@ -72,59 +60,120 @@ const Info = ({
   </div>
 );
 
+/** Consistent card shell for every section of the sales workspace. */
+const Section = ({
+  title,
+  icon: Icon,
+  action,
+  children,
+}: {
+  title: string;
+  icon: LucideIcon;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) => (
+  <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 sm:px-5">
+      <h2 className="flex items-center gap-2 font-semibold text-slate-950">
+        <Icon className="h-4 w-4 text-brand-600" aria-hidden="true" />
+        {title}
+      </h2>
+      {action}
+    </div>
+    <div className="p-4 sm:p-5">{children}</div>
+  </section>
+);
+
 const TABS = [
-  ['overview', 'Overview'],
-  ['travel', 'Travel & Itinerary'],
-  ['follow-ups', 'Follow-ups'],
+  ['lead-information', 'Lead Information'],
   ['quotations', 'Quotations'],
-  ['booking', 'Booking'],
   ['notes', 'Notes'],
   ['timeline', 'Timeline'],
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
+const formatMoney = (value: string | number | null | undefined, currency = 'INR'): string => {
+  if (value === null || value === undefined || value === '') return '—';
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '—';
+  try {
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(amount);
+  } catch {
+    return String(amount);
+  }
+};
+
+const travellerCountLabel = (lead: Lead): string => {
+  const parts: string[] = [];
+  if (lead.adults > 0) parts.push(`${lead.adults} Adult${lead.adults === 1 ? '' : 's'}`);
+  if (lead.childrenWithBed > 0) parts.push(`${lead.childrenWithBed} Child with Bed`);
+  if (lead.childrenWithoutBed > 0) parts.push(`${lead.childrenWithoutBed} Child without Bed`);
+  if (lead.infants > 0) parts.push(`${lead.infants} Infant${lead.infants === 1 ? '' : 's'}`);
+  if (lead.rooms > 0) parts.push(`${lead.rooms} Room${lead.rooms === 1 ? '' : 's'}`);
+  return parts.join(' · ');
+};
+
+/** Named travellers collected on the lead form, kept positional per category. */
+const namedTravellers = (lead: Lead): string[] => {
+  const names: string[] = [];
+  const collect = (list: Array<string | null> | null, category: string) => {
+    (list ?? []).forEach((name, index) => {
+      const cleaned = (name ?? '').trim();
+      if (cleaned) names.push(`${category} ${index + 1}: ${cleaned}`);
+    });
+  };
+  collect(lead.adultNames, 'Adult');
+  collect(lead.childWithBedNames, 'Child With Bed');
+  collect(lead.childWithoutBedNames, 'Child Without Bed');
+  collect(lead.infantNames, 'Infant');
+  return names;
+};
+
+/**
+ * Lead sales workspace: who the lead is, how to reach them, where and when
+ * they travel, the current stage, quotations, collected money and history.
+ *
+ * UI-only composition over the existing workspace, notes, timeline, payments
+ * and quotation APIs. Booking, Follow-ups, reminders and Priority are
+ * intentionally not rendered here — their backends are untouched.
+ */
 export function LeadDetailsPage() {
   const { queryId = '' } = useParams();
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = (
-    TABS.some(([key]) => key === params.get('tab')) ? params.get('tab') : 'overview'
+    TABS.some(([key]) => key === params.get('tab')) ? params.get('tab') : 'lead-information'
   ) as TabKey;
   const setTab = (next: TabKey) => {
     const nextParams = new URLSearchParams(params);
     nextParams.set('tab', next);
     setParams(nextParams, { replace: true });
   };
+
   const workspace = useLeadWorkspace(queryId);
   const notes = useNotes(queryId);
-  const followUps = useFollowUps(queryId);
   const timeline = useTimeline(queryId);
   const lookups = useLeadLookups();
   const action = useLeadAction(queryId);
   const remove = useDeleteLead(queryId);
   const noteAction = useNoteAction(queryId);
-  const followUpAction = useFollowUpAction(queryId);
-  const [note, setNote] = useState('');
-  const [noteIsContact, setNoteIsContact] = useState(false);
-  const [contactMethod, setContactMethod] = useState<ContactMethodValue>('PHONE');
-  const [followUpAt, setFollowUpAt] = useState('');
-  const [outcome, setOutcome] = useState('');
+
+  const canViewPayments = hasPermission(PERMISSIONS.PAYMENTS_VIEW);
+  const canRecordPayment = hasPermission(PERMISSIONS.PAYMENTS_CREATE);
+  // Pure read of the server-resolved payment case; never creates anything.
+  const paymentCase = useLeadPaymentCase(queryId, canViewPayments);
+
   const [stage, setStage] = useState('');
   const [stageReason, setStageReason] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [note, setNote] = useState('');
+  const [noteIsContact, setNoteIsContact] = useState(false);
+  const [contactMethod, setContactMethod] = useState<ContactMethodValue>('PHONE');
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteText, setEditingNoteText] = useState('');
-  const [completingFollowUpId, setCompletingFollowUpId] = useState<string | null>(null);
-  const [completionOutcome, setCompletionOutcome] = useState('');
-  const [completionNotes, setCompletionNotes] = useState('');
-  const [completionNextDate, setCompletionNextDate] = useState('');
-  const [completionNextStage, setCompletionNextStage] = useState('');
-  const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
-  const [editingFollowUpAt, setEditingFollowUpAt] = useState('');
-  const [editingFollowUpNotes, setEditingFollowUpNotes] = useState('');
   const [payOpen, setPayOpen] = useState(false);
-  const canRecordPayment = hasPermission(PERMISSIONS.PAYMENTS_CREATE);
+
   if (workspace.isLoading) return <div className="h-96 animate-pulse rounded-xl bg-card" />;
   if (workspace.isError || !workspace.data)
     return (
@@ -136,6 +185,7 @@ export function LeadDetailsPage() {
         </Link>
       </div>
     );
+
   const q = workspace.data.lead;
   const allowed = workspace.data.permissions;
   const dateTime = (value: string) =>
@@ -145,25 +195,54 @@ export function LeadDetailsPage() {
       hour12: true,
       timeZone: workspace.data.timezone,
     }).format(new Date(value));
-  const money = (v: string | null) =>
-    v
-      ? new Intl.NumberFormat(undefined, { style: 'currency', currency: q.currency }).format(
-          Number(v),
-        )
-      : '—';
-  const convertible = workspace.data.quotations.items.find(
-    (item) => item.status === 'ACCEPTED' && !item.booking,
-  );
-
-  const card = 'rounded-xl border bg-card p-5 shadow-sm';
 
   const handleBack = () => {
     if (window.history.length > 1) navigate(-1);
     else navigate('/queries');
   };
 
+  const trip = paymentCase.data?.case ?? null;
+  const latestQuotation =
+    workspace.data.quotations.latest ?? workspace.data.quotations.items[0] ?? null;
+  const latestVersion = latestQuotation?.versions[0] ?? null;
+
+  const travelDateLabel =
+    [
+      leadTravelDatesLabel(
+        q.travelStartDate,
+        q.travelEndDate,
+        q.itinerary.length
+          ? q.itinerary.reduce((sum, row) => sum + row.nights, 0) + 1
+          : undefined,
+      ),
+      formatTravelMonthYear(q.travelMonth, q.travelYear),
+    ]
+      .filter(Boolean)
+      .join(' • ') || '';
+  const monthYearLabel = formatTravelMonthYear(q.travelMonth, q.travelYear) ?? '';
+  const orderedItinerary = [...q.itinerary].sort((a, b) => a.sequence - b.sequence);
+  const countsLabel = travellerCountLabel(q);
+  const travellerNames = namedTravellers(q);
+  const serviceLabels = q.services.map((s) => labelForLookup(s.serviceType));
+  const hasTravelData =
+    travelDateLabel !== '' ||
+    monthYearLabel !== '' ||
+    (q.departureCountry ?? '') !== '' ||
+    (q.departureCity ?? '') !== '' ||
+    orderedItinerary.length > 0 ||
+    countsLabel !== '' ||
+    serviceLabels.length > 0;
+  const hasCommercialData =
+    latestVersion != null ||
+    Boolean(q.expectedAmount) ||
+    Boolean(q.budgetMin) ||
+    Boolean(q.budgetMax) ||
+    Boolean(q.expectedMargin) ||
+    (canViewPayments && trip != null && trip.paymentCount > 0);
+
   return (
     <div className="space-y-5">
+      {/* A. Compact lead header */}
       <header className="flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-sm sm:p-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           <button
@@ -188,9 +267,26 @@ export function LeadDetailsPage() {
               <span className="rounded-full bg-brand-50 px-2.5 py-1 font-semibold text-brand-700">
                 {labelForLookup(q.leadStage)}
               </span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                {labelForLookup(q.priority)} priority
-              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              {q.phone && (
+                <a
+                  href={`tel:${q.phone.replace(/\s+/g, '')}`}
+                  className="inline-flex items-center gap-1.5 font-medium text-brand-700 hover:underline"
+                >
+                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                  {q.phone}
+                </a>
+              )}
+              {q.email && (
+                <a
+                  href={`mailto:${q.email}`}
+                  className="inline-flex min-w-0 items-center gap-1.5 font-medium text-brand-700 hover:underline"
+                >
+                  <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="break-all">{q.email}</span>
+                </a>
+              )}
             </div>
             {q.customer && (
               <span className="mt-2 inline-block text-xs font-medium text-slate-500">
@@ -235,6 +331,7 @@ export function LeadDetailsPage() {
         </div>
       </header>
 
+      {/* B. Section navigation */}
       <nav
         className="flex gap-1 overflow-x-auto rounded-xl border bg-card p-1"
         aria-label="Lead sections"
@@ -252,319 +349,264 @@ export function LeadDetailsPage() {
         ))}
       </nav>
 
-      {tab === 'overview' && (
-        <div className="space-y-5">
-          <section
-            className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-            aria-label="Lead operational summary"
-          >
-            {[
-              {
-                label: 'Pending follow-ups',
-                value: workspace.data.operationalSummary.pendingFollowUpCount,
-                icon: CalendarClock,
-                tone: 'bg-blue-50 text-blue-700',
-              },
-              {
-                label: 'Overdue',
-                value: workspace.data.operationalSummary.overdueFollowUpCount,
-                icon: CircleAlert,
-                tone: 'bg-red-50 text-red-700',
-              },
-              {
-                label: 'Completed',
-                value: workspace.data.operationalSummary.completedFollowUpCount,
-                icon: CheckCircle2,
-                tone: 'bg-emerald-50 text-emerald-700',
-              },
-              {
-                label: 'Notes',
-                value: workspace.data.operationalSummary.notesCount,
-                icon: StickyNote,
-                tone: 'bg-slate-100 text-slate-700',
-              },
-            ].map(({ label, value, icon: Icon, tone }) => (
-              <article
-                key={label}
-                className="flex min-w-0 items-center gap-3 rounded-xl border bg-card p-3 shadow-sm sm:p-4"
-              >
-                <span
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone}`}
-                >
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-xl font-semibold leading-none text-slate-950">{value}</p>
-                  <p className="mt-1 truncate text-xs text-slate-500">{label}</p>
+      {/* C. Lead Information — unified contact, travel and commercial view */}
+      {tab === 'lead-information' && (
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="min-w-0 space-y-5">
+            <Section title="Contact & Lead" icon={UserRound}>
+              <dl className="grid gap-4 sm:grid-cols-2">
+                <Info label="Lead source">{labelForLookup(q.leadSource)}</Info>
+                <Info label="Assignee">{q.assignedTo?.fullName ?? 'Unassigned'}</Info>
+                {q.lastContactedAt && (
+                  <Info label="Last contacted">{dateTime(q.lastContactedAt)}</Info>
+                )}
+              </dl>
+            </Section>
+
+            {hasTravelData && (
+              <Section title="Travel Details" icon={MapPin}>
+                <div className="space-y-5">
+                  <dl className="grid gap-4 sm:grid-cols-2">
+                    {travelDateLabel !== '' && <Info label="Dates">{travelDateLabel}</Info>}
+                    {monthYearLabel !== '' && (
+                      <Info label="Travel month">{monthYearLabel}</Info>
+                    )}
+                    {q.departureCountry && (
+                      <Info label="Departure country">{q.departureCountry}</Info>
+                    )}
+                    {q.departureCity && <Info label="Departure city">{q.departureCity}</Info>}
+                    {countsLabel !== '' && (
+                      <Info label="Travellers" icon={<Users className="h-4 w-4" />}>
+                        {countsLabel}
+                      </Info>
+                    )}
+                    {serviceLabels.length > 0 && (
+                      <Info label="Services">{serviceLabels.join(', ')}</Info>
+                    )}
+                    {q.tripType && <Info label="Trip type">{q.tripType}</Info>}
+                  </dl>
+                  {travellerNames.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-800">Traveller names</h3>
+                      <ul className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+                        {travellerNames.map((name) => (
+                          <li key={name} className="rounded-lg bg-slate-50 px-3 py-2">
+                            {name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {orderedItinerary.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-800">Destinations</h3>
+                      <div className="mt-2 space-y-2">
+                        {orderedItinerary.map((row) => (
+                          <div
+                            key={row.id}
+                            className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 p-3 text-sm"
+                          >
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100 font-semibold text-brand-700">
+                              {row.sequence}
+                            </span>
+                            <strong>
+                              {row.destination}, {row.country}
+                            </strong>
+                            <span>{row.nights} nights</span>
+                            <span className="text-slate-500">
+                              {row.arrivalDate
+                                ? new Date(row.arrivalDate).toLocaleDateString()
+                                : 'Dates open'}
+                            </span>
+                            {row.notes && (
+                              <span className="w-full text-slate-500">{row.notes}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </article>
-            ))}
-          </section>
-          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
-              <div className="border-b px-4 py-3 sm:px-5">
-                <h2 className="font-semibold text-slate-950">Lead information</h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Contact, source, ownership and timing
-                </p>
+              </Section>
+            )}
+
+            {hasCommercialData && (
+              <Section title="Commercial Information" icon={Wallet}>
+                <dl className="grid gap-4 sm:grid-cols-2">
+                  {latestVersion && latestQuotation && (
+                    <Info label="Latest quotation">
+                      <Link
+                        className="text-brand-700 hover:underline"
+                        to={`/quotations/${latestQuotation.id}`}
+                      >
+                        {latestQuotation.quotationNumber}
+                      </Link>{' '}
+                      · {formatMoney(latestVersion.finalAmount, latestVersion.currency)}
+                    </Info>
+                  )}
+                  {q.expectedAmount && (
+                    <Info label="Expected amount">
+                      {formatMoney(q.expectedAmount, q.currency)}
+                    </Info>
+                  )}
+                  {(q.budgetMin || q.budgetMax) && (
+                    <Info label="Budget">
+                      {`${formatMoney(q.budgetMin ?? q.budgetMax, q.currency)} – ${formatMoney(q.budgetMax ?? q.budgetMin, q.currency)}`}
+                    </Info>
+                  )}
+                  {q.expectedMargin && (
+                    <Info label="Expected margin">
+                      {formatMoney(q.expectedMargin, q.currency)}
+                    </Info>
+                  )}
+                  {canViewPayments && trip && trip.paymentCount > 0 && (
+                    <Info label="Collected">{formatMoney(trip.collected, trip.currency)}</Info>
+                  )}
+                  {canViewPayments && trip && trip.tripAmount != null && trip.paymentCount > 0 && (
+                    <Info label="Outstanding">
+                      {formatMoney(trip.outstanding, trip.currency)}
+                    </Info>
+                  )}
+                </dl>
+              </Section>
+            )}
+          </div>
+
+          <aside className="min-w-0 space-y-5">
+            <section className="rounded-xl border bg-card shadow-sm">
+              <div className="border-b px-4 py-3">
+                <h2 className="font-semibold text-slate-950">Lead actions</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Update ownership and progress</p>
               </div>
-              <div className="grid divide-y sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-                <div className="space-y-5 p-4 sm:p-5">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-800">Contact</h3>
-                    <dl className="mt-3 grid gap-4 sm:grid-cols-2">
-                      <Info label="Phone" icon={<Phone className="h-4 w-4" />}>
-                        {q.phone}
-                      </Info>
-                      <Info label="Email" icon={<Mail className="h-4 w-4" />}>
-                        {q.email}
-                      </Info>
-                    </dl>
+              <div className="p-4">
+                {allowed.canChangeStage && (
+                  <div className="space-y-3">
+                    <div>
+                      <label htmlFor="lead-stage" className="text-sm font-medium text-slate-700">
+                        Change stage
+                      </label>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Current:{' '}
+                        <span className="font-medium text-slate-700">
+                          {labelForLookup(q.leadStage)}
+                        </span>
+                      </p>
+                    </div>
+                    <select
+                      id="lead-stage"
+                      aria-label="New stage"
+                      className={inputClass}
+                      value={stage}
+                      onChange={(e) => setStage(e.target.value)}
+                    >
+                      <option value="">Change stage…</option>
+                      {(lookups.data?.leadStages ?? []).map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    {['LOST', 'CANCELLED', 'INVALID'].includes(stage) && (
+                      <input
+                        aria-label="Stage reason"
+                        className={inputClass}
+                        placeholder="Reason required"
+                        value={stageReason}
+                        onChange={(e) => setStageReason(e.target.value)}
+                      />
+                    )}
+                    <Button
+                      fullWidth
+                      disabled={
+                        !stage ||
+                        (['LOST', 'CANCELLED', 'INVALID'].includes(stage) && !stageReason)
+                      }
+                      isLoading={action.isPending}
+                      onClick={() =>
+                        action.mutate(
+                          {
+                            path: 'stage',
+                            body: {
+                              stage,
+                              reason: stageReason || undefined,
+                              lostReason: stage === 'LOST' ? stageReason : undefined,
+                            },
+                          },
+                          {
+                            onSuccess: () => {
+                              setStage('');
+                              setStageReason('');
+                            },
+                          },
+                        )
+                      }
+                    >
+                      Update stage
+                    </Button>
                   </div>
-                  <div className="border-t pt-4">
-                    <h3 className="text-sm font-semibold text-slate-800">Lead</h3>
-                    <dl className="mt-3 grid gap-4 sm:grid-cols-2">
-                      <Info label="Lead ID">{q.queryNumber}</Info>
-                      <Info label="Lead source">{labelForLookup(q.leadSource)}</Info>
-                      <Info label="Stage">{labelForLookup(q.leadStage)}</Info>
-                      <Info label="Priority">{labelForLookup(q.priority)}</Info>
-                    </dl>
+                )}
+                {allowed.canAssign && (
+                  <div className="mt-5 border-t pt-4">
+                    <label className="text-sm font-medium text-slate-700">Reassign lead</label>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Current: {q.assignedTo?.fullName ?? 'Unassigned'}
+                    </p>
+                    <select
+                      className={`${inputClass} mt-2`}
+                      value={assignee || q.assignedToId || ''}
+                      onChange={(e) => setAssignee(e.target.value)}
+                    >
+                      <option value="">Unassigned</option>
+                      {lookups.data?.assignableUsers.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.fullName}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      className="mt-2"
+                      fullWidth
+                      variant="secondary"
+                      onClick={() =>
+                        action.mutate({
+                          path: 'assignment',
+                          body: { assignedToId: assignee || null, movePendingFollowUps: true },
+                        })
+                      }
+                    >
+                      <UserRoundCog className="h-4 w-4" />
+                      Assign
+                    </Button>
                   </div>
-                </div>
-                <div className="space-y-5 p-4 sm:p-5">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-800">Ownership</h3>
-                    <dl className="mt-3 grid gap-4 sm:grid-cols-2">
-                      <Info label="Assignee" icon={<UserRound className="h-4 w-4" />}>
-                        {q.assignedTo?.fullName ?? 'Unassigned'}
-                      </Info>
-                      <Info label="Creator" icon={<UserRound className="h-4 w-4" />}>
-                        {q.createdBy.fullName}
-                      </Info>
-                    </dl>
-                  </div>
-                  <div className="border-t pt-4">
-                    <h3 className="text-sm font-semibold text-slate-800">Timing</h3>
-                    <dl className="mt-3 grid gap-4 sm:grid-cols-2">
-                      <Info label="Created">{dateTime(q.createdAt)}</Info>
-                      <Info label="Last contacted">
-                        {q.lastContactedAt ? dateTime(q.lastContactedAt) : 'Never'}
-                      </Info>
-                      <Info label="Next follow-up">
-                        {q.nextFollowUpAt ? dateTime(q.nextFollowUpAt) : 'None scheduled'}
-                      </Info>
-                    </dl>
-                  </div>
-                </div>
+                )}
+                {!allowed.canChangeStage && !allowed.canAssign && (
+                  <p className="text-sm text-slate-500">No lead actions are available.</p>
+                )}
               </div>
             </section>
-            <aside>
-              <section className="rounded-xl border bg-card shadow-sm">
-                <div className="border-b px-4 py-3">
-                  <h2 className="font-semibold text-slate-950">Lead actions</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">Update ownership and progress</p>
-                </div>
-                <div className="p-4">
-                  {allowed.canChangeStage && (
-                    <div className="space-y-3">
-                      <div>
-                        <label htmlFor="lead-stage" className="text-sm font-medium text-slate-700">
-                          Change stage
-                        </label>
-                        <p className="mt-0.5 text-xs text-slate-500">
-                          Current:{' '}
-                          <span className="font-medium text-slate-700">
-                            {labelForLookup(q.leadStage)}
-                          </span>
-                        </p>
-                      </div>
-                      <select
-                        id="lead-stage"
-                        aria-label="New stage"
-                        className={inputClass}
-                        value={stage}
-                        onChange={(e) => setStage(e.target.value)}
-                      >
-                        <option value="">Change stage…</option>
-                        {(lookups.data?.leadStages ?? []).map((s) => (
-                            <option key={s.value} value={s.value}>
-                              {s.label}
-                            </option>
-                          ))}
-                      </select>
-                      {['LOST', 'CANCELLED', 'INVALID'].includes(stage) && (
-                        <input
-                          aria-label="Stage reason"
-                          className={inputClass}
-                          placeholder="Reason required"
-                          value={stageReason}
-                          onChange={(e) => setStageReason(e.target.value)}
-                        />
-                      )}
-                      <Button
-                        fullWidth
-                        disabled={
-                          !stage ||
-                          (['LOST', 'CANCELLED', 'INVALID'].includes(stage) && !stageReason)
-                        }
-                        isLoading={action.isPending}
-                        onClick={() =>
-                          action.mutate(
-                            {
-                              path: 'stage',
-                              body: {
-                                stage,
-                                reason: stageReason || undefined,
-                                lostReason: stage === 'LOST' ? stageReason : undefined,
-                              },
-                            },
-                            {
-                              onSuccess: () => {
-                                setStage('');
-                                setStageReason('');
-                              },
-                            },
-                          )
-                        }
-                      >
-                        Update stage
-                      </Button>
-                    </div>
-                  )}
-                  {allowed.canAssign && (
-                    <div className="mt-5 border-t pt-4">
-                      <label className="text-sm font-medium text-slate-700">Reassign lead</label>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Current: {q.assignedTo?.fullName ?? 'Unassigned'}
-                      </p>
-                      <select
-                        className={`${inputClass} mt-2`}
-                        value={assignee || q.assignedToId || ''}
-                        onChange={(e) => setAssignee(e.target.value)}
-                      >
-                        <option value="">Unassigned</option>
-                        {lookups.data?.assignableUsers.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.fullName}
-                          </option>
-                        ))}
-                      </select>
-                      <Button
-                        className="mt-2"
-                        fullWidth
-                        variant="secondary"
-                        onClick={() =>
-                          action.mutate({
-                            path: 'assignment',
-                            body: { assignedToId: assignee || null, movePendingFollowUps: true },
-                          })
-                        }
-                      >
-                        <UserRoundCog className="h-4 w-4" />
-                        Assign
-                      </Button>
-                    </div>
-                  )}
-                  {!allowed.canChangeStage && !allowed.canAssign && (
-                    <p className="text-sm text-slate-500">No lead actions are available.</p>
-                  )}
-                </div>
-              </section>
-              <div className="mt-5">
-                <LeadPaymentsCard queryId={q.id} onRecord={() => setPayOpen(true)} />
-              </div>
-            </aside>
-          </div>
+            <LeadPaymentsCard queryId={q.id} onRecord={() => setPayOpen(true)} />
+          </aside>
         </div>
       )}
 
-      {tab === 'travel' && (
-        <div className="space-y-5">
-          <section className={card}>
-            <h2 className="font-semibold">Travel and travellers</h2>
-            <dl className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              <Info label="Dates">
-                {[
-                  leadTravelDatesLabel(
-                    q.travelStartDate,
-                    q.travelEndDate,
-                    q.itinerary.length
-                      ? q.itinerary.reduce((sum, row) => sum + row.nights, 0) + 1
-                      : undefined,
-                  ),
-                  formatTravelMonthYear(q.travelMonth, q.travelYear),
-                ]
-                  .filter(Boolean)
-                  .join(' • ') || 'Flexible'}
-              </Info>
-              <Info label="Departure">
-                {[q.departureCity, q.departureCountry].filter(Boolean).join(', ')}
-              </Info>
-              <Info label="Traveller summary">
-                {displayTravellerSummary(q.travellerSummary) || '—'}
-              </Info>
-              <Info label="Services">
-                {q.services.map((s) => labelForLookup(s.serviceType)).join(', ')}
-              </Info>
-            </dl>
-            <div className="mt-5 space-y-2">
-              {q.itinerary.map((row) => (
-                <div
-                  key={row.id}
-                  className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 p-3 text-sm"
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100 font-semibold text-brand-700">
-                    {row.sequence}
-                  </span>
-                  <strong>
-                    {row.destination}, {row.country}
-                  </strong>
-                  <span>{row.nights} nights</span>
-                  <span className="text-slate-500">
-                    {row.arrivalDate
-                      ? new Date(row.arrivalDate).toLocaleDateString()
-                      : 'Dates open'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-          <section className={card}>
-            <h2 className="font-semibold">Commercial information</h2>
-            <dl className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              <Info label="Expected amount">{money(q.expectedAmount)}</Info>
-              <Info label="Budget">
-                {q.budgetMin || q.budgetMax ? `${money(q.budgetMin)} – ${money(q.budgetMax)}` : '—'}
-              </Info>
-              <Info label="Expected margin">{money(q.expectedMargin)}</Info>
-              <Info label="Quotation">{q.quotationRequired ? 'Required' : 'Not required'}</Info>
-              <Info label="Trip type">{q.tripType}</Info>
-              <Info label="Booking placeholder">{q.bookingStatusPlaceholder}</Info>
-              <Info label="Updated">{dateTime(q.updatedAt)}</Info>
-            </dl>
-          </section>
-        </div>
-      )}
-
+      {/* D. Quotations */}
       {tab === 'quotations' &&
         (allowed.canViewQuotations ? (
-          <section className={card}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="flex items-center gap-2 font-semibold">
-                  <FileText className="h-5 w-5 text-brand-600" /> Quotations
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  {workspace.data.quotations.count} customer quotation
-                  {workspace.data.quotations.count === 1 ? '' : 's'} linked to this lead.
-                </p>
-              </div>
-              {allowed.canCreateQuotation && (
+          <Section
+            title="Quotations"
+            icon={FileText}
+            action={
+              allowed.canCreateQuotation ? (
                 <Link to={`/queries/${q.id}/quotations/new`}>
                   <Button>Create quotation</Button>
                 </Link>
-              )}
-            </div>
+              ) : undefined
+            }
+          >
+            <p className="text-sm text-slate-500">
+              {workspace.data.quotations.count} customer quotation
+              {workspace.data.quotations.count === 1 ? '' : 's'} linked to this lead.
+            </p>
             {workspace.data.quotations.items.length > 0 ? (
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
@@ -638,101 +680,18 @@ export function LeadDetailsPage() {
             ) : (
               <p className="mt-4 text-sm text-slate-500">No quotations yet for this lead.</p>
             )}
-          </section>
+          </Section>
         ) : (
-          <section className={card}>
+          <Section title="Quotations" icon={FileText}>
             <p className="text-sm text-slate-500">You do not have permission to view quotations.</p>
-          </section>
+          </Section>
         ))}
 
-      {tab === 'booking' &&
-        (allowed.canViewBookings ? (
-          workspace.data.bookings.count > 0 ? (
-            <section className="rounded-xl border border-emerald-200 bg-card p-5 shadow-sm">
-              <div>
-                <h2 className="font-semibold text-emerald-900">Linked booking</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  This lead has been converted into an operational travel file.
-                </p>
-              </div>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="text-xs uppercase text-slate-500">
-                    <tr>
-                      <th className="py-2">Booking</th>
-                      <th>Status</th>
-                      <th>Operations</th>
-                      <th>Payment</th>
-                      <th>Travel</th>
-                      <th>Open</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {workspace.data.bookings.items.map((booking) => (
-                      <tr key={booking.id} className="border-t">
-                        <td className="py-3">
-                          <Link
-                            className="font-semibold text-brand-700"
-                            to={`/bookings/${booking.id}`}
-                          >
-                            {booking.bookingNumber}
-                          </Link>
-                        </td>
-                        <td>{labelForLookup(booking.bookingStatus)}</td>
-                        <td>{labelForLookup(booking.operationalStatus)}</td>
-                        <td>{labelForLookup(booking.paymentStatus)}</td>
-                        <td>
-                          {booking.travelStartDate ? dateTime(booking.travelStartDate) : 'Open'}
-                        </td>
-                        <td>
-                          <Link className="text-brand-700" to={`/bookings/${booking.id}`}>
-                            Open booking
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : (
-            <section className={card}>
-              <h2 className="font-semibold">Booking</h2>
-              <p className="mt-2 text-sm text-slate-500">
-                A booking is created from an accepted quotation, not directly from the lead.
-              </p>
-              {convertible ? (
-                <div className="mt-4 flex items-center gap-3 rounded-lg bg-emerald-50 p-3 text-sm">
-                  <span>
-                    Quotation <strong>{convertible.quotationNumber}</strong> is accepted and ready.
-                  </span>
-                  {allowed.canConvertBooking && (
-                    <Link to={`/quotations/${convertible.id}/convert-to-booking`}>
-                      <Button size="sm">Convert to booking</Button>
-                    </Link>
-                  )}
-                </div>
-              ) : (
-                <p className="mt-3 text-sm text-slate-400">
-                  No accepted quotation is available to convert yet.
-                </p>
-              )}
-            </section>
-          )
-        ) : (
-          <section className={card}>
-            <p className="text-sm text-slate-500">You do not have permission to view bookings.</p>
-          </section>
-        ))}
-
+      {/* F. Notes */}
       {tab === 'notes' && (
-        <section className={card}>
-          <h2 className="flex items-center gap-2 font-semibold">
-            <MessageSquarePlus className="h-4 w-4" />
-            Notes
-          </h2>
+        <Section title="Notes" icon={MessageSquarePlus}>
           {allowed.canAddNote && (
-            <div className="mt-3">
+            <div>
               <textarea
                 aria-label="New note"
                 className={inputClass}
@@ -862,309 +821,43 @@ export function LeadDetailsPage() {
               </article>
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
-      {tab === 'follow-ups' && (
-        <section className={card}>
-          <h2 className="flex items-center gap-2 font-semibold">
-            <CalendarPlus className="h-4 w-4" />
-            Follow-Ups
-          </h2>
-          {allowed.canScheduleFollowUp && (
-            <div className="mt-3">
-              <input
-                aria-label="Schedule follow-up"
-                className={inputClass}
-                type="datetime-local"
-                value={followUpAt}
-                onChange={(e) => setFollowUpAt(e.target.value)}
-              />
-              <div className="mt-2 flex flex-wrap gap-1">
-                {[
-                  ['Later today', 4],
-                  ['Tomorrow', 24],
-                  ['In 2 days', 48],
-                  ['In 3 days', 72],
-                  ['Next week', 168],
-                ].map(([label, hours]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700"
-                    onClick={() =>
-                      setFollowUpAt(
-                        localDateTimeValue(
-                          new Date(Date.now() + Number(hours) * 3_600_000).toISOString(),
-                        ),
-                      )
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <textarea
-                aria-label="Follow-up note"
-                className={`${inputClass} mt-2`}
-                rows={2}
-                placeholder="Purpose / note"
-                value={outcome}
-                onChange={(e) => setOutcome(e.target.value)}
-              />
-              <Button
-                className="mt-2"
-                size="sm"
-                disabled={!followUpAt}
-                onClick={() =>
-                  followUpAction.mutate(
-                    { body: { scheduledAt: new Date(followUpAt), notes: outcome || undefined } },
-                    {
-                      onSuccess: () => {
-                        setFollowUpAt('');
-                        setOutcome('');
-                      },
-                    },
-                  )
-                }
-              >
-                Schedule
-              </Button>
-            </div>
-          )}
-          <div className="mt-4 space-y-3">
-            {followUps.data?.map((item) => (
-              <article key={item.id} className="rounded-lg border p-3">
-                <div className="flex justify-between">
-                  <strong className="text-sm">{dateTime(item.scheduledAt)}</strong>
-                  <span className="text-xs font-medium">
-                    {labelForLookup(item.effectiveStatus)}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-slate-600">
-                  {item.outcomeType
-                    ? labelForLookup(item.outcomeType)
-                    : (item.notes ??
-                      item.completionNotes ??
-                      item.cancellationReason ??
-                      'No details')}
-                </p>
-                <p className="text-xs text-slate-400">Assigned to {item.assignedTo.fullName}</p>
-                {item.status === 'PENDING' &&
-                  allowed.canCompleteFollowUp &&
-                  (editingFollowUpId === item.id ? (
-                    <div className="mt-3 space-y-2">
-                      <input
-                        aria-label={`Edit follow-up date ${item.id}`}
-                        className={inputClass}
-                        type="datetime-local"
-                        value={editingFollowUpAt}
-                        onChange={(event) => setEditingFollowUpAt(event.target.value)}
-                      />
-                      <textarea
-                        aria-label={`Edit follow-up notes ${item.id}`}
-                        className={inputClass}
-                        rows={2}
-                        value={editingFollowUpNotes}
-                        onChange={(event) => setEditingFollowUpNotes(event.target.value)}
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          disabled={!editingFollowUpAt}
-                          isLoading={followUpAction.isPending}
-                          onClick={() =>
-                            followUpAction.mutate(
-                              {
-                                followUpId: item.id,
-                                body: {
-                                  scheduledAt: new Date(editingFollowUpAt),
-                                  notes: editingFollowUpNotes || null,
-                                },
-                              },
-                              {
-                                onSuccess: () => {
-                                  setEditingFollowUpId(null);
-                                  setEditingFollowUpAt('');
-                                  setEditingFollowUpNotes('');
-                                },
-                              },
-                            )
-                          }
-                        >
-                          Save follow-up
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditingFollowUpId(null)}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : completingFollowUpId === item.id ? (
-                    <div className="mt-3 space-y-2">
-                      <select
-                        aria-label={`Completion outcome ${item.id}`}
-                        className={inputClass}
-                        value={completionOutcome}
-                        onChange={(event) => setCompletionOutcome(event.target.value)}
-                      >
-                        <option value="">Select outcome…</option>
-                        {FOLLOW_UP_OUTCOMES.map((value) => (
-                          <option key={value} value={value}>
-                            {labelForLookup(value)}
-                          </option>
-                        ))}
-                      </select>
-                      <textarea
-                        aria-label={`Completion notes ${item.id}`}
-                        className={inputClass}
-                        rows={2}
-                        placeholder="Completion notes"
-                        value={completionNotes}
-                        onChange={(event) => setCompletionNotes(event.target.value)}
-                      />
-                      <input
-                        aria-label={`Next follow-up ${item.id}`}
-                        className={inputClass}
-                        type="datetime-local"
-                        value={completionNextDate}
-                        onChange={(event) => setCompletionNextDate(event.target.value)}
-                      />
-                      <select
-                        aria-label={`Next lead stage ${item.id}`}
-                        className={inputClass}
-                        value={completionNextStage}
-                        onChange={(event) => setCompletionNextStage(event.target.value)}
-                      >
-                        <option value="">Keep lead stage</option>
-                        {(lookups.data?.leadStages ?? []).map((value) => (
-                            <option key={value.value} value={value.value}>
-                              {value.label}
-                            </option>
-                          ))}
-                      </select>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          disabled={
-                            !completionOutcome ||
-                            (completionOutcome === 'OTHER' && !completionNotes.trim())
-                          }
-                          isLoading={followUpAction.isPending}
-                          onClick={() =>
-                            followUpAction.mutate(
-                              {
-                                followUpId: item.id,
-                                action: 'complete',
-                                body: {
-                                  outcome: completionOutcome,
-                                  notes: completionNotes || undefined,
-                                  nextFollowUp: completionNextDate
-                                    ? { scheduledAt: new Date(completionNextDate) }
-                                    : undefined,
-                                  nextLeadStage: completionNextStage || undefined,
-                                },
-                              },
-                              {
-                                onSuccess: () => {
-                                  setCompletingFollowUpId(null);
-                                  setCompletionOutcome('');
-                                  setCompletionNotes('');
-                                  setCompletionNextDate('');
-                                  setCompletionNextStage('');
-                                },
-                              },
-                            )
-                          }
-                        >
-                          Save completion
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setCompletingFollowUpId(null)}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2 flex gap-3 text-xs">
-                      <button
-                        className="text-emerald-700"
-                        onClick={() => setCompletingFollowUpId(item.id)}
-                      >
-                        Complete
-                      </button>
-                      <button
-                        className="text-brand-700"
-                        onClick={() => {
-                          setEditingFollowUpId(item.id);
-                          setEditingFollowUpAt(localDateTimeValue(item.scheduledAt));
-                          setEditingFollowUpNotes(item.notes ?? '');
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="text-red-700"
-                        onClick={() => {
-                          const reason = window.prompt('Why is this follow-up being cancelled?');
-                          if (reason?.trim())
-                            followUpAction.mutate({
-                              followUpId: item.id,
-                              action: 'cancel',
-                              body: { reason },
-                            });
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      {hasPermission('followups.delete') && (
-                        <button
-                          className="text-red-700"
-                          onClick={() => {
-                            if (window.confirm('Delete this follow-up?'))
-                              followUpAction.mutate({ followUpId: item.id, action: 'delete' });
-                          }}
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  ))}
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
+      {/* G. Timeline */}
       {tab === 'timeline' && (
-        <section className={card}>
-          <h2 className="font-semibold">Timeline</h2>
+        <Section title="Timeline" icon={History}>
           {timeline.isLoading ? (
-            <div className="mt-4 h-32 animate-pulse rounded bg-slate-100" />
+            <div className="h-32 animate-pulse rounded bg-slate-100" />
+          ) : (timeline.data?.data ?? []).length > 0 ? (
+            <ul className="space-y-4">
+              {(timeline.data?.data ?? [])
+                .filter(
+                  (entry, index, all) =>
+                    all.findIndex(
+                      (other) => other.id === entry.id && other.type === entry.type,
+                    ) === index,
+                )
+                .map((entry) => (
+                  <li
+                    key={`${entry.type}-${entry.id}`}
+                    className="relative border-l-2 border-slate-200 pl-4"
+                  >
+                    <span className="absolute -left-[5px] top-1 h-2 w-2 rounded-full bg-brand-500" />
+                    <p className="text-sm font-medium">{entry.title}</p>
+                    {entry.description && (
+                      <p className="text-sm text-slate-600">{entry.description}</p>
+                    )}
+                    <p className="text-xs text-slate-400">
+                      {entry.actor?.fullName ?? 'System'} · {dateTime(entry.timestamp)}
+                    </p>
+                  </li>
+                ))}
+            </ul>
           ) : (
-            <div className="mt-4 space-y-4">
-              {timeline.data?.data.map((entry) => (
-                <div
-                  key={`${entry.type}-${entry.id}`}
-                  className="relative border-l-2 border-slate-200 pl-4"
-                >
-                  <span className="absolute -left-[5px] top-1 h-2 w-2 rounded-full bg-brand-500" />
-                  <p className="text-sm font-medium">{entry.title}</p>
-                  <p className="text-sm text-slate-600">{entry.description}</p>
-                  <p className="text-xs text-slate-400">
-                    {entry.actor?.fullName ?? 'System'} · {dateTime(entry.timestamp)}
-                  </p>
-                </div>
-              ))}
-            </div>
+            <p className="text-sm text-slate-500">No timeline events yet.</p>
           )}
-        </section>
+        </Section>
       )}
       {payOpen && <RecordLeadPaymentDialog queryId={q.id} onClose={() => setPayOpen(false)} />}
     </div>

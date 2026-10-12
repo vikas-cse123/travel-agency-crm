@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Prisma } from '@prisma/client';
 import {
   flightDetailsSchema,
+  normalizeFlightDetails,
   sightseeingDetailsSchema,
   PERMISSIONS,
   normalizePublicSlug,
@@ -1376,10 +1377,12 @@ async function validateDestinationExpertConfig(
 
 /** Include master-linked itinerary activities in the same tenancy validation. */
 function masterRefServices(input: QuotationVersionInput) {
-  const flightRefs = [
-    ...(input.flightDetails?.outbound.segments ?? []),
-    ...(input.flightDetails?.returnJourney.segments ?? []),
-  ].map((segment) => ({
+  // Segments across every flight record (validated input always carries the
+  // canonical flights array; legacy mirrors are folded away on write).
+  const flightRefs = (input.flightDetails?.flights ?? []).flatMap((flight) => [
+    ...(flight.outbound.segments ?? []),
+    ...(flight.returnJourney.segments ?? []),
+  ]).map((segment) => ({
     serviceType: 'FLIGHT' as const,
     airlineId: segment.airlineId,
   }));
@@ -1830,7 +1833,10 @@ async function resolveCruisePresentations(
 async function resolveAirlinePresentations(ownerCompanyIds: string[], flightDetails: unknown) {
   const parsed = flightDetailsSchema.safeParse(flightDetails);
   if (!parsed.success) return {};
-  const segments = [...parsed.data.outbound.segments, ...parsed.data.returnJourney.segments];
+  const segments = parsed.data.flights.flatMap((flight) => [
+    ...flight.outbound.segments,
+    ...flight.returnJourney.segments,
+  ]);
   const airlineIds = [
     ...new Set(segments.map((segment) => segment.airlineId).filter(Boolean)),
   ] as string[];
@@ -2170,6 +2176,37 @@ function escapeHtml(value: string) {
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ??
       character,
   );
+}
+
+const PREVIEW_TITLE_BASE = 'Personalized Travel Quotation';
+
+/**
+ * Minimal crawler document for a public quotation link: title, type, and
+ * canonical URL only. Deliberately no description, no branding, no scripts
+ * and no images — unfurlers read the initial HTML as-is.
+ */
+export function buildQuotationPreviewHtml(input: { title: string; canonicalUrl: string }): string {
+  const title = escapeHtml(input.title);
+  const url = escapeHtml(input.canonicalUrl);
+  return (
+    '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
+    `<title>${title}</title>` +
+    `<meta property="og:title" content="${title}">` +
+    '<meta property="og:type" content="website">' +
+    `<meta property="og:url" content="${url}">` +
+    '</head><body></body></html>'
+  );
+}
+
+function previewDocumentForQuotation(
+  quotation: { companyId?: unknown; query?: { customerName?: string | null } | null },
+  canonicalUrl: string,
+): string {
+  const leadName = quotation.query?.customerName?.trim() || null;
+  return buildQuotationPreviewHtml({
+    title: leadName ? `${PREVIEW_TITLE_BASE} – ${leadName}` : PREVIEW_TITLE_BASE,
+    canonicalUrl,
+  });
 }
 
 export const quotationsService = {
@@ -3548,24 +3585,28 @@ export const quotationsService = {
       );
 
       // Airline logos: resolve from the flight segment airline IDs (stored on
-      // the quotation-version flight snapshot), fetched via the shared cache.
+      // the quotation-version flight snapshot across every flight record),
+      // fetched via the shared cache.
       const airlineImageMap = new Map<string, Buffer | null>();
-      const fd = version.flightDetails as
-        | {
-            include?: boolean;
-            entryMode?: 'MANUAL' | 'IMAGE';
-            imageDocumentId?: string | null;
-            images?: Array<{
-              documentId: string;
-              description?: string | null;
-              heading?: string | null;
-            }>;
-            outbound?: { segments?: Array<{ airlineId?: string | null }> };
-            returnJourney?: { segments?: Array<{ airlineId?: string | null }> };
-          }
-        | null
-        | undefined;
-      const airlineIds = [...(fd?.outbound?.segments ?? []), ...(fd?.returnJourney?.segments ?? [])]
+      const fd = normalizeFlightDetails(version.flightDetails) as {
+        include?: boolean;
+        entryMode?: 'MANUAL' | 'IMAGE';
+        imageDocumentId?: string | null;
+        images?: Array<{
+          documentId: string;
+          description?: string | null;
+          heading?: string | null;
+        }>;
+        flights?: Array<{
+          outbound?: { segments?: Array<{ airlineId?: string | null }> };
+          returnJourney?: { segments?: Array<{ airlineId?: string | null }> };
+        }>;
+      } | null;
+      const airlineIds = (fd?.flights ?? [])
+        .flatMap((flight) => [
+          ...(flight.outbound?.segments ?? []),
+          ...(flight.returnJourney?.segments ?? []),
+        ])
         .map((s) => s.airlineId)
         .filter((id): id is string => Boolean(id));
       const uniqueAirlineIds = [...new Set(airlineIds)];
@@ -4309,6 +4350,67 @@ export const quotationsService = {
     return this.renderPublicQuotation(quotation, options ?? {});
   },
 
+  /**
+   * Crawler preview metadata for a public quotation link. Returns a complete,
+   * self-contained HTML document so link unfurlers (WhatsApp) read the dynamic
+   * title from the initial response without executing JavaScript.
+   *
+   * Only the lead name and the canonical URL are exposed — both already public
+   * on the weblink itself. Unknown, expired, or foreign-tenant links get the
+   * same generic not-found as the JSON view. Never writes: previews must not
+   * count as views, flip statuses, or create analytics rows.
+   */
+  async publicPreviewByToken(
+    token: string,
+    options?: { customDomainCompanyId?: string | null },
+  ): Promise<string> {
+    const quotation = await prisma.quotation.findFirst({
+      where: { publicTokenHash: hashToken(token), deletedAt: null },
+      select: {
+        id: true,
+        companyId: true,
+        query: { select: { customerName: true } },
+      },
+    });
+    if (!quotation) throw new NotFoundError('This quotation link is invalid or expired.');
+    if (options?.customDomainCompanyId && quotation.companyId !== options.customDomainCompanyId) {
+      throw new NotFoundError('This quotation link is invalid or expired.');
+    }
+    return previewDocumentForQuotation(
+      quotation,
+      `${await preferredPublicAppBaseUrl(quotation.companyId)}/q/${token}`,
+    );
+  },
+
+  /**
+   * Same preview document for friendly slug links (`/<slug>`). Slug handling
+   * mirrors publicViewBySlug: case-insensitive, same generic not-found.
+   */
+  async publicPreviewBySlug(
+    slug: string,
+    options?: { customDomainCompanyId?: string | null },
+  ): Promise<string> {
+    const normalized = slug.trim().toLowerCase();
+    const quotation = normalized
+      ? await prisma.quotation.findFirst({
+          where: { publicSlug: normalized, deletedAt: null },
+          select: {
+            id: true,
+            companyId: true,
+            query: { select: { customerName: true } },
+          },
+        })
+      : null;
+    if (!quotation) throw new NotFoundError('This quotation link is invalid or expired.');
+    if (options?.customDomainCompanyId && quotation.companyId !== options.customDomainCompanyId) {
+      throw new NotFoundError('This quotation link is invalid or expired.');
+    }
+    return previewDocumentForQuotation(
+      quotation,
+      `${await friendlyPublicSlugBaseUrl(quotation.companyId)}/${normalized}`,
+    );
+  },
+
   async renderPublicQuotation(
     quotation: PublicQuotation,
     options: {
@@ -4317,8 +4419,7 @@ export const quotationsService = {
       authCompanyId?: string | null;
       customDomainCompanyId?: string | null;
     },
-  ) {
-    // When the request arrives through an ACTIVE custom domain, the quotation
+  ) {    // When the request arrives through an ACTIVE custom domain, the quotation
     // must belong to that domain's company. A token is never exposed through
     // another tenant's custom domain — safe not-found behavior.
     if (options?.customDomainCompanyId && quotation.companyId !== options.customDomainCompanyId) {

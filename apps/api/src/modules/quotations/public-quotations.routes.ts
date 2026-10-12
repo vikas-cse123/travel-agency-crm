@@ -28,6 +28,21 @@ router.get(
     ),
   ),
 );
+router.get(
+  '/by-slug/:slug/preview',
+  optionalAuth,
+  validateRequest({ params: slug }),
+  asyncHandler(async (req, res) => {
+    res
+      .status(200)
+      .type('html')
+      .send(
+        await quotationsService.publicPreviewBySlug(req.params.slug!, {
+          customDomainCompanyId: req.customDomain?.companyId ?? null,
+        }),
+      );
+  }),
+);
 router.post(
   '/by-slug/:slug/track',
   optionalAuth,
@@ -79,6 +94,21 @@ router.get(
       }),
     ),
   ),
+);
+router.get(
+  '/:token/preview',
+  optionalAuth,
+  validateRequest({ params: token }),
+  asyncHandler(async (req, res) => {
+    res
+      .status(200)
+      .type('html')
+      .send(
+        await quotationsService.publicPreviewByToken(req.params.token!, {
+          customDomainCompanyId: req.customDomain?.companyId ?? null,
+        }),
+      );
+  }),
 );
 router.post(
   '/:token/track',

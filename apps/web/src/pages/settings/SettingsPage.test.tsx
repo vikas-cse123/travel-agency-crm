@@ -6,7 +6,7 @@ import { SettingsPage } from './SettingsPage';
 
 const { auth } = vi.hoisted(() => ({ auth: { isOwner: false } }));
 vi.mock('@/features/auth/AuthProvider', () => ({
-  useAuth: () => ({ isOwner: auth.isOwner }),
+  useAuth: () => ({ isOwner: auth.isOwner, hasPermission: () => true }),
 }));
 
 const response = (data: unknown, ok = true) =>
@@ -576,5 +576,106 @@ describe('Phase 18 settings page', () => {
       await screen.findByText('Monitor SearchAPI credit consumption across your team.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Total requests')).toBeInTheDocument();
+  });
+
+  it('shows the Email tab with the shared configuration form', async () => {
+    const emailSettings = {
+      id: 'cfg-1',
+      provider: 'CUSTOM_SMTP',
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      security: 'STARTTLS',
+      smtpUsername: 'bookings@example.com',
+      passwordConfigured: true,
+      passwordSetAt: '2026-10-09T00:00:00.000Z',
+      fromName: 'ABC Travels',
+      fromEmail: 'bookings@example.com',
+      replyTo: null,
+      createdAt: '2026-10-09T00:00:00.000Z',
+      updatedAt: '2026-10-09T00:00:00.000Z',
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/email-settings')) return response(emailSettings);
+        return response(settings());
+      }),
+    );
+    renderWithProviders(<SettingsPage />);
+    await screen.findByRole('heading', { name: 'Company Settings' });
+    await userEvent.click(screen.getByRole('button', { name: 'Email' }));
+    expect(await screen.findByDisplayValue('smtp.example.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Configuration' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send Test Email' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Configuration' })).toBeInTheDocument();
+    // Other tabs keep working around it.
+    await userEvent.click(screen.getByRole('button', { name: 'Tax' }));
+    expect(await screen.findByLabelText('GSTIN')).toBeInTheDocument();
+  });
+
+  it('saves the configuration from the Email tab through the same endpoint', async () => {
+    const emailSettings = {
+      id: 'cfg-1',
+      provider: 'CUSTOM_SMTP',
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      security: 'STARTTLS',
+      smtpUsername: 'bookings@example.com',
+      passwordConfigured: false,
+      passwordSetAt: null,
+      fromName: 'ABC Travels',
+      fromEmail: 'bookings@example.com',
+      replyTo: null,
+      createdAt: '2026-10-09T00:00:00.000Z',
+      updatedAt: '2026-10-09T00:00:00.000Z',
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/email-settings')) return response(emailSettings);
+      return response(settings());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<SettingsPage />);
+    await screen.findByRole('heading', { name: 'Company Settings' });
+    await userEvent.click(screen.getByRole('button', { name: 'Email' }));
+    await screen.findByDisplayValue('smtp.example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Configuration' }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, options]) => String(url).endsWith('/email-settings') && options?.method === 'PUT',
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('shows the unconfigured state in the Email tab with test email disabled', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/email-settings')) {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({
+              success: false,
+              error: { code: 'NOT_FOUND', message: 'No email configuration exists.' },
+            }),
+          } as Response;
+        }
+        return response(settings());
+      }),
+    );
+    renderWithProviders(<SettingsPage />);
+    await screen.findByRole('heading', { name: 'Company Settings' });
+    await userEvent.click(screen.getByRole('button', { name: 'Email' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('SMTP host') as HTMLInputElement).toHaveValue(''),
+    );
+    expect(screen.queryByRole('button', { name: 'Remove Configuration' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send Test Email' })).toBeDisabled();
   });
 });

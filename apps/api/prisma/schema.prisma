@@ -2086,6 +2086,11 @@ model Sightseeing {
   /// Optional multi-category pricing (e.g. Adult, Child, Senior, custom).
   /// Stored as JSON array of { label, price }. All optional, display-only on master.
   pricing               Json?            @db.Json
+  /// Default meals/transfer prefilled into quotation itinerary entries when
+  /// this activity is selected: { meals: {breakfast,lunch,dinner},
+  /// mealModes: {breakfast,lunch,dinner}, transfer }. Null = no defaults;
+  /// legacy rows stay null and behave as before.
+  mealDefaults          Json?            @db.Json
 
   status      MasterStatus @default(ACTIVE)
   createdById String       @db.Uuid

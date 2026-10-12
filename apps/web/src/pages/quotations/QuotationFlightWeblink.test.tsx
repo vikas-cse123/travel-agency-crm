@@ -91,8 +91,7 @@ describe('Flight pricing breakdown - Weblink', () => {
     expect(screen.queryByText(/Flight Total/)).not.toBeInTheDocument();
   });
 
-  it('2. Flight PER_TRAVELER → detailed breakdown appears', async () => {
-    const fd = {
+  it('2. Flight PER_TRAVELER → detailed breakdown appears', async () => {    const fd = {
       include: true,
       sectionTitle: 'Flight Details',
       amount: 0,
@@ -125,5 +124,115 @@ describe('Flight pricing breakdown - Weblink', () => {
     expect(screen.getByText('Flight Total')).toBeInTheDocument();
     // Total should be 19k
     expect(screen.getAllByText(/19,000/).length).toBeGreaterThan(0);
+  });
+
+  it('3. Multiple flight records render every journey in stored order', async () => {
+    const segment = (flightNumber: string, from: string, to: string) => ({
+      airlineName: 'Test Airways',
+      flightNumber,
+      travelClass: 'Economy',
+      from,
+      to,
+      departureDate: '2026-09-10',
+      departureTime: '10:00',
+      arrivalDate: '2026-09-10',
+      arrivalTime: '13:00',
+      duration: null,
+      cabinLuggage: null,
+      checkInLuggage: null,
+      notes: null,
+      connectionVia: null,
+    });
+    const fd = {
+      include: true,
+      sectionTitle: 'Flight Details',
+      amount: 0,
+      entryMode: 'MANUAL',
+      flights: [
+        {
+          bookmarkCode: 'FLT-000001',
+          journeyType: 'ONEWAY_OUTBOUND',
+          outbound: { fromCity: 'DEL', toCity: 'BOM', segments: [segment('AI101', 'DEL', 'BOM')] },
+          returnJourney: { segments: [] },
+        },
+        {
+          bookmarkCode: 'FLT-000002',
+          journeyType: 'ONEWAY_OUTBOUND',
+          outbound: { fromCity: 'BOM', toCity: 'GOI', segments: [segment('6E202', 'BOM', 'GOI')] },
+          returnJourney: { segments: [] },
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/public/quotations')) {
+        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: publicQuotation(fd) }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: {} }) } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/test-token-multi-flight' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    expect(await screen.findByText('Flights')).toBeInTheDocument();
+    expect(screen.getByText('AI101')).toBeInTheDocument();
+    expect(screen.getByText('6E202')).toBeInTheDocument();
+    // Stored order is preserved across the two flights.
+    const html = document.body.innerHTML;
+    expect(html.indexOf('AI101')).toBeLessThan(html.indexOf('6E202'));
+  });
+
+  it('4. Legacy single-flight rows without a flights array still render', async () => {
+    const fd = {
+      include: true,
+      sectionTitle: 'Flight Details',
+      amount: 0,
+      entryMode: 'MANUAL',
+      journeyType: 'ONEWAY_OUTBOUND',
+      outbound: {
+        fromCity: 'DEL',
+        toCity: 'BOM',
+        segments: [
+          {
+            airlineName: 'Test Airways',
+            flightNumber: 'AI101',
+            travelClass: 'Economy',
+            from: 'DEL',
+            to: 'BOM',
+            departureDate: '2026-09-10',
+            departureTime: '10:00',
+            arrivalDate: '2026-09-10',
+            arrivalTime: '13:00',
+            duration: null,
+            cabinLuggage: null,
+            checkInLuggage: null,
+            notes: null,
+            connectionVia: null,
+          },
+        ],
+      },
+      returnJourney: { segments: [] },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/public/quotations')) {
+        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: publicQuotation(fd) }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: {} }) } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/test-token-legacy-flight' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    expect(await screen.findByText('Flights')).toBeInTheDocument();
+    expect(screen.getByText('AI101')).toBeInTheDocument();
   });
 });

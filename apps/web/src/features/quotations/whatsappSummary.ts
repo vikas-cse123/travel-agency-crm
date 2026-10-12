@@ -1,5 +1,5 @@
-import type { Quotation, QuotationVersion } from './quotations.api';
-import { formatDayPrefixedTitle } from '@interscale/shared';
+import type { FlightSegment, Quotation, QuotationVersion } from './quotations.api';
+import { formatDayPrefixedTitle, normalizeFlightDetails } from '@interscale/shared';
 
 function formatTravelDate(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -63,8 +63,18 @@ function flightLines(version: QuotationVersion): string[] {
   if (details.entryMode === 'IMAGE') {
     return ['• Flight details provided as image — see weblink for details'];
   }
+  const flights = (
+    (normalizeFlightDetails(details) as { flights?: unknown } | null)?.flights ?? []
+  ) as Array<{
+    journeyType?: string;
+    outbound?: { segments?: FlightSegment[] };
+    returnJourney?: { segments?: FlightSegment[] };
+  }>;
   const lines: string[] = [];
-  const pushJourney = (label: string, journey: typeof details.outbound | typeof details.returnJourney) => {
+  const pushJourney = (
+    label: string,
+    journey: { segments?: FlightSegment[] } | undefined,
+  ) => {
     if (!journey?.segments?.length) return;
     const segs = journey.segments.filter(
       (s) => (s.airlineName ?? '').trim() || (s.from ?? '').trim() || (s.to ?? '').trim() || (s.flightNumber ?? '').trim(),
@@ -85,12 +95,14 @@ function flightLines(version: QuotationVersion): string[] {
     // Add a subtle journey label when both directions exist is not needed; segments alone are readable.
     void label;
   };
-  // Order: outbound then return (if any)
-  if (details.journeyType === 'ONEWAY_RETURN') {
-    pushJourney('Return', details.returnJourney);
-  } else {
-    pushJourney('Outbound', details.outbound);
-    if (details.journeyType === 'ROUND_TRIP') pushJourney('Return', details.returnJourney);
+  // Order: every flight in stored order, outbound then return within each.
+  for (const flight of flights) {
+    if (flight.journeyType === 'ONEWAY_RETURN') {
+      pushJourney('Return', flight.returnJourney);
+    } else {
+      pushJourney('Outbound', flight.outbound);
+      if (flight.journeyType === 'ROUND_TRIP') pushJourney('Return', flight.returnJourney);
+    }
   }
   return lines;
 }

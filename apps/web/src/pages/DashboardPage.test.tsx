@@ -243,7 +243,10 @@ describe('Phase 16 dashboard page', () => {
     expect(screen.getByText('₹2,50,000.00')).toBeInTheDocument();
     expect(screen.getAllByText('Net Profit').length).toBeGreaterThan(0);
     expect(screen.getByText('Top Performers — Profit Earned')).toBeInTheDocument();
-    expect(screen.getByText('Refunds')).toBeInTheDocument();
+    // Removed KPI cards never render.
+    expect(screen.queryByText('Refunds')).not.toBeInTheDocument();
+    expect(screen.queryByText('Win Rate')).not.toBeInTheDocument();
+    expect(screen.queryByText('Acceptance Rate')).not.toBeInTheDocument();
   });
 
   it('omits financial tiles and profit table without financial permission', async () => {
@@ -359,5 +362,63 @@ describe('Phase 16 dashboard page', () => {
         mock.mock.calls.some(([url]) => String(url).includes('period=THIS_MONTH')),
       ).toBe(true),
     );
+  });
+
+  it('hides the Net Profit card when its value is zero', async () => {
+    stub(analytics({ financials: { ...analytics().financials, netProfit: '0.00' } }), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    expect(screen.queryByText('Net Profit')).not.toBeInTheDocument();
+    // Neighbouring cards still render with no gap left behind.
+    expect(screen.getByText('Total Leads')).toBeInTheDocument();
+    expect(screen.getByText('Agency Revenue')).toBeInTheDocument();
+    expect(screen.getByText('Quotations')).toBeInTheDocument();
+  });
+
+  it('shows the Net Profit card formatted for a positive value', async () => {
+    stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    expect(screen.getByText('Net Profit')).toBeInTheDocument();
+    expect(screen.getByText('₹80,000.00')).toBeInTheDocument();
+  });
+
+  it('hides the Net Profit card for missing values without NaN', async () => {
+    const bare = analytics();
+    delete (bare.financials as Record<string, unknown>).netProfit;
+    stub(bare, operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    expect(screen.queryByText('Net Profit')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN/);
+  });
+
+  it('orders KPI cards, chart, travel, sources, then performers', async () => {
+    stub(analytics(), operations());
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    const text = document.body.textContent ?? '';
+    const order = [
+      'Total Leads',
+      'Converted Leads',
+      'Agency Revenue',
+      'Hot Leads',
+      'Conversion Rate',
+      'Quotations',
+      'Net Profit',
+      'Booking Confirmed Amount (Destination Wise)',
+      'Upcoming Travel',
+      'Other Upcoming Travel',
+      'Lead Sources',
+      'Top Destination Enquiries',
+      'Top Performers — Conversion Rate',
+      'Top Performers — Profit Earned',
+    ];
+    let fromIndex = -1;
+    for (const label of order) {
+      const index = text.indexOf(label, fromIndex + 1);
+      expect(index, `missing or misordered section: ${label}`).toBeGreaterThan(fromIndex);
+      fromIndex = index;
+    }
   });
 });

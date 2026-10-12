@@ -39,9 +39,9 @@ export function LeadFormPage() {
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div>
-          <p className="text-sm text-slate-500">
-            Leads / {queryId ? lead.data?.queryNumber : 'New'}
-          </p>
+          {queryId && (
+            <p className="text-sm text-slate-500">Leads / {lead.data?.queryNumber}</p>
+          )}
           <h1 className="text-2xl font-semibold">{queryId ? 'Edit lead' : 'Create lead'}</h1>
         </div>
       </div>

@@ -212,6 +212,12 @@ function writeData(input: SightseeingInput | SightseeingUpdateInput) {
             Prisma.DbNull,
         }
       : {}),
+    ...(key('mealDefaults')
+      ? {
+          mealDefaults:
+            (input.mealDefaults as unknown as Prisma.InputJsonValue) ?? Prisma.DbNull,
+        }
+      : {}),
   };
 }
 
@@ -829,6 +835,7 @@ export const sightseeingService = {
         suggestedStartTime: true,
         description: true,
         pricing: true,
+        mealDefaults: true,
         images: true,
         imageObjectKey: true,
         imageFileName: true,
@@ -867,7 +874,8 @@ export const sightseeingService = {
           estimatedHours: num(row.estimatedHours),
           suggestedStartTime: row.suggestedStartTime,
           description: row.description,
-          pricing: normalizePricing((row as Record<string, unknown>).pricing),
+          pricing: normalizePricing((row as unknown as Record<string, unknown>).pricing),
+          mealDefaults: (row.mealDefaults ?? null) as Record<string, unknown> | null,
           destination: row.destination,
           city: row.city,
           images: imagesWithUrl,

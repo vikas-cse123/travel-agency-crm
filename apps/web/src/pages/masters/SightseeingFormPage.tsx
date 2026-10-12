@@ -34,8 +34,37 @@ interface FormValues {
   description: string;
   remarks: string;
   pricing: Array<{ label: string; price: string; currency: string }>;
+  mealDefaults: {
+    meals: { breakfast: boolean; lunch: boolean; dinner: boolean };
+    mealModes: {
+      breakfast: 'NO_TRANSFER' | 'INCLUDE_AT_HOTEL' | 'WITH_TRANSFER' | '';
+      lunch: 'NO_TRANSFER' | 'INCLUDE_AT_HOTEL' | 'WITH_TRANSFER' | '';
+      dinner: 'NO_TRANSFER' | 'INCLUDE_AT_HOTEL' | 'WITH_TRANSFER' | '';
+    };
+    transfer: '' | 'PRIVATE' | 'SHARED' | 'NO_TRANSFER';
+  };
   status: 'ACTIVE' | 'INACTIVE';
 }
+
+const EMPTY_MEAL_DEFAULTS: FormValues['mealDefaults'] = {
+  meals: { breakfast: false, lunch: false, dinner: false },
+  mealModes: { breakfast: '', lunch: '', dinner: '' },
+  transfer: '',
+};
+
+const MEAL_NAMES = ['breakfast', 'lunch', 'dinner'] as const;
+
+const MEAL_MODE_OPTIONS = [
+  ['NO_TRANSFER', 'No Transfer'],
+  ['INCLUDE_AT_HOTEL', 'Include At Hotel'],
+  ['WITH_TRANSFER', 'With Transfer'],
+] as const;
+
+const TRANSFER_OPTIONS = [
+  ['PRIVATE', 'Private Transfer'],
+  ['SHARED', 'Shared Transfer'],
+  ['NO_TRANSFER', 'No Transfer'],
+] as const;
 
 /**
  * Create/edit Sightseeing.
@@ -67,6 +96,7 @@ export function SightseeingFormPage() {
       description: '',
       remarks: '',
       pricing: [],
+      mealDefaults: EMPTY_MEAL_DEFAULTS,
       status: 'ACTIVE',
     },
   });
@@ -122,6 +152,18 @@ export function SightseeingFormPage() {
   useEffect(() => {
     const value = record.data;
     if (!value) return;
+    const savedMeals = value.mealDefaults as {
+      meals?: { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | null;
+      mealModes?: { breakfast?: string | null; lunch?: string | null; dinner?: string | null } | null;
+      transfer?: string | null;
+    } | null;
+    type MealMode = FormValues['mealDefaults']['mealModes']['breakfast'];
+    const mealModeOf = (mode: string | null | undefined): MealMode =>
+      mode === 'NO_TRANSFER' || mode === 'INCLUDE_AT_HOTEL' || mode === 'WITH_TRANSFER' ? mode : '';
+    const transferOf = (
+      transfer: string | null | undefined,
+    ): FormValues['mealDefaults']['transfer'] =>
+      transfer === 'PRIVATE' || transfer === 'SHARED' || transfer === 'NO_TRANSFER' ? transfer : '';
     form.reset({
       destinationId: value.destination.id,
       cityId: value.city.id,
@@ -138,6 +180,19 @@ export function SightseeingFormPage() {
             currency: row.currency ?? 'INR',
           }))
         : [],
+      mealDefaults: {
+        meals: {
+          breakfast: savedMeals?.meals?.breakfast ?? false,
+          lunch: savedMeals?.meals?.lunch ?? false,
+          dinner: savedMeals?.meals?.dinner ?? false,
+        },
+        mealModes: {
+          breakfast: mealModeOf(savedMeals?.mealModes?.breakfast),
+          lunch: mealModeOf(savedMeals?.mealModes?.lunch),
+          dinner: mealModeOf(savedMeals?.mealModes?.dinner),
+        },
+        transfer: transferOf(savedMeals?.transfer),
+      },
       status: value.status as FormValues['status'],
     });
   }, [record.data, form]);
@@ -173,6 +228,22 @@ export function SightseeingFormPage() {
         currency: row.currency || 'INR',
       }))
       .filter((row) => row.label || row.price != null);
+    // Meal defaults: send a complete object when anything is set; explicit
+    // null clears previously saved defaults on edit; omit on create when blank.
+    const mealModes = {
+      breakfast: values.mealDefaults.mealModes.breakfast || null,
+      lunch: values.mealDefaults.mealModes.lunch || null,
+      dinner: values.mealDefaults.mealModes.dinner || null,
+    };
+    const mealsOn =
+      values.mealDefaults.meals.breakfast ||
+      values.mealDefaults.meals.lunch ||
+      values.mealDefaults.meals.dinner;
+    const transfer = values.mealDefaults.transfer || null;
+    const hasMealDefaults =
+      mealsOn || transfer !== null || mealModes.breakfast !== null || mealModes.lunch !== null || mealModes.dinner !== null;
+    const hadMealDefaults =
+      sightseeingId != null && (record.data as { mealDefaults?: unknown } | undefined)?.mealDefaults != null;
     const payload = {
       destinationId: effectiveDestinationId,
       cityId: effectiveCityId,
@@ -183,6 +254,15 @@ export function SightseeingFormPage() {
       description: values.description || null,
       remarks: values.remarks || null,
       pricing: pricing.length ? pricing : undefined,
+      mealDefaults: hasMealDefaults
+        ? {
+            meals: { ...values.mealDefaults.meals },
+            mealModes,
+            transfer,
+          }
+        : hadMealDefaults
+          ? null
+          : undefined,
       status: values.status,
     };
     try {
@@ -406,6 +486,109 @@ export function SightseeingFormPage() {
                   Additional notes, tips, or important information
                 </p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
+          <h2 className="bg-teal-600 px-4 py-3 text-base font-semibold text-white">
+            Meals Included
+          </h2>
+          <div className="space-y-4 p-4">
+            <p className="text-xs text-slate-500">
+              Default meals prefilled into quotation itinerary entries when this activity is
+              selected. Quotations keep their own editable copy.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              {MEAL_NAMES.map((meal) => (
+                <label key={meal} className="flex items-center gap-2 text-sm capitalize">
+                  <input
+                    type="checkbox"
+                    aria-label={`Meals included ${meal}`}
+                    checked={form.watch(`mealDefaults.meals.${meal}`)}
+                    onChange={(event) => {
+                      form.setValue(`mealDefaults.meals.${meal}`, event.target.checked, {
+                        shouldDirty: true,
+                      });
+                      if (event.target.checked && !form.getValues(`mealDefaults.mealModes.${meal}`)) {
+                        form.setValue(`mealDefaults.mealModes.${meal}`, 'NO_TRANSFER', {
+                          shouldDirty: true,
+                        });
+                      }
+                      if (!event.target.checked) {
+                        // A mode without its meal is dead data: clearing it keeps
+                        // "uncheck everything + clear transfer" a true reset.
+                        form.setValue(`mealDefaults.mealModes.${meal}`, '', {
+                          shouldDirty: true,
+                        });
+                      }
+                    }}
+                  />
+                  {meal}
+                </label>
+              ))}
+            </div>
+            {MEAL_NAMES.filter((meal) => form.watch(`mealDefaults.meals.${meal}`)).map((meal) => (
+              <div key={meal} className="rounded-lg border border-slate-200 p-3">
+                <p className="text-sm font-semibold capitalize text-slate-700">{meal} options</p>
+                <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                  {MEAL_MODE_OPTIONS.map(([value, label]) => (
+                    <label key={value} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        aria-label={`${meal} meal mode ${label}`}
+                        name={`meal-mode-${meal}`}
+                        value={value}
+                        checked={form.watch(`mealDefaults.mealModes.${meal}`) === value}
+                        onChange={() =>
+                          form.setValue(`mealDefaults.mealModes.${meal}`, value, {
+                            shouldDirty: true,
+                          })
+                        }
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
+          <h2 className="bg-cyan-700 px-4 py-3 text-base font-semibold text-white">Transfer</h2>
+          <div className="space-y-3 p-4">
+            <p className="text-xs text-slate-500">
+              Default transfer prefilled into quotation itinerary entries when this activity is
+              selected.
+            </p>
+            <div className="flex flex-wrap items-center gap-4 text-sm">
+              {TRANSFER_OPTIONS.map(([value, label]) => (
+                <label key={value} className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    aria-label={`Transfer default ${label}`}
+                    name="transfer-default"
+                    value={value}
+                    checked={form.watch('mealDefaults.transfer') === value}
+                    onChange={() =>
+                      form.setValue('mealDefaults.transfer', value, { shouldDirty: true })
+                    }
+                  />
+                  {label}
+                </label>
+              ))}
+              {form.watch('mealDefaults.transfer') ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="text-red-600"
+                  onClick={() => form.setValue('mealDefaults.transfer', '', { shouldDirty: true })}
+                >
+                  Clear
+                </Button>
+              ) : null}
             </div>
           </div>
         </section>

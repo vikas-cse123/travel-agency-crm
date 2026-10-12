@@ -16,9 +16,6 @@ import {
   PieChart,
   Plane,
   RefreshCw,
-  RotateCcw,
-  Target,
-  ThumbsUp,
   TrendingUp,
   Truck,
   Users,
@@ -379,6 +376,11 @@ export function DashboardPage() {
   const data = analytics.data;
   const caps = data?.capabilities;
   const showFinancials = Boolean(caps?.canViewFinancials);
+  // Net Profit renders only for a positive calculated value. Non-numeric,
+  // null, and missing values hide the card instead of showing NaN.
+  const netProfitValue = Number(data?.financials?.netProfit);
+  const showNetProfit =
+    showFinancials && Number.isFinite(netProfitValue) && netProfitValue > 0;
 
   return (
     <div className="space-y-4">
@@ -458,37 +460,6 @@ export function DashboardPage() {
                 className="bg-teal-600 text-white"
               />
             )}
-            {showFinancials && (
-              <KpiCard
-                label="Net Profit"
-                value={money(data?.financials?.netProfit)}
-                icon={TrendingUp}
-                className="bg-amber-500 text-white"
-              />
-            )}
-          </section>
-
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {showFinancials && (
-              <KpiCard
-                label="Refunds"
-                value={money(data?.financials?.totalRefunded)}
-                icon={RotateCcw}
-                className="bg-red-100 text-red-800"
-              />
-            )}
-            <KpiCard
-              label="Win Rate"
-              value={`${data?.leads?.winRate ?? 0}%`}
-              icon={Target}
-              className="bg-slate-200 text-slate-800"
-              info={{
-                title: 'Win Rate',
-                description:
-                  'Percentage of leads with a final result that became Booking Confirmed. Only Booking Confirmed and Lost leads are counted; leads still in progress are not included.',
-                formula: '(Booking Confirmed ÷ (Booking Confirmed + Lost)) × 100',
-              }}
-            />
             <KpiCard
               label="Hot Leads"
               value={data?.leads?.hotLeads ?? 0}
@@ -506,23 +477,48 @@ export function DashboardPage() {
                 formula: '(Booking Confirmed ÷ Total Leads) × 100',
               }}
             />
-          </section>
-
-          {data?.quotations && (
-            <section className="grid gap-3 sm:grid-cols-2">
+            {data?.quotations && (
               <KpiCard
                 label="Quotations"
                 value={data.quotations.totalQuotations}
                 icon={FileText}
                 className="bg-blue-100 text-blue-800"
               />
+            )}
+            {showNetProfit && (
               <KpiCard
-                label="Acceptance Rate"
-                value={`${data.quotations.quotationAcceptanceRate}%`}
-                icon={ThumbsUp}
-                className="bg-emerald-100 text-emerald-800"
+                label="Net Profit"
+                value={money(data?.financials?.netProfit)}
+                icon={TrendingUp}
+                className="bg-amber-500 text-white"
               />
+            )}
+          </section>
+
+          {caps?.canViewLeads && (
+            <section className="overflow-hidden rounded-lg border bg-card shadow-card">
+              <SectionHeader
+                icon={IndianRupee}
+                title="Booking Confirmed Amount (Destination Wise)"
+                className="bg-teal-600 text-white"
+              />
+              <div className="p-4">
+                <VerticalBarChart
+                  data={(data?.confirmedRevenueByDestination ?? []).map((row) => ({
+                    label: row.destination,
+                    value: Number(row.totalAmount),
+                  }))}
+                  formatValue={(value) => money(String(value))}
+                />
+              </div>
             </section>
+          )}
+
+          {caps?.canViewLeads && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <UpcomingTravelCard kind="confirmed" />
+              <UpcomingTravelCard kind="others" />
+            </div>
           )}
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -571,32 +567,6 @@ export function DashboardPage() {
               </section>
             )}
           </div>
-
-          {caps?.canViewLeads && (
-            <section className="overflow-hidden rounded-lg border bg-card shadow-card">
-              <SectionHeader
-                icon={IndianRupee}
-                title="Booking Confirmed Amount (Destination Wise)"
-                className="bg-teal-600 text-white"
-              />
-              <div className="p-4">
-                <VerticalBarChart
-                  data={(data?.confirmedRevenueByDestination ?? []).map((row) => ({
-                    label: row.destination,
-                    value: Number(row.totalAmount),
-                  }))}
-                  formatValue={(value) => money(String(value))}
-                />
-              </div>
-            </section>
-          )}
-
-          {caps?.canViewLeads && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <UpcomingTravelCard kind="confirmed" />
-              <UpcomingTravelCard kind="others" />
-            </div>
-          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             {caps?.canViewLeads && (

@@ -969,6 +969,79 @@ export const flightJourneySchema = z.object({
   segments: arrayFromNullish(flightSegmentSchema).pipe(z.array(flightSegmentSchema).max(20)),
 });
 
+/**
+ * One flight record inside the Flight section: its own bookmark trace,
+ * journey type, and outbound/return journeys. Section-level fields (include,
+ * title, amount, pricing, images) stay on `flightDetails` itself.
+ */
+export const flightJourneyRecordSchema = z.object({
+  bookmarkCode: optionalText(20),
+  journeyType: z.enum(FLIGHT_JOURNEY_TYPES).default('ROUND_TRIP'),
+  outbound: flightJourneySchema.default({ segments: [] }),
+  returnJourney: flightJourneySchema.default({ segments: [] }),
+});
+export type FlightJourneyRecord = z.infer<typeof flightJourneyRecordSchema>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+/** A journey object with at least one segment carrying real content. */
+const hasJourneyContent = (value: unknown): boolean => {
+  if (!isRecord(value)) return false;
+  const segments = Array.isArray(value.segments) ? value.segments : [];
+  const text = (segment: Record<string, unknown>, key: string): string =>
+    typeof segment[key] === 'string' ? (segment[key] as string).trim() : '';
+  return segments.some(
+    (segment) =>
+      isRecord(segment) &&
+      (text(segment, 'airlineName') !== '' ||
+        text(segment, 'from') !== '' ||
+        text(segment, 'to') !== '' ||
+        text(segment, 'flightNumber') !== '' ||
+        text(segment, 'departureDate') !== '' ||
+        text(segment, 'arrivalDate') !== ''),
+  );
+};
+
+/**
+ * Canonicalize a stored `flightDetails` value into the multi-flight shape:
+ * `{ ...section, flights: [...] }` with the legacy top-level journey fields
+ * folded away. Rules:
+ * - a non-empty `flights` array wins; legacy mirrors are dropped;
+ * - otherwise legacy journeys with real segment content wrap into one record;
+ * - otherwise (blank defaults included) the result carries `flights: []`.
+ * Non-objects pass through untouched. Pure and total — safe for form
+ * hydration, API validation, and PDF/weblink rendering alike.
+ */
+export function normalizeFlightDetails<T>(value: T): T {
+  if (!isRecord(value)) return value;
+  const { flights, outbound, returnJourney, journeyType, bookmarkCode, ...rest } = value as Record<
+    string,
+    unknown
+  > & {
+    flights?: unknown;
+    outbound?: unknown;
+    returnJourney?: unknown;
+    journeyType?: unknown;
+    bookmarkCode?: unknown;
+  };
+  if (Array.isArray(flights) && flights.length > 0) return { ...rest, flights } as T;
+  if (hasJourneyContent(outbound) || hasJourneyContent(returnJourney)) {
+    return {
+      ...rest,
+      flights: [
+        {
+          bookmarkCode: typeof bookmarkCode === 'string' && bookmarkCode.trim() ? bookmarkCode : null,
+          journeyType: typeof journeyType === 'string' ? journeyType : 'ROUND_TRIP',
+          outbound: isRecord(outbound) ? outbound : { segments: [] },
+          returnJourney: isRecord(returnJourney) ? returnJourney : { segments: [] },
+        },
+      ],
+    } as T;
+  }
+  return { ...rest, flights: [] } as T;
+}
+
 export const flightImageSchema = z.object({
   documentId: z.string().uuid(),
   fileName: optionalText(255),
@@ -992,7 +1065,7 @@ export const flightPerTravelerSchema = z
   .default({});
 
 export const flightDetailsSchema = z
-  .object({
+  .preprocess(normalizeFlightDetails, z.object({
     include: z.boolean().default(true),
     sectionTitle: optionalText(200),
     amount: optionalMoney,
@@ -1007,7 +1080,13 @@ export const flightDetailsSchema = z
     journeyType: z.enum(FLIGHT_JOURNEY_TYPES).default('ROUND_TRIP'),
     outbound: flightJourneySchema.default({ segments: [] }),
     returnJourney: flightJourneySchema.default({ segments: [] }),
-  })
+    /**
+     * Every flight in the section, in display order. New writes always carry
+     * the journeys here; the top-level legacy mirrors are folded away by the
+     * preprocess above so stored rows converge on this shape.
+     */
+    flights: z.array(flightJourneyRecordSchema).max(10).default([]),
+  }))
   .superRefine((details, ctx) => {
     if (
       details.include &&

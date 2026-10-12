@@ -139,6 +139,7 @@ export function flightBookmarkToDetails(
       travelClass: returnFirst?.travel_class ?? outboundFirst?.travel_class ?? 'Economy',
       segments: returnJourney,
     },
+    flights: [],
   };
 }
 
@@ -456,10 +457,13 @@ export function BookmarkLoadField({
   type,
   placeholder,
   onLoaded,
+  ariaLabel = 'Bookmark ID',
 }: {
   type: 'FLIGHT' | 'HOTEL';
   placeholder: string;
   onLoaded: (bookmarks: LiveSearchBookmark[]) => void;
+  /** Accessible label for the input; scoped per entry when repeated on a page. */
+  ariaLabel?: string;
 }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -530,7 +534,7 @@ export function BookmarkLoadField({
         Bookmark ID (optional)
         <div className="mt-1 flex items-center gap-2">
           <input
-            aria-label="Bookmark ID"
+            aria-label={ariaLabel}
             className="w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm"
             placeholder={placeholder}
             value={code}

@@ -166,6 +166,12 @@ export interface FlightJourney {
   travelClass?: string | null;
   segments: FlightSegment[];
 }
+export interface FlightJourneyRecord {
+  bookmarkCode?: string | null;
+  journeyType: 'ROUND_TRIP' | 'ONEWAY_OUTBOUND' | 'ONEWAY_RETURN';
+  outbound: FlightJourney;
+  returnJourney: FlightJourney;
+}
 export interface FlightDetails {
   include: boolean;
   sectionTitle?: string | null;
@@ -182,6 +188,8 @@ export interface FlightDetails {
   journeyType: 'ROUND_TRIP' | 'ONEWAY_OUTBOUND' | 'ONEWAY_RETURN';
   outbound: FlightJourney;
   returnJourney: FlightJourney;
+  /** Every flight in the section, in display order (legacy rows wrap into one). */
+  flights?: FlightJourneyRecord[];
 }
 export interface HotelDetails {
   include?: boolean;

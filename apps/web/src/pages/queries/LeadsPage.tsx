@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowUpDown,
-  BarChart3,
   Calendar,
   CalendarRange,
   ChartPie,
@@ -16,6 +15,7 @@ import {
   Loader2,
   Mail,
   MapPin,
+  MoreVertical,
   Pencil,
   Phone,
   Plus,
@@ -44,7 +44,6 @@ import type { LeadDateFilterType } from '@interscale/shared';
 import { LeadServicesCell } from '@/features/queries/LeadServicesCell';
 import { formatTravelMonthYear } from '@/features/quotations/travel-dates';
 import { cn } from '@/utils/cn';
-import { MetricInfoTooltip } from '@/components/ui/Tooltip';
 import { LeadImportModal } from './LeadImportModal';
 import './leads.css';
 
@@ -211,11 +210,16 @@ function displayTravellerSummary(summary: string | null | undefined): string {
 }
 
 function TravellersInfoCell({ lead }: { lead: Lead }) {
+  // No departure city (null/undefined/empty/whitespace): render no city badge
+  // at all rather than an "N/A" placeholder. Dates and counts are untouched.
+  const departureCity = lead.departureCity?.trim() ? lead.departureCity : '';
   return (
     <div className="leads-traveller">
-      <span className="leads-traveller-block leads-traveller-block--city">
-        <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" /> {lead.departureCity || 'N/A'}
-      </span>
+      {departureCity && (
+        <span className="leads-traveller-block leads-traveller-block--city">
+          <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" /> {departureCity}
+        </span>
+      )}
         <span className="leads-traveller-block leads-traveller-block--date">
           <Calendar className="h-3 w-3 shrink-0" aria-hidden="true" />
           {[
@@ -300,10 +304,12 @@ function BookingCell({ lead, canCreateBooking }: { lead: Lead; canCreateBooking:
 }
 
 /**
- * Lead row actions. Strictly limited to View, Edit, Delete and Follow-up so
+ * Lead row actions. Strictly limited to View, Edit and Delete so
  * the Action column never grows additional quotation/booking shortcuts.
  * Quotation creation and booking conversion remain available through the
  * dedicated Quotation and Booking columns and the lead details page.
+ * Follow-up is a dead feature: its action is hidden from this column
+ * (backend, APIs and data are untouched).
  */
 function LeadActionsCell({
   lead,
@@ -314,7 +320,6 @@ function LeadActionsCell({
   canEdit: boolean;
   canDelete: boolean;
 }) {
-  const a = lead.actions;
   const remove = useDeleteLead(lead.id);
   return (
     <div className="leads-actions">
@@ -356,16 +361,6 @@ function LeadActionsCell({
         >
           <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
-      )}
-      {a?.canAddFollowUp && (
-        <Link
-          aria-label="Create follow-up"
-          title="Create follow-up"
-          className="leads-followup-btn"
-          to={`/queries/${lead.id}?tab=follow-ups`}
-        >
-          Follow-up
-        </Link>
       )}
     </div>
   );
@@ -639,61 +634,6 @@ function WeblinkAnalyticsModal({
   );
 }
 
-/** Slim operational analytics strip with compact metric badges. */
-function LeadAnalyticsStrip({
-  loading,
-  totalLeads,
-  bookingConfirmed,
-  conversionRate,
-  winRate,
-}: {
-  loading: boolean;
-  totalLeads?: number | null | undefined;
-  bookingConfirmed?: number | null | undefined;
-  conversionRate?: number | null | undefined;
-  winRate?: number | null | undefined;
-}) {
-  return (
-    <section className="leads-analytics" aria-label="Lead analytics">
-      <span className="leads-analytics-label">
-        <BarChart3 className="h-4 w-4 text-brand-600" aria-hidden="true" /> Analytics
-      </span>
-      {loading ? (
-        <span className="h-6 w-48 animate-pulse rounded bg-slate-100" />
-      ) : (
-        <>
-          <span className="leads-analytics-badge leads-analytics-badge--total">
-            <span>{totalLeads}</span>
-            <span>Total Leads</span>
-          </span>
-          <span className="leads-analytics-badge leads-analytics-badge--booking">
-            <span>{bookingConfirmed}</span>
-            <span>Booking Confirmed</span>
-          </span>
-          <span className="leads-analytics-badge leads-analytics-badge--conversion">
-            <span>{conversionRate}%</span>
-            <span>Conversion Rate</span>
-            <MetricInfoTooltip
-              title="Conversion Rate"
-              description="Percentage of total leads that became Booking Confirmed."
-              formula="(Booking Confirmed ÷ Total Leads) × 100"
-            />
-          </span>
-          <span className="leads-analytics-badge leads-analytics-badge--win">
-            <span>{winRate}%</span>
-            <span>Win Rate</span>
-            <MetricInfoTooltip
-              title="Win Rate"
-              description="Percentage of leads with a final result that became Booking Confirmed. Only Booking Confirmed and Lost leads are counted; leads still in progress are not included."
-              formula="(Booking Confirmed ÷ (Booking Confirmed + Lost)) × 100"
-            />
-          </span>
-        </>
-      )}
-    </section>
-  );
-}
-
 /** Compact dense filter chips with semantic colours per type/stage. */
 function leadChipVariant(value: string): string {
   if (value === '') return 'leads-chip--all';
@@ -739,6 +679,8 @@ export function LeadsPage() {
   const [analyticsFor, setAnalyticsFor] = useState<{ leadId: string; quotationId: string } | null>(
     null,
   );
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
 
   const syncWeblinkCount = useCallback((leadId: string, external: number) => {
     setWeblinkState((prev) => {
@@ -754,7 +696,27 @@ export function LeadsPage() {
     setSelected(new Set());
     setDialog(null);
     setAnalyticsFor(null);
+    setMoreMenuOpen(false);
   }, [paramsKey]);
+
+  // Close the header More menu on outside click / Escape.
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMoreMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [moreMenuOpen]);
 
   const set = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -951,47 +913,109 @@ export function LeadsPage() {
     ['Actions'],
   ];
 
-  const a = analytics.data;
+  const canCreate = hasPermission('queries.create');
+  const showMoreMenu = canExport || canCreate;
+
+  const handleMoreMenuKeyDown = (event: ReactKeyboardEvent) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const menu = moreMenuRef.current?.querySelector('[role="menu"]');
+      const items = menu
+        ? Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+        : [];
+      if (!items.length) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = items.findIndex((item) => item === active);
+      const next =
+        event.key === 'ArrowDown'
+          ? items[(index + 1) % items.length]
+          : items[(index - 1 + items.length) % items.length];
+      next?.focus();
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const menu = moreMenuRef.current?.querySelector('[role="menu"]');
+      const items = menu
+        ? Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+        : [];
+      if (!items.length) return;
+      (event.key === 'Home' ? items[0] : items[items.length - 1])?.focus();
+    }
+  };
 
   return (
     <div className="leads-page">
       <div>
-        <p className="leads-page-breadcrumb">Home / Leads</p>
         <h1 className="leads-page-title">Leads</h1>
       </div>
 
-      <LeadAnalyticsStrip
-        loading={analytics.isLoading}
-        totalLeads={a?.totalLeads}
-        bookingConfirmed={a?.bookingConfirmed}
-        conversionRate={a?.conversionRate}
-        winRate={a?.winRate}
-      />
       <section className="leads-card">
         <header className="leads-card-header">
-          <h2 className="leads-card-title">Leads List</h2>
-          <div className="flex gap-2">
-            {canExport && (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={exportLeads.isPending}
-                onClick={() => exportLeads.mutate(params)}
-              >
-                <Download className="h-4 w-4" /> Export
-              </Button>
-            )}
-            {hasPermission('queries.create') && (
+          <div className="ml-auto flex items-center gap-2">
+            {canCreate && (
               <Link aria-label="Add Lead" to="/queries/new">
                 <Button size="sm">
                   <Plus className="h-4 w-4" /> Create
                 </Button>
               </Link>
             )}
-            {hasPermission('queries.create') && (
-              <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}>
-                <FileSpreadsheet className="h-4 w-4" /> Import CSV
-              </Button>
+            {showMoreMenu && (
+              <div className="leads-more-wrap" ref={moreMenuRef}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label="More actions"
+                  aria-haspopup="menu"
+                  aria-expanded={moreMenuOpen}
+                  aria-controls="leads-more-menu"
+                  className="leads-more-btn"
+                  onClick={() => setMoreMenuOpen((open) => !open)}
+                  onKeyDown={handleMoreMenuKeyDown}
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                {moreMenuOpen && (
+                  <div
+                    id="leads-more-menu"
+                    role="menu"
+                    aria-label="More lead actions"
+                    className="leads-more-menu"
+                    onKeyDown={handleMoreMenuKeyDown}
+                  >
+                    {canCreate && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="leads-more-item"
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          setImportOpen(true);
+                        }}
+                      >
+                        <FileSpreadsheet className="h-4 w-4" aria-hidden="true" /> Import CSV
+                      </button>
+                    )}
+                    {canExport && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="leads-more-item"
+                        disabled={exportLeads.isPending}
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          exportLeads.mutate(params);
+                        }}
+                      >
+                        {exportLeads.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        ) : (
+                          <Download className="h-4 w-4" aria-hidden="true" />
+                        )}{' '}
+                        {exportLeads.isPending ? 'Exporting…' : 'Export'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </header>
@@ -1173,8 +1197,6 @@ export function LeadsPage() {
             [
               ['travelFrom', 'Travel from'],
               ['travelTo', 'Travel to'],
-              ['followUpFrom', 'Follow-up from'],
-              ['followUpTo', 'Follow-up to'],
               ['createdFrom', 'Created from'],
               ['createdTo', 'Created to'],
             ] as Array<[string, string]>

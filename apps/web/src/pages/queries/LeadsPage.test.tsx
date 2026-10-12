@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/test/utils';
+import { QueryProvider } from '@/providers/QueryProvider';
 import { LeadsPage } from './LeadsPage';
 import { LeadFormPage } from './LeadFormPage';
 import { LeadDetailsPage } from './LeadDetailsPage';
+import indianCityData from '@/data/indian-cities.json';
 
 const authState = vi.hoisted(() => ({
+  user: { id: 'me' } as { id: string } | null,
   permissions: new Set([
     'queries.view',
     'queries.create',
@@ -18,7 +22,7 @@ const authState = vi.hoisted(() => ({
 }));
 vi.mock('@/features/auth/AuthProvider', () => ({
   useAuth: () => ({
-    user: { id: 'me' },
+    user: authState.user,
     hasPermission: (permission: string) => authState.permissions.has(permission),
   }),
 }));
@@ -115,6 +119,21 @@ const lead = {
     },
   ],
 };
+/** Pick a searchable itinerary destination in the Create lead form. */
+async function pickItineraryDestination(row: number, name: string) {
+  const input = screen.getByLabelText(`Destination ${row}`);
+  await userEvent.click(input);
+  fireEvent.change(input, { target: { value: name } });
+  await userEvent.click(await screen.findByRole('option', { name }));
+}
+/** Pick a searchable itinerary city in the Create lead form. */
+async function pickItineraryCity(row: number, name: string) {
+  const input = screen.getByLabelText(`City ${row}`);
+  await waitFor(() => expect(input).toBeEnabled());
+  await userEvent.click(input);
+  fireEvent.change(input, { target: { value: name } });
+  await userEvent.click(await screen.findByRole('option', { name }));
+}
 describe('Phase 6 lead pages', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -126,7 +145,7 @@ describe('Phase 6 lead pages', () => {
       'queries.assign',
     ]);
   });
-  it('renders analytics and the empty lead state', async () => {
+  it('renders the empty lead state without the analytics bar', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) =>
@@ -141,7 +160,11 @@ describe('Phase 6 lead pages', () => {
     );
     renderWithProviders(<LeadsPage />);
     expect(await screen.findByText('No leads found')).toBeInTheDocument();
-    expect(screen.getByText('Conversion Rate')).toBeInTheDocument();
+    // Analytics bar removed (UI only): no strip container, label, or metrics.
+    expect(document.querySelector('.leads-analytics')).toBeNull();
+    expect(screen.queryByLabelText('Lead analytics')).not.toBeInTheDocument();
+    expect(screen.queryByText('Conversion Rate')).not.toBeInTheDocument();
+    expect(screen.queryByText('Total Leads')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Add Lead/i })).toBeInTheDocument();
   });
   it('renders loading and error states', async () => {
@@ -204,6 +227,428 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Flight' }));
     expect(screen.getByRole('checkbox', { name: 'Flight' })).toBeChecked();
   });
+  it('makes departure country and city searchable in the create lead form', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    // Existing options and defaults are preserved: India + no city.
+    const country = screen.getByLabelText('Departure country');
+    expect(country).toHaveValue('India');
+    expect(country).toHaveAttribute('role', 'combobox');
+    const city = screen.getByLabelText('Departure city');
+    expect(city).toHaveValue('');
+    expect(city).toHaveAttribute('placeholder', 'Select city');
+
+    // The full country list opens on focus; typing filters it.
+    await userEvent.click(country);
+    expect(
+      screen.getByRole('listbox', { name: 'Departure country search results' }),
+    ).toBeInTheDocument();
+    fireEvent.change(country, { target: { value: 'german' } });
+    expect(screen.getByRole('option', { name: 'Germany' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'France' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: 'Germany' }));
+    expect(country).toHaveValue('Germany');
+    expect(
+      screen.queryByRole('listbox', { name: 'Departure country search results' }),
+    ).not.toBeInTheDocument();
+
+    // Non-India cities come from lookups and are searchable too.
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'delh' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Delhi' }));
+    expect(city).toHaveValue('Delhi');
+  }, 30000);
+  it('clears the departure city when the country changes to one without it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    const country = screen.getByLabelText('Departure country');
+    const city = screen.getByLabelText('Departure city');
+
+    // Pick an India-only city first.
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'chenn' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Chennai' }));
+    expect(city).toHaveValue('Chennai');
+
+    // Switching to a country without that city clears the selection.
+    await userEvent.click(country);
+    fireEvent.change(country, { target: { value: 'german' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Germany' }));
+    expect(country).toHaveValue('Germany');
+    expect(city).toHaveValue('');
+  }, 30000);
+  it('shows every departure city without codes in an unclipped portal menu', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    const city = screen.getByLabelText('Departure city');
+
+    await userEvent.click(city);
+    const menu = await screen.findByRole('listbox', {
+      name: 'Departure city search results',
+    });
+    // The menu escapes the overflow-hidden card so nothing is cut off.
+    expect(menu.closest('section')).toBeNull();
+    expect(menu.parentElement).toBe(document.body);
+    expect(menu.style.position).toBe('fixed');
+    expect(menu.className).toContain('overflow-auto');
+    // The complete dataset is reachable: every entry, plain-name labels.
+    const options = within(menu).getAllByRole('option');
+    expect(options).toHaveLength(indianCityData.entries.length);
+    expect(indianCityData.entries.length).toBeGreaterThan(4000);
+    expect(screen.getByRole('option', { name: 'Bengaluru' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Calicut' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Chandigarh' })).toBeInTheDocument();
+    // No airport/IATA-style codes in labels.
+    expect(
+      options.some((option) => / \([A-Z]{3}\)$/.test(option.textContent ?? '')),
+    ).toBe(false);
+
+    // A city at the end of the dataset can be reached and selected.
+    fireEvent.change(city, { target: { value: 'zunheboto' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Zunheboto' }));
+    expect(city).toHaveValue('Zunheboto');
+  }, 30000);
+  it('covers every Indian state and UT and disambiguates shared city names', async () => {
+    // Source integrity: 36 states/UTs, unique entries, small states present.
+    const states = new Set(indianCityData.entries.map((entry) => entry.state));
+    expect(states.size).toBe(36);
+    for (const state of ['Ladakh', 'Lakshadweep', 'Andaman and Nicobar Islands', 'Sikkim', 'Goa']) {
+      expect(states.has(state)).toBe(true);
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    const city = screen.getByLabelText('Departure city');
+
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'aurangabad' } });
+    // Same name in two states: both shown, told apart by state, no codes.
+    expect(screen.getByRole('option', { name: 'Aurangabad (Bihar)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Aurangabad (Maharashtra)' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: 'Aurangabad (Maharashtra)' }));
+    // Stored value stays a plain city name, compatible with existing records.
+    expect(city).toHaveValue('Aurangabad (Maharashtra)');
+    // Switching between same-value options updates the display too.
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'aurangabad' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Aurangabad (Bihar)' }));
+    expect(city).toHaveValue('Aurangabad (Bihar)');
+  }, 30000);
+  it('keeps previously stored departure cities selectable and submittable', async () => {
+    const destination = {
+      id: 'dest-1',
+      name: 'Singapore',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-1', sequence: 1, city: { name: 'Singapore' } }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+
+    // A legacy spelling stays selectable and submits its plain stored value.
+    const city = screen.getByLabelText('Departure city');
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'trivand' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Trivandrum' }));
+
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      expect(JSON.parse(String(post![1]!.body)).departureCity).toBe('Trivandrum');
+    });
+  }, 30000);
+  it('loads a stored departure city on the edit form with the new dataset', async () => {
+    const saved = { ...lead, departureCountry: 'India', departureCity: 'Goa' };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(saved);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // The legacy stored value still loads and resubmits unchanged.
+    expect(screen.getByLabelText('Departure city')).toHaveValue('Goa');
+  });
+  it('supports keyboard selection and Escape in the departure comboboxes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    const country = screen.getByLabelText('Departure country');
+
+    // ArrowDown + Enter picks the highlighted match.
+    await userEvent.click(country);
+    fireEvent.change(country, { target: { value: 'german' } });
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    expect(country).toHaveValue('Germany');
+
+    // Escape closes the open list without changing the value.
+    await userEvent.click(country);
+    expect(
+      screen.getByRole('listbox', { name: 'Departure country search results' }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(
+      screen.queryByRole('listbox', { name: 'Departure country search results' }),
+    ).not.toBeInTheDocument();
+    expect(country).toHaveValue('Germany');
+
+    // Clicking outside closes the list as well.
+    await userEvent.click(country);
+    expect(
+      screen.getByRole('listbox', { name: 'Departure country search results' }),
+    ).toBeInTheDocument();
+    await userEvent.click(document.body);
+    expect(
+      screen.queryByRole('listbox', { name: 'Departure country search results' }),
+    ).not.toBeInTheDocument();
+  });
+  it('submits the searched departure country and city with a new lead', async () => {
+    const destination = {
+      id: 'dest-1',
+      name: 'Singapore',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-1', sequence: 1, city: { name: 'Singapore' } }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+
+    const country = screen.getByLabelText('Departure country');
+    await userEvent.click(country);
+    fireEvent.change(country, { target: { value: 'german' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Germany' }));
+    const city = screen.getByLabelText('Departure city');
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'delh' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Delhi' }));
+
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.departureCountry).toBe('Germany');
+      expect(body.departureCity).toBe('Delhi');
+    });
+  }, 30000);
+  it('hides the Infants helper text in both create and edit modes', async () => {
+    const helperLine = () =>
+      Array.from(document.querySelectorAll('p')).find((node) =>
+        node.textContent?.includes('Child with Bed'),
+      );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    const createView = renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    // Create form: CWB/CWOB kept with no trailing separator, Infants note gone.
+    expect(helperLine()?.textContent).toBe('CWB = Child with Bed | CWOB = Child without Bed');
+    // Infant count/age fields still work in create mode.
+    expect(screen.getByLabelText('Infants')).toBeInTheDocument();
+    createView.unmount();
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(lead);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Edit form shows the same compact helper line.
+    expect(helperLine()?.textContent).toBe('CWB = Child with Bed | CWOB = Child without Bed');
+  });
+  it('hides the breadcrumb on the create lead page but keeps it on edit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    const createView = renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    expect(screen.queryByText(/Leads \/ New/)).not.toBeInTheDocument();
+    createView.unmount();
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(lead);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    expect(screen.getByText(/Leads \/ QRY-/)).toBeInTheDocument();
+  });
+  it('uses searchable departure dropdowns with saved values on edit', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(lead);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Same searchable components as Create, prefilled from the saved lead.
+    const country = screen.getByLabelText('Departure country');
+    const city = screen.getByLabelText('Departure city');
+    expect(country.tagName).toBe('INPUT');
+    expect(country).toHaveValue('India');
+    expect(city).toHaveValue('Delhi');
+
+    // Search and change the city.
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'mumb' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Mumbai' }));
+    expect(city).toHaveValue('Mumbai');
+
+    // Changing the country clears the city, as in Create mode.
+    await userEvent.click(country);
+    fireEvent.change(country, { target: { value: 'german' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Germany' }));
+    expect(country).toHaveValue('Germany');
+    expect(city).toHaveValue('');
+  });
+  it('renders identical searchable controls in create and edit modes', async () => {
+    const fieldExpectations = [
+      ['Departure country', 'Select country'],
+      ['Departure city', 'Select city'],
+      ['Destination 1', 'Select Destination'],
+    ] as const;
+    const expectConsistentControls = () => {
+      for (const [label, placeholder] of fieldExpectations) {
+        const input = screen.getByLabelText(label);
+        expect(input.tagName).toBe('INPUT');
+        expect(input).toHaveAttribute('role', 'combobox');
+        expect(input).toHaveAttribute('placeholder', placeholder);
+      }
+      // City placeholder follows row state, not the mode; the control matches.
+      const itineraryCity = screen.getByLabelText('City 1');
+      expect(itineraryCity.tagName).toBe('INPUT');
+      expect(itineraryCity).toHaveAttribute('role', 'combobox');
+      expect(['Select City', 'Select a destination first']).toContain(
+        itineraryCity.getAttribute('placeholder'),
+      );
+      // Same labels and components beyond the dropdowns.
+      expect(screen.getByRole('checkbox', { name: 'Vehicle' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Traveller names' })).toBeInTheDocument();
+      expect(screen.getByText('Services Required *')).toBeInTheDocument();
+      expect(screen.getByText('Itinerary *')).toBeInTheDocument();
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    const createView = renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    expectConsistentControls();
+    expect(screen.getByRole('button', { name: 'Create Lead' })).toBeInTheDocument();
+    createView.unmount();
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(lead);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    expectConsistentControls();
+    // Same submit-row position, mode-specific action only.
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create Lead' })).not.toBeInTheDocument();
+    // Saved values prefill the shared controls (local datasets resolve first).
+    expect(screen.getByLabelText('Departure country')).toHaveValue('India');
+    expect(screen.getByLabelText('Departure city')).toHaveValue('Delhi');
+  });
   it('hides Birth Date on the create form', async () => {
     vi.stubGlobal(
       'fetch',
@@ -232,6 +677,8 @@ describe('Phase 6 lead pages', () => {
     await screen.findByRole('heading', { name: 'Edit lead' });
     expect(screen.queryByLabelText('Birth Date')).not.toBeInTheDocument();
     expect(screen.queryByText('dd-mm-yyyy')).not.toBeInTheDocument();
+    // Email is shown on neither form; the saved value still submits.
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
     // Assign To still renders and Services Required follows it directly.
     expect(screen.getByLabelText('Assigned salesperson')).toBeInTheDocument();
     expect(screen.getByText(/Services Required/)).toBeInTheDocument();
@@ -274,7 +721,7 @@ describe('Phase 6 lead pages', () => {
     expect(screen.getByLabelText('Travel Date')).toBeInTheDocument();
     expect(screen.queryByText('Travel Month *')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Travel Date *')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Departure city (Optional)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Departure city')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
     await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
@@ -282,16 +729,8 @@ describe('Phase 6 lead pages', () => {
     expect(screen.queryByLabelText('Travel Date')).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
     await userEvent.selectOptions(screen.getByLabelText('Travel year'), year);
-    await waitFor(() => {
-      expect(
-        Array.from(screen.getByLabelText('Destination 1').querySelectorAll('option')).some(
-          (option) => option.textContent === 'Singapore',
-        ),
-      ).toBe(true);
-    });
-    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
-    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
-    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -302,6 +741,72 @@ describe('Phase 6 lead pages', () => {
       expect(body.travelStartDate).toBeNull();
       expect(body.departureCity).toBeNull();
     });
+  });
+  it('preselects the current year when Month mode is chosen in create', async () => {
+    const currentYear = String(new Date().getFullYear());
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(lookups)),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    // Month stays unselected; only the year is preselected, dynamically.
+    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('');
+    expect(screen.getByLabelText('Travel year') as HTMLSelectElement).toHaveValue(currentYear);
+  });
+  it('keeps a saved travel year untouched when editing', async () => {
+    const currentYear = new Date().getFullYear();
+    const savedYear = String(currentYear + 2);
+    const saved = { ...lead, travelStartDate: null, travelMonth: 5, travelYear: currentYear + 2 };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) {
+        if (options?.method === 'PATCH')
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: saved }),
+          } as Response;
+        return response(saved);
+      }
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Saved pair opens in Month mode with the saved year, not the current one.
+    expect(screen.getByRole('radio', { name: 'Month' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('5');
+    expect(screen.getByLabelText('Travel year') as HTMLSelectElement).toHaveValue(savedYear);
+  });
+  it('defaults an unsaved travel year to the current year when editing', async () => {
+    const currentYear = String(new Date().getFullYear());
+    const unsaved = { ...lead, travelStartDate: null, travelMonth: null, travelYear: null };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(unsaved);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // No saved year: Month mode offers the current year without inventing data.
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    expect(screen.getByLabelText('Travel month') as HTMLSelectElement).toHaveValue('');
+    expect(screen.getByLabelText('Travel year') as HTMLSelectElement).toHaveValue(currentYear);
   });
   it('creates an exact-date lead with month/year hidden and nothing invented', async () => {
     authState.permissions.delete('queries.assign');
@@ -341,16 +846,8 @@ describe('Phase 6 lead pages', () => {
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
     fireEvent.change(screen.getByLabelText('Travel Date'), { target: { value: '2026-09-10' } });
-    await waitFor(() => {
-      expect(
-        Array.from(screen.getByLabelText('Destination 1').querySelectorAll('option')).some(
-          (option) => option.textContent === 'Singapore',
-        ),
-      ).toBe(true);
-    });
-    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
-    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
-    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -548,7 +1045,9 @@ describe('Phase 6 lead pages', () => {
     );
     await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
     // Month without a year: conditional validation treats it as empty.
+    // (The year preselects to the current year, so clear it explicitly.)
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
+    await userEvent.selectOptions(screen.getByLabelText('Travel year'), '');
     await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
@@ -593,17 +1092,8 @@ describe('Phase 6 lead pages', () => {
       screen.getByLabelText('Travel year'),
       String(new Date().getFullYear()),
     );
-    await waitFor(() => {
-      const destination = screen.getByLabelText('Destination 1');
-      expect(
-        Array.from(destination.querySelectorAll('option')).some(
-          (option) => option.textContent === 'Singapore',
-        ),
-      ).toBe(true);
-    });
-    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
-    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
-    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -614,7 +1104,7 @@ describe('Phase 6 lead pages', () => {
       expect(body.services).toContain('SIGHTSEEING');
     });
   });
-  it('shows private names in destination options but stores only the destination name', async () => {
+  it('keeps destination private names searchable while storing only the destination name', async () => {
     authState.permissions.delete('queries.assign');
     const destinations = [
       {
@@ -659,23 +1149,25 @@ describe('Phase 6 lead pages', () => {
     await screen.findByRole('heading', { name: 'Create lead' });
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
-    const destSelect = screen.getByLabelText('Destination 1') as HTMLSelectElement;
-    await waitFor(() => {
-      const options = Array.from(destSelect.querySelectorAll('option')).map(
-        (option) => option.textContent,
-      );
-      // Helper labels visible in the open list; whitespace-only treated as empty.
-      expect(options).toContain('Goa Beach Escape — GBE');
-      expect(options).toContain('Singapore');
-      expect(options).toContain('Lucknow');
-      expect(options).not.toContain('Lucknow —');
-    });
-    await userEvent.selectOptions(destSelect, 'Goa Beach Escape');
-    // Closed/selected field shows only the public name, value is the plain name.
-    expect(destSelect.value).toBe('Goa Beach Escape');
-    expect(destSelect.selectedOptions[0]?.textContent).toBe('Goa Beach Escape');
-    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
-    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Goa');
+    const destInput = screen.getByLabelText('Destination 1');
+    await userEvent.click(destInput);
+    // The open list shows every destination by its public name.
+    expect(
+      await screen.findByRole('listbox', { name: 'Destination 1 search results' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Goa Beach Escape' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Singapore' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Lucknow' })).toBeInTheDocument();
+    // A private name still finds its destination through search, even with
+    // whitespace-only private names treated as empty.
+    fireEvent.change(destInput, { target: { value: 'gbe' } });
+    expect(screen.getByRole('option', { name: 'Goa Beach Escape' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Singapore' })).not.toBeInTheDocument();
+    fireEvent.change(destInput, { target: { value: '' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Goa Beach Escape' }));
+    // Closed field shows only the public name.
+    expect(destInput).toHaveValue('Goa Beach Escape');
+    await pickItineraryCity(1, 'Goa');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -686,7 +1178,279 @@ describe('Phase 6 lead pages', () => {
       expect(JSON.stringify(body)).not.toContain('GBE');
     });
   });
-  it('shows only the destination name for a stored itinerary on edit', async () => {
+  it('searches itinerary destinations and cities with keyboard support', async () => {
+    const destinations = [
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
+      },
+      {
+        id: 'dest-goa',
+        name: 'Goa',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-goa', sequence: 1, city: { name: 'Goa' } }],
+      },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/masters/destinations'))
+          return response({
+            data: destinations,
+            pagination: { page: 1, pageSize: 100, total: 2, totalPages: 2 },
+          });
+        return response(lookups);
+      }),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+
+    // Placeholders preserved; city locked until a destination is chosen.
+    const destination = screen.getByLabelText('Destination 1');
+    expect(destination).toHaveAttribute('placeholder', 'Select Destination');
+    const city = screen.getByLabelText('City 1');
+    expect(city).toBeDisabled();
+    expect(city).toHaveAttribute('placeholder', 'Select a destination first');
+
+    // Typing filters destinations; Enter picks the highlighted match.
+    await userEvent.click(destination);
+    fireEvent.change(destination, { target: { value: 'sing' } });
+    expect(screen.getByRole('option', { name: 'Singapore' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Goa' })).not.toBeInTheDocument();
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    expect(destination).toHaveValue('Singapore');
+
+    // City unlocks with the destination's cities and the same search behavior.
+    await waitFor(() => expect(city).toBeEnabled());
+    expect(city).toHaveAttribute('placeholder', 'Select City');
+    await userEvent.click(city);
+    fireEvent.change(city, { target: { value: 'sing' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
+    expect(city).toHaveValue('Singapore');
+
+    // Escape closes without changing the value; outside click does too.
+    await userEvent.click(destination);
+    expect(
+      screen.getByRole('listbox', { name: 'Destination 1 search results' }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(
+      screen.queryByRole('listbox', { name: 'Destination 1 search results' }),
+    ).not.toBeInTheDocument();
+    expect(destination).toHaveValue('Singapore');
+    await userEvent.click(destination);
+    await userEvent.click(document.body);
+    expect(
+      screen.queryByRole('listbox', { name: 'Destination 1 search results' }),
+    ).not.toBeInTheDocument();
+  });
+  it('renders itinerary dropdown menus in a portal above the itinerary card', async () => {
+    const destinations = [
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
+      },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/masters/destinations'))
+          return response({
+            data: destinations,
+            pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+          });
+        return response(lookups);
+      }),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+
+    // Destination menu escapes the overflow-hidden itinerary card.
+    await userEvent.click(screen.getByLabelText('Destination 1'));
+    const destMenu = await screen.findByRole('listbox', {
+      name: 'Destination 1 search results',
+    });
+    expect(destMenu.closest('section')).toBeNull();
+    expect(destMenu.parentElement).toBe(document.body);
+    expect(destMenu.style.position).toBe('fixed');
+    expect(destMenu.className).toContain('z-[80]');
+    // Scrollable with a bounded height, aligned to the input width.
+    expect(destMenu.className).toContain('overflow-auto');
+    expect(destMenu.style.maxHeight).not.toBe('');
+    expect(destMenu.style.width).not.toBe('');
+    await pickItineraryDestination(1, 'Singapore');
+
+    // City menu gets the same portal treatment.
+    await userEvent.click(screen.getByLabelText('City 1'));
+    const cityMenu = await screen.findByRole('listbox', { name: 'City 1 search results' });
+    expect(cityMenu.closest('section')).toBeNull();
+    expect(cityMenu.parentElement).toBe(document.body);
+    expect(cityMenu.style.position).toBe('fixed');
+    await pickItineraryCity(1, 'Singapore');
+  });
+  it('clears an invalid itinerary city when the destination changes', async () => {
+    const destinations = [
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
+      },
+      {
+        id: 'dest-goa',
+        name: 'Goa',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-goa', sequence: 1, city: { name: 'Goa' } }],
+      },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/masters/destinations'))
+          return response({
+            data: destinations,
+            pagination: { page: 1, pageSize: 100, total: 2, totalPages: 2 },
+          });
+        return response(lookups);
+      }),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
+    expect(screen.getByLabelText('City 1')).toHaveValue('Singapore');
+
+    // Switching destinations drops the now-invalid city.
+    await pickItineraryDestination(1, 'Goa');
+    expect(screen.getByLabelText('Destination 1')).toHaveValue('Goa');
+    expect(screen.getByLabelText('City 1')).toHaveValue('');
+  });
+  it('keeps a shared itinerary city when the new destination still offers it', async () => {
+    const destinations = [
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        status: 'ACTIVE',
+        cities: [
+          { id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } },
+          { id: 'dc-hub-sg', sequence: 2, city: { name: 'Hubtown' } },
+        ],
+      },
+      {
+        id: 'dest-goa',
+        name: 'Goa',
+        status: 'ACTIVE',
+        cities: [
+          { id: 'dc-goa', sequence: 1, city: { name: 'Goa' } },
+          { id: 'dc-hub-goa', sequence: 2, city: { name: 'Hubtown' } },
+        ],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: destinations,
+          pagination: { page: 1, pageSize: 100, total: 2, totalPages: 2 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Hubtown');
+    // Hubtown belongs to Goa too, so it survives the destination change.
+    await pickItineraryDestination(1, 'Goa');
+    expect(screen.getByLabelText('Destination 1')).toHaveValue('Goa');
+    expect(screen.getByLabelText('City 1')).toHaveValue('Hubtown');
+
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.itinerary).toHaveLength(1);
+      expect(body.itinerary[0]).toMatchObject({ country: 'Goa', destination: 'Hubtown' });
+    });
+  }, 30000);
+  it('supports searchable destinations and cities on rows added with Add More', async () => {
+    const destinations = [
+      {
+        id: 'dest-sg',
+        name: 'Singapore',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
+      },
+      {
+        id: 'dest-goa',
+        name: 'Goa',
+        status: 'ACTIVE',
+        cities: [{ id: 'dc-goa', sequence: 1, city: { name: 'Goa' } }],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: destinations,
+          pagination: { page: 1, pageSize: 100, total: 2, totalPages: 2 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(lookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Add More' })[0]!);
+    expect(screen.getByLabelText('Destination 2')).toHaveAttribute(
+      'placeholder',
+      'Select Destination',
+    );
+    expect(screen.getByLabelText('City 2')).toHaveAttribute(
+      'placeholder',
+      'Select a destination first',
+    );
+    await pickItineraryDestination(2, 'Goa');
+    await pickItineraryCity(2, 'Goa');
+
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.itinerary).toHaveLength(2);
+      expect(body.itinerary[0]).toMatchObject({ country: 'Singapore', destination: 'Singapore' });
+      expect(body.itinerary[1]).toMatchObject({ country: 'Goa', destination: 'Goa' });
+    });
+  });
+  it('loads the stored itinerary into searchable fields on edit', async () => {
     const editLead = {
       ...lead,
       travelMonth: null,
@@ -754,18 +1518,27 @@ describe('Phase 6 lead pages', () => {
       { route: `/queries/${editLead.id}/edit` },
     );
     await screen.findByRole('heading', { name: 'Edit lead' });
-    const destSelect = (await screen.findByLabelText(
-      'Destination 1',
-    )) as HTMLSelectElement;
-    await waitFor(() => expect(destSelect.value).toBe('Goa Beach Escape'));
-    // Stored destination loads correctly; selected field shows the public name only.
-    expect(destSelect.selectedOptions[0]?.textContent).toBe('Goa Beach Escape');
-    // Unselected options still carry the internal helper.
-    const options = Array.from(destSelect.querySelectorAll('option')).map(
-      (option) => option.textContent,
-    );
-    expect(options).toContain('Singapore');
-    expect(options).toContain('Lucknow — avd');
+    // Stored values prefill the searchable fields once options load.
+    const destination = screen.getByLabelText('Destination 1');
+    await waitFor(() => expect(destination).toHaveValue('Goa Beach Escape'));
+    expect(screen.getByLabelText('City 1')).toHaveValue('Goa');
+    // Private names stay searchable without leaking into stored values.
+    await userEvent.click(destination);
+    fireEvent.change(destination, { target: { value: 'avd' } });
+    expect(screen.getByRole('option', { name: 'Lucknow' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    // Changing the destination clears the city; saving keeps payload formats.
+    await pickItineraryDestination(1, 'Singapore');
+    expect(screen.getByLabelText('City 1')).toHaveValue('');
+    await pickItineraryCity(1, 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(patch).toBeDefined();
+      const body = JSON.parse(String(patch![1]!.body));
+      expect(body.itinerary[0]).toMatchObject({ country: 'Singapore', destination: 'Singapore' });
+      expect(JSON.stringify(body)).not.toContain('GBE');
+    });
   });
   it('hides Visa in the edit form and preserves a stored Visa selection on save', async () => {
     const editLead = {
@@ -805,6 +1578,8 @@ describe('Phase 6 lead pages', () => {
       expect(patch).toBeDefined();
       const body = JSON.parse(String(patch![1]!.body));
       expect(body.services).toContain('VISA');
+      // No visible Email field, yet the saved address still submits.
+      expect(body.email).toBe('aarav@example.test');
     });
   });
   it('keeps the minimum-one-service validation', async () => {
@@ -818,36 +1593,41 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'SIGHTSEEING' }));
     expect(await screen.findByText('Select at least one service.')).toBeInTheDocument();
   });
-  it('autofills the form from the phone search for an existing lead', async () => {
-    authState.permissions.delete('queries.assign');
-    const searchResult = {
-      id: lead.id,
-      queryNumber: lead.queryNumber,
-      customerName: lead.customerName,
-      phone: lead.phone,
-      alternatePhone: null,
-      email: lead.email,
-      dateOfBirth: null,
-      departureCity: lead.departureCity,
-    };
+  it('nests Services Required under Lead Information beside Travel Details', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    const leadInfo = screen.getByText('Lead Information');
+    const services = screen.getByText('Services Required *');
+    const travel = screen.getByText('Travel Details');
+    const itinerary = screen.getByText('Itinerary *');
+    const follows = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    // Left column: Lead Information then Services; right column: Travel
+    // Details; Itinerary full-width below the grid.
+    expect(follows(leadInfo, services)).toBe(true);
+    expect(follows(services, travel)).toBe(true);
+    expect(follows(travel, itinerary)).toBe(true);
+  });
+
+  it('starts the Create Lead form directly at Name with no phone-search UI', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes('search-by-phone')) return response([searchResult]);
-        if (url.endsWith(`/queries/${lead.id}`)) return response(lead);
-        return response(lookups);
-      }),
+      vi.fn(async () => response(lookups)),
     );
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
-    // The form is empty before the search.
+    // Email is shown on neither form.
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
+    // The existing-lead phone search is removed: no label, input, button or helper text.
+    expect(screen.queryByText('Search Existing Lead by Phone')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Search existing lead by phone')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Search existing leads by phone number to auto-fill form'),
+    ).not.toBeInTheDocument();
+    // The form starts directly with the lead fields, beginning with Name.
     expect(screen.getByLabelText('Name')).toHaveValue('');
-    // Search by phone and confirm the autofill.
-    await userEvent.type(screen.getByLabelText('Search existing lead by phone'), '98765');
-    await userEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Aarav Mehta'));
-    expect(screen.getByLabelText('Phone')).toHaveValue('+91 98765 43210');
+    expect(screen.getByLabelText('Phone')).toBeInTheDocument();
   });
   it('synchronizes search, filters, sorting and pagination with the server query string', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
@@ -886,7 +1666,7 @@ describe('Phase 6 lead pages', () => {
     expect(screen.getByLabelText('Travel from')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Hot 1/ })).toBeInTheDocument();
   });
-  it('renders lead details, notes, follow-ups and timeline with permission-aware actions', async () => {
+  it('renders lead details, notes and timeline with permission-aware actions (follow-ups hidden)', async () => {
     authState.permissions = new Set(['queries.view']);
     vi.stubGlobal(
       'fetch',
@@ -1021,7 +1801,7 @@ describe('Phase 6 lead pages', () => {
       { route: `/queries/${lead.id}` },
     );
     expect(await screen.findByRole('heading', { name: 'Aarav Mehta' })).toBeInTheDocument();
-    // Overview is the default tab; action controls are gated off by permissions.
+    // Lead Information is the default tab; action controls are gated off by permissions.
     expect(screen.queryByRole('button', { name: 'Delete Lead' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
     expect(screen.queryByText('Reassign lead')).not.toBeInTheDocument();
@@ -1029,8 +1809,9 @@ describe('Phase 6 lead pages', () => {
     // Sectioned content now lives on its own tab.
     await userEvent.click(screen.getByRole('button', { name: 'Notes' }));
     expect(await screen.findByText('Customer prefers morning flights')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Follow-ups' }));
-    expect(await screen.findByText('Confirm hotel category')).toBeInTheDocument();
+    // Follow-ups is a dead feature: the tab is hidden from the UI.
+    expect(screen.queryByRole('button', { name: 'Follow-ups' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Confirm hotel category')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     expect(await screen.findByText('Lead created')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Quotations' }));
@@ -1097,7 +1878,7 @@ describe('Phase 17 lead list enrichment', () => {
     ]);
   });
 
-  it('renders lead info, quotation and notes columns with the four row actions', async () => {
+  it('renders lead info, quotation and notes columns with the three row actions', async () => {
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     // The year is hidden in the list: QRY-2026-000001 renders as QRY-000001.
@@ -1111,14 +1892,50 @@ describe('Phase 17 lead list enrichment', () => {
     // Quotation column is action-only: no status badge is shown.
     expect(screen.queryByText('Accepted')).not.toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /^View$/ }).length).toBeGreaterThan(0);
-    // The Action column exposes only the four approved actions.
+    // The Action column exposes only the three approved actions.
     expect(screen.getAllByRole('link', { name: 'View lead' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Edit lead' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Delete lead' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('link', { name: 'Create follow-up' }).length).toBeGreaterThan(0);
+    // Follow-ups is a dead feature: hidden from the UI.
+    expect(screen.queryByRole('link', { name: 'Create follow-up' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Convert to booking' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'View booking' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Create quotation' })).not.toBeInTheDocument();
+  });
+
+  it('shows the departure city when set and hides the city badge without one', async () => {
+    const withoutCity = {
+      ...enrichedLead,
+      id: '22222222-2222-4222-8222-222222222222',
+      queryNumber: 'QRY-2026-000002',
+      customerName: 'No City Lead',
+      departureCity: null,
+    };
+    const blankCity = {
+      ...enrichedLead,
+      id: '33333333-3333-4333-8333-333333333333',
+      queryNumber: 'QRY-2026-000003',
+      customerName: 'Blank City Lead',
+      departureCity: '   ',
+    };
+    stubLeadList([enrichedLead, withoutCity, blankCity]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('Aarav Mehta');
+
+    const rowOf = (name: string) => screen.getByText(name).closest('tr') as HTMLElement;
+    // Lead with a city: badge, dates and counts all visible.
+    const withCity = rowOf('Aarav Mehta');
+    expect(within(withCity).getByText('Delhi')).toBeInTheDocument();
+    expect(within(withCity).getByText(/2 Adults/)).toBeInTheDocument();
+    expect(within(withCity).getByText('Aug 15, 2026')).toBeInTheDocument();
+    // Leads without a city: no N/A, no city badge; dates and counts remain.
+    for (const name of ['No City Lead', 'Blank City Lead']) {
+      const row = rowOf(name);
+      expect(within(row).queryByText('N/A')).not.toBeInTheDocument();
+      expect(row.querySelector('.leads-traveller-block--city')).toBeNull();
+      expect(within(row).getByText(/2 Adults/)).toBeInTheDocument();
+      expect(within(row).getByText('Aug 15, 2026')).toBeInTheDocument();
+    }
   });
 
   it('keeps the Booking column out of the desktop table and the Action column clean once booked', async () => {
@@ -1149,11 +1966,12 @@ describe('Phase 17 lead list enrichment', () => {
     // The Action column never adds booking/convert shortcuts.
     expect(screen.queryByRole('link', { name: 'Convert to booking' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'View booking' })).not.toBeInTheDocument();
-    // The four approved actions remain.
+    // The three approved actions remain.
     expect(screen.getAllByRole('link', { name: 'View lead' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Edit lead' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Delete lead' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('link', { name: 'Create follow-up' }).length).toBeGreaterThan(0);
+    // Follow-ups is a dead feature: hidden from the UI.
+    expect(screen.queryByRole('link', { name: 'Create follow-up' })).not.toBeInTheDocument();
   });
 
   it('selects rows and performs a bulk assignment', async () => {
@@ -1190,19 +2008,65 @@ describe('Phase 17 lead list enrichment', () => {
     );
   });
 
-  it('shows the export button only with export permission', async () => {
+  it('shows the export menu item only with export permission', async () => {
     stubLeadList([enrichedLead]);
     const view = renderWithProviders(<LeadsPage />);
     await screen.findAllByText('QRY-000001');
-    expect(screen.getByRole('button', { name: /Export/ })).toBeInTheDocument();
+    // Export lives inside the More actions menu, next to Create.
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    expect(screen.getByRole('menuitem', { name: /Export/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Import CSV/i })).toBeInTheDocument();
     view.unmount();
     authState.permissions = new Set(['queries.view']);
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('QRY-000001');
-    expect(screen.queryByRole('button', { name: /Export/ })).not.toBeInTheDocument();
+    // Without create/export permissions there is no More menu and no Export.
+    expect(screen.queryByRole('button', { name: /More actions/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Export/ })).not.toBeInTheDocument();
     // Without assign permission there are no selection checkboxes.
     expect(screen.queryByLabelText('Select page')).not.toBeInTheDocument();
+  });
+
+  it('keeps Create visible while Export and Import CSV live in the More menu', async () => {
+    stubLeadList([enrichedLead]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('QRY-000001');
+    expect(screen.getByRole('link', { name: /Add Lead/i })).toBeInTheDocument();
+    // No always-visible Export / Import CSV buttons.
+    expect(
+      screen.queryByRole('button', { name: /^Export$/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Import CSV/i }),
+    ).not.toBeInTheDocument();
+    const more = screen.getByRole('button', { name: /More actions/i });
+    expect(more).toHaveAttribute('aria-haspopup', 'menu');
+    await userEvent.click(more);
+    expect(screen.getByRole('menu', { name: /More lead actions/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Import CSV/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Export/ })).toBeInTheDocument();
+  });
+
+  it('closes the More menu after selecting an action and on Escape', async () => {
+    stubLeadList([enrichedLead]);
+    renderWithProviders(<LeadsPage />);
+    await screen.findAllByText('QRY-000001');
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    expect(screen.getByRole('menu', { name: /More lead actions/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
+    // Selecting Import CSV closes the menu and opens the import modal.
+    expect(screen.queryByRole('menu', { name: /More lead actions/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Import Leads' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    expect(screen.getByRole('menu', { name: /More lead actions/i })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('menu', { name: /More lead actions/i }),
+      ).not.toBeInTheDocument(),
+    );
   });
 });
 
@@ -1344,21 +2208,25 @@ describe('Phase 17 lead workspace tabs', () => {
     ]);
   });
 
-  it('defaults to the Overview tab and switches between tabs', async () => {
+  it('defaults to the Lead Information tab and switches between tabs', async () => {
     stubWorkspace();
     renderWorkspace();
     expect(await screen.findByRole('heading', { name: 'Aarav Mehta' })).toBeInTheDocument();
-    // Overview shows the lead-actions panel.
+    // Lead Information shows the lead-actions panel.
     expect(screen.getByText('Lead actions')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Travel & Itinerary' }));
-    expect(await screen.findByText('Travel and travellers')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Lead Information' }));
+    expect(await screen.findByText('Travel Details')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Notes' }));
     expect(await screen.findByText('Prefers morning flights')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Follow-ups' }));
-    expect(await screen.findByText('Confirm hotel category')).toBeInTheDocument();
+    // Follow-ups is a dead feature: the tab is hidden from the UI.
+    expect(screen.queryByRole('button', { name: 'Follow-ups' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Confirm hotel category')).not.toBeInTheDocument();
+
+    // Booking is removed from Lead Details navigation.
+    expect(screen.queryByRole('button', { name: 'Booking' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     expect(await screen.findByText('Lead created')).toBeInTheDocument();
@@ -1374,13 +2242,39 @@ describe('Phase 17 lead workspace tabs', () => {
     expect(convert).toHaveAttribute('href', '/quotations/quote-1/convert-to-booking');
   });
 
-  it('explains the accepted-quotation rule on the Booking tab when unbooked', async () => {
+  it('hides the Booking tab from Lead Details while keeping quotation conversion', async () => {
     stubWorkspace();
     renderWorkspace();
     await screen.findByRole('heading', { name: 'Aarav Mehta' });
-    await userEvent.click(screen.getByRole('button', { name: 'Booking' }));
-    expect(await screen.findByText(/created from an accepted quotation/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Convert to booking' })).toBeInTheDocument();
+    // Booking UI is removed from Lead Details; the backend and the
+    // accepted-quotation conversion rule are untouched.
+    expect(screen.queryByRole('button', { name: 'Booking' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/created from an accepted quotation/i)).not.toBeInTheDocument();
+    // Conversion remains available through the Quotations tab.
+    await userEvent.click(screen.getByRole('button', { name: 'Quotations' }));
+    expect(await screen.findByRole('link', { name: 'QT-2026-000001' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Convert to booking' })).toBeInTheDocument();
+  });
+
+  it('shows a unified Lead Information tab with contact, travel and commercial sections', async () => {
+    stubWorkspace();
+    renderWorkspace();
+    await screen.findByRole('heading', { name: 'Aarav Mehta' });
+    expect(screen.getByText('Contact & Lead')).toBeInTheDocument();
+    expect(screen.getByText('Travel Details')).toBeInTheDocument();
+    expect(screen.getByText(/Bangkok/)).toBeInTheDocument();
+    expect(screen.getByText('Commercial Information')).toBeInTheDocument();
+    expect(screen.getByText('Latest quotation')).toBeInTheDocument();
+    // Old Overview/Travel tabs are gone; history lives under Timeline.
+    expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Travel & Itinerary' })).not.toBeInTheDocument();
+    // No Booking, Follow-ups, reminder or Priority UI anywhere on the page.
+    expect(screen.queryByRole('button', { name: 'Booking' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Follow-ups' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/priority/i)).not.toBeInTheDocument();
+    // Full history remains available under Timeline.
+    await userEvent.click(screen.getByRole('button', { name: 'Timeline' }));
+    expect(await screen.findByText('Lead created')).toBeInTheDocument();
   });
 });
 
@@ -2223,16 +3117,15 @@ describe('Lead services column icons', () => {
     }
   });
 
-  it('renders only the four approved row actions alongside the icon chips', async () => {
+  it('renders only the three approved row actions alongside the icon chips', async () => {
     stubLeadList([servicesLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     expect(screen.getAllByRole('link', { name: 'View lead' }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole('link', { name: 'Edit lead' }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole('button', { name: 'Delete lead' }).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByRole('link', { name: 'Create follow-up' }).length).toBeGreaterThanOrEqual(
-      1,
-    );
+    // Follow-ups is a dead feature: hidden from the UI.
+    expect(screen.queryByRole('link', { name: 'Create follow-up' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Convert to booking' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'View booking' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Create quotation' })).not.toBeInTheDocument();
@@ -2301,10 +3194,11 @@ describe('Lead actions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The Leads Action column is strictly limited to View | Edit | Delete | Follow-up
+// The Leads Action column is strictly limited to View | Edit | Delete.
+// Follow-up is a dead feature, hidden from the UI.
 // ---------------------------------------------------------------------------
 
-describe('Lead row actions are limited to the four approved actions', () => {
+describe('Lead row actions are limited to the three approved actions', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     authState.permissions = new Set([
@@ -2333,17 +3227,12 @@ describe('Lead row actions are limited to the four approved actions', () => {
     );
   }
 
-  it('renders exactly View, Edit, Delete and Follow-up in that order', async () => {
+  it('renders exactly View, Edit and Delete in that order', async () => {
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const cell = actionsCell();
-    expect(actionNames(cell)).toEqual([
-      'View lead',
-      'Edit lead',
-      'Delete lead',
-      'Create follow-up',
-    ]);
+    expect(actionNames(cell)).toEqual(['View lead', 'Edit lead', 'Delete lead']);
   });
 
   it('never renders quotation or booking actions in the Action column', async () => {
@@ -2381,12 +3270,7 @@ describe('Lead row actions are limited to the four approved actions', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const cell = actionsCell();
-    expect(actionNames(cell)).toEqual([
-      'View lead',
-      'Edit lead',
-      'Delete lead',
-      'Create follow-up',
-    ]);
+    expect(actionNames(cell)).toEqual(['View lead', 'Edit lead', 'Delete lead']);
   });
 
   it('hides Edit without the update permission', async () => {
@@ -2395,7 +3279,7 @@ describe('Lead row actions are limited to the four approved actions', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const cell = actionsCell();
-    expect(actionNames(cell)).toEqual(['View lead', 'Delete lead', 'Create follow-up']);
+    expect(actionNames(cell)).toEqual(['View lead', 'Delete lead']);
   });
 
   it('hides Delete without the delete permission', async () => {
@@ -2404,17 +3288,20 @@ describe('Lead row actions are limited to the four approved actions', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const cell = actionsCell();
-    expect(actionNames(cell)).toEqual(['View lead', 'Edit lead', 'Create follow-up']);
+    expect(actionNames(cell)).toEqual(['View lead', 'Edit lead']);
   });
 
-  it('hides Follow-up when the lead does not permit it', async () => {
+  it('never renders the Follow-up action even when the lead permits it (dead feature)', async () => {
     stubLeadList([
-      { ...enrichedLead, actions: { ...enrichedLead.actions, canAddFollowUp: false } },
+      { ...enrichedLead, actions: { ...enrichedLead.actions, canAddFollowUp: true } },
     ]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     const cell = actionsCell();
     expect(actionNames(cell)).toEqual(['View lead', 'Edit lead', 'Delete lead']);
+    expect(
+      screen.queryByRole('link', { name: 'Create follow-up' }),
+    ).not.toBeInTheDocument();
   });
 
   it('does not introduce an overflow menu in the Action column', async () => {
@@ -2457,17 +3344,12 @@ describe('Lead row actions are limited to the four approved actions', () => {
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
     expect(screen.getAllByRole('link', { name: /\+ New/ }).length).toBeGreaterThan(0);
-    // The Action column remains limited to the four approved actions.
+    // The Action column remains limited to the three approved actions.
     const cell = actionsCell();
-    expect(actionNames(cell)).toEqual([
-      'View lead',
-      'Edit lead',
-      'Delete lead',
-      'Create follow-up',
-    ]);
+    expect(actionNames(cell)).toEqual(['View lead', 'Edit lead', 'Delete lead']);
   });
 
-  it('keeps the four actions on the single table with no card duplicate or extra menu', async () => {
+  it('keeps the three actions on the single table with no card duplicate or extra menu', async () => {
     stubLeadList([enrichedLead]);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
@@ -2476,7 +3358,8 @@ describe('Lead row actions are limited to the four approved actions', () => {
     expect(screen.getAllByRole('link', { name: 'View lead' }).length).toBe(1);
     expect(screen.getAllByRole('link', { name: 'Edit lead' }).length).toBe(1);
     expect(screen.getAllByRole('button', { name: 'Delete lead' }).length).toBe(1);
-    expect(screen.getAllByRole('link', { name: 'Create follow-up' }).length).toBe(1);
+    // Follow-ups is a dead feature: hidden from the UI.
+    expect(screen.queryByRole('link', { name: 'Create follow-up' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     // The single table is horizontally scrollable on small screens.
     const tableScroll = document.querySelector('.leads-table-scroll') as HTMLElement;
@@ -2542,23 +3425,25 @@ describe('Admin lead self-assignment (frontend)', () => {
     expect(assigneeOptionTexts().filter((text) => text === 'Owner (You)')).toHaveLength(1);
   });
 
-  it('shows the updated helper text', async () => {
+  it('shows no helper text under Assign To', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => response(teamLookups)),
     );
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
+    // The helper copy is removed; the Assign To dropdown itself remains.
     expect(
-      screen.getByText(
+      screen.queryByText(
         'Assign this lead to yourself or another team member. This field is required.',
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(
         'As an admin, you must assign this lead to a team member. This field is required.',
       ),
     ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Assigned salesperson')).toBeInTheDocument();
   });
 
   it('creates a lead assigned to the logged-in Admin when they select themselves', async () => {
@@ -2590,17 +3475,8 @@ describe('Admin lead self-assignment (frontend)', () => {
       screen.getByLabelText('Travel year'),
       String(new Date().getFullYear()),
     );
-    await waitFor(() => {
-      const destinationEl = screen.getByLabelText('Destination 1');
-      expect(
-        Array.from(destinationEl.querySelectorAll('option')).some(
-          (option) => option.textContent === 'Singapore',
-        ),
-      ).toBe(true);
-    });
-    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
-    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
-    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -2610,19 +3486,164 @@ describe('Admin lead self-assignment (frontend)', () => {
     });
   });
 
-  it('keeps the Assign To field required', async () => {
+  it('preselects the logged-in creator and keeps the Assign To field required', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => response(teamLookups)),
     );
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
-    // Fill the browser-required fields so submission is not blocked by native
-    // validation, but leave Assign To empty.
+    // Assign To defaults to the current user immediately, without manual selection.
+    expect(screen.getByLabelText('Assigned salesperson')).toHaveValue('me');
+    // The Manual Assignment radio and Assign Type label are removed.
+    expect(screen.queryByText('Assign Type')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /manual assignment/i })).not.toBeInTheDocument();
+    // Clearing it re-arms the required validation on submit.
+    await userEvent.selectOptions(screen.getByLabelText('Assigned salesperson'), '');
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     expect(await screen.findByText(/Assign To is required/)).toBeInTheDocument();
+  });
+
+  it('submits the preselected creator when Assign To is left untouched', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(teamLookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    expect(screen.getByLabelText('Assigned salesperson')).toHaveValue('me');
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '9');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Travel year'),
+      String(new Date().getFullYear()),
+    );
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.assignedToId).toBe('me');
+    });
+  });
+
+  it('applies the default once a late session and late options both arrive', async () => {
+    authState.user = null;
+    try {
+      let resolveLookups!: (value: Response) => void;
+      const lookupsGate = new Promise<Response>((resolve) => {
+        resolveLookups = resolve;
+      });
+      // Team list WITHOUT the current user: the fallback "(You)" option is the
+      // only valid target for the default.
+      const lookupsWithoutMe = {
+        ...teamLookups,
+        assignableUsers: [{ id: 'alice', fullName: 'Amit Kumar', username: 'amit' }],
+      };
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.includes('/lookups')) return lookupsGate;
+          if (url.includes('/masters/destinations'))
+            return response({
+              data: [],
+              pagination: { page: 1, pageSize: 100, total: 0, totalPages: 1 },
+            });
+          return response(teamLookups);
+        }),
+      );
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const renderTree = () => (
+        <QueryProvider client={client}>
+          <MemoryRouter initialEntries={['/']}>
+            <LeadFormPage />
+          </MemoryRouter>
+        </QueryProvider>
+      );
+      const view = render(renderTree());
+      await screen.findByRole('heading', { name: 'Create lead' });
+      expect(screen.getByLabelText('Assigned salesperson')).toHaveValue('');
+
+      // Options arrive first, still no session: nothing selected.
+      resolveLookups(response(lookupsWithoutMe));
+      await waitFor(() =>
+        expect(screen.getByLabelText('Assigned salesperson')).toHaveValue(''),
+      );
+
+      // Session arrives late (as a fresh query-cache update would deliver it):
+      // the tree rerenders and the default lands on the fallback option.
+      authState.user = { id: 'me' };
+      view.rerender(renderTree());
+      await waitFor(() =>
+        expect(screen.getByLabelText('Assigned salesperson')).toHaveValue('me'),
+      );
+    } finally {
+      authState.user = { id: 'me' };
+    }
+  });
+
+  it('saves the manually chosen team member instead of the preselected creator', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/masters/destinations'))
+        return response({
+          data: [destination],
+          pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+        });
+      if (url.endsWith('/queries') && options?.method === 'POST')
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ success: true, data: lead }),
+        } as Response;
+      return response(teamLookups);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    expect(screen.getByLabelText('Assigned salesperson')).toHaveValue('me');
+
+    // Manual pick is never overridden by the default.
+    await waitFor(() => expect(assigneeOptionTexts()).toContain('Amit Kumar'));
+    await userEvent.selectOptions(screen.getByLabelText('Assigned salesperson'), 'alice');
+    expect(screen.getByLabelText('Assigned salesperson')).toHaveValue('alice');
+    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
+    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
+    await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    await userEvent.selectOptions(screen.getByLabelText('Travel month'), '9');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Travel year'),
+      String(new Date().getFullYear()),
+    );
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
+      expect(post).toBeDefined();
+      const body = JSON.parse(String(post![1]!.body));
+      expect(body.assignedToId).toBe('alice');
+    });
   });
 });
 
@@ -2902,7 +3923,7 @@ describe('Dense operational Leads table structure', () => {
     ]);
   });
 
-  it('renders the compact analytics strip with the four operational metrics', async () => {
+  it('does not render the analytics strip on the Leads page', async () => {
     const analyticsData = {
       ...analytics,
       totalLeads: 12,
@@ -2913,19 +3934,17 @@ describe('Dense operational Leads table structure', () => {
     stubLeadList([enrichedLead], analyticsData);
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
-    const strip = document.querySelector('.leads-analytics');
-    expect(strip).not.toBeNull();
-    // Four metric badges only.
-    expect(within(strip as HTMLElement).getByText('Total Leads')).toBeInTheDocument();
-    expect(within(strip as HTMLElement).getByText('Booking Confirmed')).toBeInTheDocument();
-    expect(within(strip as HTMLElement).getByText('Conversion Rate')).toBeInTheDocument();
-    expect(within(strip as HTMLElement).getByText('Win Rate')).toBeInTheDocument();
-    // The broader set of metrics is intentionally not shown in the strip.
-    expect(within(strip as HTMLElement).queryByText('Follow-Ups Due')).not.toBeInTheDocument();
-    expect(within(strip as HTMLElement).queryByText('New Leads')).not.toBeInTheDocument();
+    // The Analytics bar was removed from the Leads page (UI only).
+    // Note: "Booking Confirmed" still appears as a stage filter chip, which is
+    // unrelated to the removed analytics strip.
+    expect(document.querySelector('.leads-analytics')).toBeNull();
+    expect(screen.queryByLabelText('Lead analytics')).not.toBeInTheDocument();
+    expect(screen.queryByText('Total Leads')).not.toBeInTheDocument();
+    expect(screen.queryByText('Conversion Rate')).not.toBeInTheDocument();
+    expect(screen.queryByText('Win Rate')).not.toBeInTheDocument();
   });
 
-  it('renders the compact Leads List card, toolbar and filter panel', async () => {
+  it('renders the compact Leads card, toolbar and filter panel', async () => {
     stubLeadList([enrichedLead], {
       ...analytics,
       totalLeads: 12,
@@ -2937,7 +3956,11 @@ describe('Dense operational Leads table structure', () => {
     });
     renderWithProviders(<LeadsPage />);
     await screen.findAllByText('Aarav Mehta');
-    expect(screen.getByText('Leads List')).toBeInTheDocument();
+    // Card title and page breadcrumb were removed; heading and tools remain.
+    expect(screen.queryByText('Leads List')).not.toBeInTheDocument();
+    expect(screen.queryByText('Home / Leads')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Leads' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Add Lead/i })).toBeInTheDocument();
     expect(screen.getByLabelText('Search leads')).toBeInTheDocument();
     expect(screen.getByLabelText('Assigned user')).toBeInTheDocument();
     expect(screen.getByLabelText('Hot leads only')).toBeInTheDocument();
@@ -3454,7 +4477,8 @@ describe('Lead date-range filter', () => {
       route: '/?dateType=CREATED_DATE&dateFrom=2026-08-01&dateTo=2026-08-07',
     });
     await screen.findAllByText('Aarav Mehta');
-    await userEvent.click(screen.getByRole('button', { name: /Export/ }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Export/ }));
     await waitFor(() =>
       expect(
         mock.mock.calls.some(([url]) => {
@@ -3517,10 +4541,13 @@ describe('Lead CSV import', () => {
     );
   });
 
-  it('renders an Import CSV button and opens the import modal', async () => {
+  it('offers Import CSV inside the More actions menu and opens the import modal', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    const button = screen.getByRole('button', { name: /Import CSV/i });
+    // Import CSV is no longer an always-visible button; it lives in the menu.
+    expect(screen.queryByRole('menuitem', { name: /Import CSV/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    const button = screen.getByRole('menuitem', { name: /Import CSV/i });
     await userEvent.click(button);
     expect(screen.getByRole('dialog', { name: 'Import Leads' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download Sample CSV/i })).toBeInTheDocument();
@@ -3529,7 +4556,8 @@ describe('Lead CSV import', () => {
   it('accepts a CSV file and shows the column-mapping step with an auto-mapped preview', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     const file = new File(
       ['Customer Name,Phone,Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -3548,7 +4576,8 @@ describe('Lead CSV import', () => {
   it('enables the modal Import button when required fields are auto-mapped and a valid row exists', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     const file = new File(
       ['Name,Phone,Lead Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -3570,7 +4599,8 @@ describe('Lead CSV import', () => {
   it('keeps the modal Import button disabled when a required field is not mapped', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     const file = new File(['Name,Phone\nAarav Mehta,+91 98765 43210\n'], 'leads.csv', {
       type: 'text/csv',
@@ -3590,7 +4620,8 @@ describe('Lead CSV import', () => {
   it('disables the modal Import button immediately when a required mapping is set to Ignore', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     const file = new File(
       ['Name,Phone,Lead Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -3637,7 +4668,8 @@ describe('Lead CSV import', () => {
     );
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
     const file = new File(
       [
         'Name,Phone,Lead Source,Origin City,Excluded\nAarav Mehta,+91 98765 43210,Referral,Hyderabad,Do not save\n',
@@ -3711,7 +4743,8 @@ describe('Lead CSV import', () => {
     );
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
     const file = new File(
       ['Name,Phone,Lead Source,Email\nAarav Mehta,+91 98765 43210,Referral,invalid-email\n'],
       'leads.csv',
@@ -3743,7 +4776,8 @@ describe('Lead CSV import', () => {
   it('re-enables the modal Import button when a required mapping is restored', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     const file = new File(
       ['Name,Phone,Lead Source\nAarav Mehta,+91 98765 43210,Referral\n'],
@@ -3768,7 +4802,8 @@ describe('Lead CSV import', () => {
   it('keeps the modal Import button disabled when required fields are mapped but no row is importable', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     // All three mapped, but the only row has a blank phone.
     const file = new File(['Name,Phone,Lead Source\nAarav Mehta,,Referral\n'], 'leads.csv', {
@@ -3785,7 +4820,8 @@ describe('Lead CSV import', () => {
   it('rejects a non-CSV file', async () => {
     renderWithProviders(<LeadsPage />);
     await screen.findByText('No leads found');
-    await userEvent.click(screen.getByRole('button', { name: /Import CSV/i }));
+    await userEvent.click(screen.getByRole('button', { name: /More actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Import CSV/i }));
 
     const file = new File(['not a csv'], 'notes.txt', { type: 'text/plain' });
     fireEvent.change(screen.getByLabelText(/Choose a CSV file/i), { target: { files: [file] } });
@@ -3823,17 +4859,8 @@ describe('Lead traveller names', () => {
   async function fillRequired() {
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
-    await waitFor(() => {
-      const destinationEl = screen.getByLabelText('Destination 1');
-      expect(
-        Array.from(destinationEl.querySelectorAll('option')).some(
-          (option) => option.textContent === 'Singapore',
-        ),
-      ).toBe(true);
-    });
-    await userEvent.selectOptions(screen.getByLabelText('Destination 1'), 'Singapore');
-    await waitFor(() => expect(screen.getByLabelText('City 1')).toBeEnabled());
-    await userEvent.selectOptions(screen.getByLabelText('City 1'), 'Singapore');
+    await pickItineraryDestination(1, 'Singapore');
+    await pickItineraryCity(1, 'Singapore');
   }
 
   async function postedBody(fetchMock: ReturnType<typeof stubCreate>) {
@@ -3851,22 +4878,73 @@ describe('Lead traveller names', () => {
     authState.permissions = new Set(['queries.view', 'queries.create', 'queries.update', 'queries.delete']);
   });
 
+  it('hides traveller name inputs until the section is expanded', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    // Collapsed by default: header toggle present, panel hidden.
+    const toggle = screen.getByRole('button', { name: /traveller names/i });
+    const panel = () => document.getElementById('traveller-names-panel');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', 'traveller-names-panel');
+    expect(panel()).toHaveAttribute('hidden');
+    // The Travelers summary stays visible above the collapsible section.
+    const summaryHeading = screen.getByText('Travelers:');
+    expect(
+      summaryHeading.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Expanding reveals the inputs for the current counts.
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(panel()).not.toHaveAttribute('hidden');
+    expect(screen.getByLabelText('Adult 1')).toBeInTheDocument();
+    // Collapsing hides them again (values stay registered, never erased).
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(panel()).toHaveAttribute('hidden');
+  });
+
   it('generates one optional name input per traveller from the counts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
+    await userEvent.click(screen.getByRole('button', { name: /traveller names/i }));
     // Defaults: a single adult row, nothing else.
-    expect(screen.getByLabelText('Adult 1 — Name')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Child With Bed 1 — Name')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Adult 1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Child With Bed 1')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('CWB'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '1' } });
-    expect(screen.getByLabelText('Child With Bed 1 — Name')).toBeInTheDocument();
-    expect(screen.getByLabelText('Child With Bed 2 — Name')).toBeInTheDocument();
-    expect(screen.getByLabelText('Infant 1 — Name')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Child Without Bed 1 — Name')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Child With Bed 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Child With Bed 2')).toBeInTheDocument();
+    expect(screen.getByLabelText('Infant 1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Child Without Bed 1')).not.toBeInTheDocument();
   });
 
+  it('shows compact traveller names heading, labels and placeholders in create mode', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    const toggle = screen.getByRole('button', { name: 'Traveller names' });
+    expect(toggle.textContent).not.toContain('(optional)');
+    await userEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('CWB'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('CWOB'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '1' } });
+    for (const label of [
+      'Adult 1',
+      'Adult 2',
+      'Child With Bed 1',
+      'Child Without Bed 1',
+      'Infant 1',
+    ]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
+    expect(screen.queryByLabelText('Adult 1 — Name')).not.toBeInTheDocument();
+    expect(screen.getAllByPlaceholderText('Full name')).toHaveLength(5);
+    expect(screen.queryByPlaceholderText('Full name (optional)')).not.toBeInTheDocument();
+  });
   it('submits blank name lists sized to the counts when nothing is entered', async () => {
     const fetchMock = stubCreate();
     vi.stubGlobal('fetch', fetchMock);
@@ -3891,11 +4969,12 @@ describe('Lead traveller names', () => {
     fireEvent.change(screen.getByLabelText('CWB'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('CWOB'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '1' } });
-    await userEvent.type(screen.getByLabelText('Adult 1 — Name'), 'Rahul Sharma');
-    await userEvent.type(screen.getByLabelText('Adult 2 — Name'), 'Priya Sharma');
-    await userEvent.type(screen.getByLabelText('Child With Bed 1 — Name'), 'Aarav Sharma');
-    await userEvent.type(screen.getByLabelText('Child Without Bed 2 — Name'), 'Anaya Sharma');
-    await userEvent.type(screen.getByLabelText('Infant 1 — Name'), 'Ira Sharma');
+    await userEvent.click(screen.getByRole('button', { name: /traveller names/i }));
+    await userEvent.type(screen.getByLabelText('Adult 1'), 'Rahul Sharma');
+    await userEvent.type(screen.getByLabelText('Adult 2'), 'Priya Sharma');
+    await userEvent.type(screen.getByLabelText('Child With Bed 1'), 'Aarav Sharma');
+    await userEvent.type(screen.getByLabelText('Child Without Bed 2'), 'Anaya Sharma');
+    await userEvent.type(screen.getByLabelText('Infant 1'), 'Ira Sharma');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     const body = await postedBody(fetchMock);
     expect(body.adultNames).toEqual(['Rahul Sharma', 'Priya Sharma', '']);
@@ -3911,12 +4990,13 @@ describe('Lead traveller names', () => {
     await screen.findByRole('heading', { name: 'Create lead' });
     await fillRequired();
     fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '3' } });
-    await userEvent.type(screen.getByLabelText('Adult 1 — Name'), 'Rahul Sharma');
-    await userEvent.type(screen.getByLabelText('Adult 2 — Name'), 'Priya Sharma');
-    await userEvent.type(screen.getByLabelText('Adult 3 — Name'), 'Karan Sharma');
+    await userEvent.click(screen.getByRole('button', { name: /traveller names/i }));
+    await userEvent.type(screen.getByLabelText('Adult 1'), 'Rahul Sharma');
+    await userEvent.type(screen.getByLabelText('Adult 2'), 'Priya Sharma');
+    await userEvent.type(screen.getByLabelText('Adult 3'), 'Karan Sharma');
     // Shrinking to one adult drops only the removed trailing rows.
     fireEvent.change(screen.getByLabelText('Adults *'), { target: { value: '1' } });
-    expect(screen.queryByLabelText('Adult 2 — Name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Adult 2')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     const body = await postedBody(fetchMock);
     expect(body.adultNames).toEqual(['Rahul Sharma']);
@@ -3943,7 +5023,85 @@ describe('Lead traveller names', () => {
       { route: `/queries/${lead.id}/edit` },
     );
     await screen.findByRole('heading', { name: 'Edit lead' });
-    expect(screen.getByLabelText('Adult 1 — Name')).toHaveValue('Rahul Sharma');
-    expect(screen.getByLabelText('Adult 2 — Name')).toHaveValue('Priya Sharma');
+    // Saved names are preserved; expanding reveals them with values intact.
+    await userEvent.click(screen.getByRole('button', { name: /traveller names/i }));
+    expect(screen.getByLabelText('Adult 1')).toHaveValue('Rahul Sharma');
+    expect(screen.getByLabelText('Adult 2')).toHaveValue('Priya Sharma');
+  });
+
+  it('collects an infant age in months with a 0-24 range', async () => {
+    const fetchMock = stubCreate();
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '1' } });
+    const age = screen.getByLabelText('Infant 1 Age (Months)');
+    expect(age).toHaveAttribute('min', '0');
+    expect(age).toHaveAttribute('max', '24');
+    await userEvent.type(age, '6');
+    await fillRequired();
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    const body = await postedBody(fetchMock);
+    expect(body.infantAges).toEqual([6]);
+  });
+
+  it('submits multiple infants with different month ages', async () => {
+    const fetchMock = stubCreate();
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    fireEvent.change(screen.getByLabelText('Infants'), { target: { value: '2' } });
+    await userEvent.type(screen.getByLabelText('Infant 1 Age (Months)'), '6');
+    await userEvent.type(screen.getByLabelText('Infant 2 Age (Months)'), '18');
+    await fillRequired();
+    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
+    const body = await postedBody(fetchMock);
+    expect(body.infantAges).toEqual([6, 18]);
+  });
+
+  it('shows no infant age fields when the infant count is 0', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(lookups)));
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    expect(screen.queryByLabelText('Infant 1 Age (Months)')).not.toBeInTheDocument();
+  });
+
+  it('restores saved infant month ages when reopening the lead for editing', async () => {
+    const saved = { ...lead, infants: 2, infantAges: [6, 18] };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(saved);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    expect(screen.getByLabelText('Infant 1 Age (Months)')).toHaveValue(6);
+    expect(screen.getByLabelText('Infant 2 Age (Months)')).toHaveValue(18);
+  });
+
+  it('keeps previously saved infant ages working without modification', async () => {
+    const saved = { ...lead, infants: 1, infantAges: [1] };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/queries/lookups')) return response(lookups);
+      if (url.includes(`/queries/${lead.id}`)) return response(saved);
+      return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: `/queries/${lead.id}/edit` },
+    );
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    expect(screen.getByLabelText('Infant 1 Age (Months)')).toHaveValue(1);
   });
 });

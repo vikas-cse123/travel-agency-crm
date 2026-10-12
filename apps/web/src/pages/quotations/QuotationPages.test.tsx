@@ -10470,7 +10470,7 @@ describe('Quotation Builder — defensive legacy normalization', () => {
     expect(body.terms).toEqual([]);
     expect(body.faqs).toEqual([]);
     expect(body.flightDetails.images).toEqual([]);
-    expect(body.flightDetails.outbound.segments).toHaveLength(1);
+    expect(body.flightDetails.flights).toEqual([]);
     expect(
       body.services.find(
         (service: { serviceType: string }) => service.serviceType === 'VEHICLE_TRANSFER',
@@ -11562,11 +11562,20 @@ describe.skip('Phase 14 master selectors', () => {
   });
 
   it('keeps the manual Bookmark ID control in the Flight section', async () => {
-    vi.stubGlobal('fetch', masterFetch(builderQuotation()));
+    vi.stubGlobal(
+      'fetch',
+      masterFetch({
+        ...builderQuotation(),
+        query: { services: [{ serviceType: 'FLIGHT' }] },
+      }),
+    );
     renderBuilderPage();
     await openTab('Flight');
-    expect(screen.getByText('Bookmark ID (optional)')).toBeInTheDocument();
+    // Each flight card carries its own bookmark loader, starting with one card.
+    expect(await screen.findByText('Flight 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Flight 1 bookmark ID')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Load' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add Flight/i })).toBeInTheDocument();
   });
 
   it('inserts a hotel stay after the selected stay without clearing existing stays', async () => {
@@ -12422,7 +12431,7 @@ describe.skip('Phase 14 master selectors', () => {
     // The Flight tab is a structured journey builder (Journey Type + segments),
     // not a service-row master picker.
     await openTab('Flight');
-    expect(await screen.findByLabelText('Journey type')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Journey type for flight 1')).toBeInTheDocument();
     expect(screen.getAllByLabelText('Airline').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /Add Connection/i }).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('Sightseeing master')).not.toBeInTheDocument();
@@ -12637,7 +12646,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Flight');
 
-    const idField = screen.getByLabelText('Bookmark ID');
+    const idField = await screen.findByLabelText('Flight 1 bookmark ID');
     await userEvent.type(idField, 'FLT-000123');
     await userEvent.click(screen.getByRole('button', { name: 'Load' }));
 
@@ -15114,7 +15123,7 @@ describe.skip('Phase 14 master selectors', () => {
       const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
       expect(patch).toBeDefined();
       const body = JSON.parse(String(patch![1]!.body));
-      expect(body.flightDetails.outbound.segments[0].cabinLuggage).toBe('10kg');
+      expect(body.flightDetails.flights[0].outbound.segments[0].cabinLuggage).toBe('10kg');
     });
   });
 
@@ -16230,6 +16239,235 @@ describe.skip('Phase 14 master selectors', () => {
     );
   });
 });
+  it('loads two flight bookmarks into independent flights without overwriting', async () => {
+    const seg = (flightNumber: string, from: string, to: string) => ({
+      departure_airport: { name: from, id: from, date: '2026-09-10', time: '06:00' },
+      arrival_airport: { name: to, id: to, date: '2026-09-10', time: '12:00' },
+      duration: 120,
+      airline: 'Air India',
+      flight_number: flightNumber,
+      travel_class: 'Economy',
+    });
+    const flightBookmark = (code: string, flightNumber: string, from: string, to: string) => ({
+      id: `bm-${code}`,
+      type: 'FLIGHT',
+      provider: 'SEARCHAPI',
+      fingerprint: `fp-${code}`,
+      bookmarkCode: code,
+      title: `${from} → ${to}`,
+      currency: 'INR',
+      createdAt: '2026-08-16T10:00:00.000Z',
+      searchParams: { departure_id: from, arrival_id: to, type: 1, currency: 'INR' },
+      snapshot: {
+        flight: {
+          airline: 'Air India',
+          flightNumbers: [flightNumber],
+          price: 8000,
+          currency: 'INR',
+          type: 'One way',
+          segments: [seg(flightNumber, from, to)],
+        },
+      },
+    });
+    const fetchMock = masterFetch(
+      {
+        ...builderQuotation(),
+        query: { services: [{ serviceType: 'FLIGHT' }] },
+      },
+      {
+        '/api/search/bookmarks/by-code/FLT-000123': flightBookmark('FLT-000123', 'AI101', 'DEL', 'BOM'),
+        '/api/search/bookmarks/by-code/FLT-000456': flightBookmark('FLT-000456', '6E202', 'BOM', 'GOI'),
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Flight');
+
+    // First flight loads into its own card.
+    await userEvent.type(await screen.findByLabelText('Flight 1 bookmark ID'), 'FLT-000123');
+    await userEvent.click(screen.getByRole('button', { name: 'Load' }));
+    expect(await screen.findByDisplayValue('AI101')).toBeInTheDocument();
+    expect(screen.getByText('Flight 1')).toBeInTheDocument();
+
+    // A second card loads independently; the first is untouched.
+    await userEvent.click(screen.getByRole('button', { name: /Add Flight/i }));
+    expect(screen.getByText('Flight 2')).toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText('Flight 2 bookmark ID'), 'FLT-000456');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Load' })[1]!);
+    expect(await screen.findByDisplayValue('6E202')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('AI101')).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue('AI101')).toHaveLength(1);
+    expect(screen.getAllByDisplayValue('6E202')).toHaveLength(1);
+
+    // Saving persists both records in order with their bookmark codes.
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    expect(body.flightDetails.flights).toHaveLength(2);
+    expect(body.flightDetails.flights[0]).toMatchObject({ bookmarkCode: 'FLT-000123' });
+    expect(body.flightDetails.flights[1]).toMatchObject({ bookmarkCode: 'FLT-000456' });
+    expect(body.flightDetails.flights[0].outbound.segments[0].flightNumber).toBe('AI101');
+    expect(body.flightDetails.flights[1].outbound.segments[0].flightNumber).toBe('6E202');
+  });
+
+  it('keeps loaded flights when another bookmark ID fails', async () => {
+    const seg = (flightNumber: string, from: string, to: string) => ({
+      departure_airport: { name: from, id: from, date: '2026-09-10', time: '06:00' },
+      arrival_airport: { name: to, id: to, date: '2026-09-10', time: '12:00' },
+      duration: 120,
+      airline: 'Air India',
+      flight_number: flightNumber,
+      travel_class: 'Economy',
+    });
+    const bookmark = {
+      id: 'bm-ok',
+      type: 'FLIGHT',
+      provider: 'SEARCHAPI',
+      fingerprint: 'fp-ok',
+      bookmarkCode: 'FLT-000123',
+      title: 'DEL → BOM',
+      currency: 'INR',
+      createdAt: '2026-08-16T10:00:00.000Z',
+      searchParams: { departure_id: 'DEL', arrival_id: 'BOM', type: 1, currency: 'INR' },
+      snapshot: {
+        flight: {
+          airline: 'Air India',
+          flightNumbers: ['AI101'],
+          price: 8000,
+          currency: 'INR',
+          type: 'One way',
+          segments: [seg('AI101', 'DEL', 'BOM')],
+        },
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(
+        {
+          ...builderQuotation(),
+          query: { services: [{ serviceType: 'FLIGHT' }] },
+        },
+        {
+          '/api/search/bookmarks/by-code/FLT-000123': bookmark,
+        },
+      ),
+    );
+    renderBuilderPage();
+    await openTab('Flight');
+    await userEvent.type(await screen.findByLabelText('Flight 1 bookmark ID'), 'FLT-000123');
+    await userEvent.click(screen.getByRole('button', { name: 'Load' }));
+    expect(await screen.findByDisplayValue('AI101')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Add Flight/i }));
+    await userEvent.type(await screen.findByLabelText('Flight 2 bookmark ID'), 'NOPE');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Load' })[1]!);
+    expect(await screen.findByText(/Invalid bookmark ID/)).toBeInTheDocument();
+    // The successfully loaded flight is preserved.
+    expect(screen.getByDisplayValue('AI101')).toBeInTheDocument();
+  });
+
+  it('removes one flight without affecting the other', async () => {
+    const seg = (flightNumber: string, from: string, to: string) => ({
+      departure_airport: { name: from, id: from, date: '2026-09-10', time: '06:00' },
+      arrival_airport: { name: to, id: to, date: '2026-09-10', time: '12:00' },
+      duration: 120,
+      airline: 'Air India',
+      flight_number: flightNumber,
+      travel_class: 'Economy',
+    });
+    const flightBookmark = (code: string, flightNumber: string, from: string, to: string) => ({
+      id: `bm-${code}`,
+      type: 'FLIGHT',
+      provider: 'SEARCHAPI',
+      fingerprint: `fp-${code}`,
+      bookmarkCode: code,
+      title: `${from} → ${to}`,
+      currency: 'INR',
+      createdAt: '2026-08-16T10:00:00.000Z',
+      searchParams: { departure_id: from, arrival_id: to, type: 1, currency: 'INR' },
+      snapshot: {
+        flight: {
+          airline: 'Air India',
+          flightNumbers: [flightNumber],
+          price: 8000,
+          currency: 'INR',
+          type: 'One way',
+          segments: [seg(flightNumber, from, to)],
+        },
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(
+        {
+          ...builderQuotation(),
+          query: { services: [{ serviceType: 'FLIGHT' }] },
+        },
+        {
+          '/api/search/bookmarks/by-code/FLT-000123': flightBookmark('FLT-000123', 'AI101', 'DEL', 'BOM'),
+          '/api/search/bookmarks/by-code/FLT-000456': flightBookmark('FLT-000456', '6E202', 'BOM', 'GOI'),
+        },
+      ),
+    );
+    renderBuilderPage();
+    await openTab('Flight');
+    await userEvent.type(await screen.findByLabelText('Flight 1 bookmark ID'), 'FLT-000123');
+    await userEvent.click(screen.getByRole('button', { name: 'Load' }));
+    expect(await screen.findByDisplayValue('AI101')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Add Flight/i }));
+    await userEvent.type(await screen.findByLabelText('Flight 2 bookmark ID'), 'FLT-000456');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Load' })[1]!);
+    expect(await screen.findByDisplayValue('6E202')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove flight 1' }));
+    expect(screen.queryByDisplayValue('AI101')).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('6E202')).toBeInTheDocument();
+    expect(screen.queryByText('Flight 2')).not.toBeInTheDocument();
+  });
+
+  it('opens a legacy single-flight quotation as one flight card', async () => {
+    const quotation = builderQuotation({
+      flightDetails: {
+        include: true,
+        sectionTitle: 'Flight Details',
+        amount: 0,
+        entryMode: 'MANUAL',
+        journeyType: 'ONEWAY_OUTBOUND',
+        outbound: {
+          fromCity: 'Delhi',
+          toCity: 'Goa',
+          travelClass: 'Economy',
+          segments: [
+            {
+              airlineId: null,
+              airlineName: 'Air India',
+              flightNumber: 'AI101',
+              travelClass: 'Economy',
+              from: 'Delhi',
+              to: 'Goa',
+              departureDate: '2026-09-10',
+              departureTime: '10:00',
+              arrivalDate: '2026-09-10',
+              arrivalTime: '12:00',
+              duration: null,
+              cabinLuggage: null,
+              checkInLuggage: null,
+              notes: null,
+              connectionVia: null,
+            },
+          ],
+        },
+        returnJourney: { fromCity: null, toCity: null, travelClass: 'Economy', segments: [] },
+      },
+    });
+    vi.stubGlobal('fetch', masterFetch(quotation));
+    renderBuilderPage();
+    await openTab('Flight');
+    // Legacy rows normalize into exactly one card with their segments intact.
+    expect(screen.getByText('Flight 1')).toBeInTheDocument();
+    expect(screen.queryByText('Flight 2')).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue('AI101')).toBeInTheDocument();
+  });
+
 
   it('keeps the first activity as the sightseeing day title (CASE 1)', async () => {
     const quotation = builderQuotation({

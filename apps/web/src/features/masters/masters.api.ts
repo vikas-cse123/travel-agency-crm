@@ -13,6 +13,7 @@ import type {
   SightseeingImageUploadInput,
   SightseeingInput,
   SightseeingUpdateInput,
+  SightseeingMealDefaults,
   AddOnServiceImageUploadInput,
   AddOnServiceInput,
   AddOnServiceUpdateInput,
@@ -1168,6 +1169,7 @@ export interface Sightseeing extends MasterVisibilityMeta {
   description: string | null;
   remarks: string | null;
   pricing?: Array<{ label: string; price: number | null; currency?: string | null }> | null;
+  mealDefaults?: SightseeingMealDefaults | null;
   status: string;
   hasImage: boolean;
   images: MasterImageMeta[];
@@ -1235,6 +1237,7 @@ export interface SightseeingActivity {
   suggestedStartTime: string | null;
   description: string | null;
   pricing?: Array<{ label: string; price: number | null }> | null;
+  mealDefaults?: SightseeingMealDefaults | null;
   images: Array<MasterImageMeta & { url?: string | null }>;
   destination: { id: string; name: string };
   city: { id: string; name: string };

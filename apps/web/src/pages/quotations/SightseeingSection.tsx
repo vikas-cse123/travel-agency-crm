@@ -833,6 +833,40 @@ function DayCard({
         shouldDirty: true,
       });
       form.setValue(fp(`${abase}.sequence`), 1 as never, { shouldDirty: true });
+      // Prefill day meals + this activity's transfer from the master defaults.
+      // Runs only on explicit activity selection, so unrelated edits and
+      // re-renders never overwrite manual changes; picking another activity
+      // refreshes the defaults from the newly selected master.
+      const mealDefaults = (picked as unknown as {
+        mealDefaults?: {
+          meals?: { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | null;
+          mealModes?: {
+            breakfast?: string | null;
+            lunch?: string | null;
+            dinner?: string | null;
+          } | null;
+          transfer?: string | null;
+        } | null;
+      })?.mealDefaults;
+      if (mealDefaults) {
+        for (const meal of ['breakfast', 'lunch', 'dinner'] as const) {
+          const enabled = Boolean(mealDefaults.meals?.[meal]);
+          form.setValue(fp(`${base}.meals.${meal}`), enabled, {
+            shouldDirty: true,
+          });
+          const mode = enabled ? mealDefaults.mealModes?.[meal] : null;
+          if (mode) {
+            form.setValue(fp(`${base}.mealPreferences.${meal}.mode`), mode as never, {
+              shouldDirty: true,
+            });
+          }
+        }
+        if (mealDefaults.transfer) {
+          form.setValue(fp(`${abase}.dailyTransfer`), mealDefaults.transfer as never, {
+            shouldDirty: true,
+          });
+        }
+      }
       // Prefill pricingOptions from master pricing if activity has no pricing yet.
       // Keep existing manual edits: only fill when all current prices are blank/zero.
       const masterPricing = (picked as unknown as { pricing?: Array<{ label: string; price: number | null }> | null })?.pricing;

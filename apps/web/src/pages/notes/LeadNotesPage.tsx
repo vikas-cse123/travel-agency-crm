@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { PERMISSIONS } from '@interscale/shared';
 import { useLead, useNotes } from '@/features/queries/queries.api';
-import { formatDate, formatDateTime, StagePill } from './NotesUi';
+import { formatDateTime, StagePill } from './NotesUi';
 
 export function LeadNotesPage() {
   const { queryId = '' } = useParams();
@@ -63,20 +63,19 @@ export function LeadNotesPage() {
                 <th className="px-4 py-3 font-semibold">Date</th>
                 <th className="px-4 py-3 font-semibold">Stage</th>
                 <th className="px-4 py-3 font-semibold">Note Comment</th>
-                <th className="px-4 py-3 font-semibold">Follow-up Date</th>
                 <th className="px-4 py-3 font-semibold">Added by</th>
               </tr>
             </thead>
             <tbody>
               {notes.isPending ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={4} className="px-4 py-10 text-center text-slate-500">
                     Loading notes…
                   </td>
                 </tr>
               ) : !notes.data?.length ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={4} className="px-4 py-10 text-center text-slate-500">
                     No notes found for this lead
                   </td>
                 </tr>
@@ -91,9 +90,6 @@ export function LeadNotesPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-800">
                       <p className="whitespace-pre-wrap break-words">{note.content}</p>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-700">
-                      {note.followUp ? formatDate(note.followUp.scheduledAt) : 'N/A'}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-700">
                       {note.authorUser.fullName}

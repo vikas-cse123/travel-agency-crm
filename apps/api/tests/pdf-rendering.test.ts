@@ -780,6 +780,94 @@ describe('Stylish quotation PDF', () => {
     ).toBeLessThan(1);
   });
 
+  it('renders every flight record in order in both quotation PDFs', async () => {
+    const flightRecord = (
+      bookmarkCode: string | null,
+      journeyType: string,
+      from: string,
+      to: string,
+      flightNumber: string,
+    ) => ({
+      bookmarkCode,
+      journeyType,
+      outbound: {
+        fromCity: from,
+        toCity: to,
+        travelClass: 'Economy',
+        segments: [
+          {
+            airlineName: 'Test Airways',
+            from,
+            to,
+            flightNumber,
+            departureDate: '2026-09-05',
+            departureTime: '10:00',
+            arrivalDate: '2026-09-05',
+            arrivalTime: '13:00',
+          },
+        ],
+      },
+      returnJourney: { segments: [] },
+    });
+    const input: Parameters<typeof renderQuotationPdf>[0] = {
+      company: footerEmptyCompanyForOverlap(),
+      quotation: quotationOverlap(),
+      version: {
+        ...baseVersionOverlap(),
+        flightDetails: {
+          include: true,
+          flights: [
+            flightRecord('FLT-000001', 'ONEWAY_OUTBOUND', 'DEL', 'BOM', 'AI101'),
+            flightRecord('FLT-000002', 'ONEWAY_OUTBOUND', 'BOM', 'GOI', '6E202'),
+          ],
+        },
+      },
+      images: { cover: PNG_1PX },
+    };
+    for (const pdf of [await renderQuotationPdf(input), await renderStylishQuotationPdf(input)]) {
+      const visible = pdfText(pdf);
+      expect(visible).toContain('AI101');
+      expect(visible).toContain('6E202');
+      // Stored order is preserved: the first flight renders first.
+      expect(visible.indexOf('AI101')).toBeLessThan(visible.indexOf('6E202'));
+    }
+  });
+
+  it('renders legacy single-flight rows without a flights array', async () => {
+    const input: Parameters<typeof renderQuotationPdf>[0] = {
+      company: footerEmptyCompanyForOverlap(),
+      quotation: quotationOverlap(),
+      version: {
+        ...baseVersionOverlap(),
+        flightDetails: {
+          include: true,
+          journeyType: 'ONEWAY_OUTBOUND',
+          outbound: {
+            fromCity: 'DEL',
+            toCity: 'BOM',
+            segments: [
+              {
+                airlineName: 'Test Airways',
+                from: 'DEL',
+                to: 'BOM',
+                flightNumber: 'AI101',
+                departureDate: '2026-09-05',
+                departureTime: '10:00',
+                arrivalDate: '2026-09-05',
+                arrivalTime: '13:00',
+              },
+            ],
+          },
+          returnJourney: { segments: [] },
+        },
+      },
+      images: { cover: PNG_1PX },
+    };
+    for (const pdf of [await renderQuotationPdf(input), await renderStylishQuotationPdf(input)]) {
+      expect(pdfText(pdf)).toContain('AI101');
+    }
+  });
+
   it('renders each sightseeing activity time independently in 12-hour format', async () => {
     const input: Parameters<typeof renderQuotationPdf>[0] = {
       company: footerEmptyCompanyForOverlap(),
