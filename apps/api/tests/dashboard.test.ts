@@ -609,6 +609,36 @@ describe('Booking confirmed amount by destination', () => {
     return res.body.data.confirmedRevenueByDestination as RevenueRow[];
   };
 
+  const seedCity = async (client: Client, countryCode: string, name: string) => {
+    const res = await client.post('/api/masters/cities', {
+      countryCode,
+      name,
+      airportCode: null,
+      status: 'ACTIVE',
+    });
+    expect(res.status).toBe(201);
+    return res.body.data as { id: string };
+  };
+
+  const seedDestination = async (
+    client: Client,
+    countryCode: string,
+    name: string,
+    cityIds: string[],
+    status: string,
+    destinationType = 'DOMESTIC',
+  ) => {
+    const res = await client.post('/api/masters/destinations', {
+      countryCode,
+      name,
+      destinationType,
+      cityIds,
+      status,
+    });
+    expect(res.status).toBe(201);
+    return res.body.data as { id: string };
+  };
+
   it('counts only leads whose current stage is BOOKING_CONFIRMED', async () => {
     const client = await owner();
     const confirmed = await seedLead(client, {
@@ -844,6 +874,77 @@ describe('Booking confirmed amount by destination', () => {
       itinerary: [{ country: 'India', destination: 'Goa', nights: 1, sequence: 1 }],
     });
     expect(await revenueOf(client)).toEqual([{ destination: 'GOA', totalAmount: '100000.00' }]);
+  });
+
+  it('combines active and inactive duplicate destination masters into one bar', async () => {
+    // Production scenario: two GOA master records (one ACTIVE, one INACTIVE)
+    // representing the same logical destination, each with linked cities.
+    // Qualifying amounts booked through either record must land in a single
+    // GOA bar — the INACTIVE status must not exclude anything.
+    const client = await owner('owner@goa-dup.test', 'Goa Dup Travel');
+    const goa = await seedCity(client, 'IN', 'Goa');
+    const calangute = await seedCity(client, 'IN', 'Calangute');
+    await seedDestination(client, 'IN', 'GOA', [goa.id, calangute.id], 'ACTIVE');
+    await seedDestination(client, 'IN', 'GOA', [goa.id], 'INACTIVE');
+    // Amount booked through a city of the ACTIVE record.
+    const viaActive = await seedLead(client, {
+      expectedAmount: 100000,
+      itinerary: [{ country: 'GOA', destination: 'Calangute', nights: 2, sequence: 1 }],
+    });
+    await setStage(viaActive.id, 'BOOKING_CONFIRMED');
+    // Amount booked through a city of the INACTIVE record.
+    const viaInactive = await seedLead(client, {
+      expectedAmount: 50000,
+      itinerary: [{ country: 'GOA', destination: 'Goa', nights: 2, sequence: 1 }],
+    });
+    await setStage(viaInactive.id, 'BOOKING_CONFIRMED');
+    expect(await revenueOf(client)).toEqual([{ destination: 'GOA', totalAmount: '150000.00' }]);
+  });
+
+  it('counts a multi-stop lead once across duplicate masters', async () => {
+    // The same underlying lead amount must not double-count when its stops
+    // resolve through both the ACTIVE and the INACTIVE duplicate record.
+    const client = await owner('owner@goa-once.test', 'Goa Once Travel');
+    const goa = await seedCity(client, 'IN', 'Goa');
+    const calangute = await seedCity(client, 'IN', 'Calangute');
+    await seedDestination(client, 'IN', 'GOA', [goa.id, calangute.id], 'ACTIVE');
+    await seedDestination(client, 'IN', 'GOA', [goa.id], 'INACTIVE');
+    const lead = await seedLead(client, {
+      expectedAmount: 120000,
+      itinerary: [
+        { country: 'GOA', destination: 'Calangute', nights: 2, sequence: 1 },
+        { country: 'GOA', destination: 'Goa', nights: 2, sequence: 2 },
+      ],
+    });
+    await setStage(lead.id, 'BOOKING_CONFIRMED');
+    const rows = await revenueOf(client);
+    expect(rows).toEqual([{ destination: 'GOA', totalAmount: '120000.00' }]);
+    expect(rows.reduce((sum, row) => sum + Number(row.totalAmount), 0)).toBe(120000);
+  });
+
+  it('keeps same-named destinations in different countries separate', async () => {
+    // Duplicate handling must not merge genuinely different places that
+    // merely share a name: scoping is by normalized name + country.
+    const client = await owner('owner@goa-countries.test', 'Goa Countries Travel');
+    const goa = await seedCity(client, 'IN', 'Goa');
+    await seedDestination(client, 'IN', 'GOA', [goa.id], 'ACTIVE');
+    await seedDestination(client, 'IN', 'GOA', [goa.id], 'INACTIVE');
+    const beach = await seedCity(client, 'US', 'Goa Beach');
+    await seedDestination(client, 'US', 'GOA', [beach.id], 'ACTIVE', 'INTERNATIONAL');
+    const indian = await seedLead(client, {
+      expectedAmount: 50000,
+      itinerary: [{ country: 'GOA', destination: 'Goa', nights: 2, sequence: 1 }],
+    });
+    await setStage(indian.id, 'BOOKING_CONFIRMED');
+    const american = await seedLead(client, {
+      expectedAmount: 70000,
+      itinerary: [{ country: 'USA', destination: 'Goa Beach', nights: 2, sequence: 1 }],
+    });
+    await setStage(american.id, 'BOOKING_CONFIRMED');
+    const rows = await revenueOf(client);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.totalAmount).sort()).toEqual(['50000.00', '70000.00']);
+    expect(rows.reduce((sum, row) => sum + Number(row.totalAmount), 0)).toBe(120000);
   });
 
   it('applies the dashboard date period on lead creation date', async () => {

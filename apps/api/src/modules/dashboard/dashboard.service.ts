@@ -301,8 +301,15 @@ export const dashboardService = {
    * Attribution rule (the schema stores no per-stop amounts): each lead's
    * amount is split across its non-blank destinations pro-rata by nights, or
    * equally when the itinerary has zero total nights — so a lead's amount is
-   * never counted twice. Destinations merge case-insensitively keeping the
-   * first-seen display form, mirroring topDestinations.
+   * never counted twice. Stops resolve to Destination masters of ANY status
+   * through the picked master name (`country` text on form-created rows),
+   * linked cities, or the master name itself (imported rows); duplicate
+   * masters that represent the same logical destination (same normalized
+   * name + country) share one bar labelled with the master name, so an
+   * ACTIVE record and its INACTIVE duplicate combine. Same-named masters in
+   * different countries stay separate, and anything ambiguous or
+   * unresolvable keeps today's raw-text grouping — never excluded, never
+   * merged, never double-counted.
    */
   async confirmedRevenueByDestination(auth: AuthContext, period: ResolvedPeriod, limit: number) {
     const bounded = Math.min(Math.max(limit, 1), 25);
@@ -315,11 +322,70 @@ export const dashboardService = {
       auth,
       period.from && period.to ? { createdAt: { gte: period.from, lt: period.to } } : {},
     );
+    // Master reference data for stop resolution. Status is deliberately NOT
+    // filtered: amounts linked through an INACTIVE duplicate must count
+    // exactly like amounts linked through its ACTIVE twin.
+    const [masters, masterCities] = await Promise.all([
+      prisma.destination.findMany({
+        where: { companyId: auth.companyId },
+        select: { id: true, name: true, normalizedName: true, countryCode: true },
+      }),
+      prisma.destinationCity.findMany({
+        where: { companyId: auth.companyId },
+        select: { destinationId: true, city: { select: { name: true } } },
+      }),
+    ]);
+    const masterById = new Map(masters.map((master) => [master.id, master]));
+    const identityOf = (id: string) => {
+      const master = masterById.get(id)!;
+      return `${(master.normalizedName || master.name).trim().toLowerCase()}|${master.countryCode}`;
+    };
+    const idsByName = new Map<string, string[]>();
+    for (const master of masters) {
+      for (const key of [
+        master.name.trim().toLowerCase(),
+        (master.normalizedName || '').trim().toLowerCase(),
+      ]) {
+        if (!key) continue;
+        const list = idsByName.get(key) ?? [];
+        if (!list.includes(master.id)) list.push(master.id);
+        idsByName.set(key, list);
+      }
+    }
+    const idsByCity = new Map<string, string[]>();
+    for (const link of masterCities) {
+      const key = link.city.name.trim().toLowerCase();
+      if (!key) continue;
+      const list = idsByCity.get(key) ?? [];
+      if (!list.includes(link.destinationId)) list.push(link.destinationId);
+      idsByCity.set(key, list);
+    }
+    // Resolve one itinerary stop to a stable group key + display label.
+    const resolveStop = (country: string, city: string): { key: string; label: string } => {
+      const trimmedCity = city.trim();
+      const countryIds = idsByName.get(country.trim().toLowerCase()) ?? [];
+      const cityIds = [
+        ...(idsByCity.get(trimmedCity.toLowerCase()) ?? []),
+        ...(idsByName.get(trimmedCity.toLowerCase()) ?? []),
+      ].filter((id, index, all) => all.indexOf(id) === index);
+      const inBoth = countryIds.filter((id) => cityIds.includes(id));
+      const resolved = (inBoth.length > 0 ? inBoth : cityIds.length > 0 ? cityIds : countryIds).filter(
+        (id, index, all) => all.indexOf(id) === index,
+      );
+      const identities = new Set(resolved.map(identityOf));
+      if (resolved.length > 0 && identities.size === 1) {
+        return { key: `master:${[...identities][0]}`, label: masterById.get(resolved[0]!)!.name };
+      }
+      return { key: `text:${trimmedCity.toLowerCase()}`, label: trimmedCity };
+    };
     const leads = await prisma.query.findMany({
       where: { ...queryWhere, leadStage: 'BOOKING_CONFIRMED' },
       select: {
         expectedAmount: true,
-        itinerary: { select: { destination: true, nights: true }, orderBy: { sequence: 'asc' } },
+        itinerary: {
+          select: { country: true, destination: true, nights: true },
+          orderBy: { sequence: 'asc' },
+        },
         quotations: {
           select: {
             versions: {
@@ -346,7 +412,11 @@ export const dashboardService = {
       const amount = quoted ?? expected;
       if (amount === null) continue;
       const stops = (lead.itinerary ?? [])
-        .map((row) => ({ destination: row.destination.trim(), nights: row.nights }))
+        .map((row) => ({
+          country: row.country,
+          destination: row.destination.trim(),
+          nights: row.nights,
+        }))
         .filter((row) => row.destination.length > 0);
       if (stops.length === 0) continue;
       const totalNights = stops.reduce((sum, row) => sum + row.nights, 0);
@@ -355,10 +425,10 @@ export const dashboardService = {
           totalNights > 0
             ? amount.times(row.nights).dividedBy(totalNights)
             : amount.dividedBy(stops.length);
-        const key = row.destination.toLowerCase();
-        const existing = merged.get(key);
+        const group = resolveStop(row.country, row.destination);
+        const existing = merged.get(group.key);
         if (existing) existing.total = existing.total.plus(share);
-        else merged.set(key, { destination: row.destination, total: share });
+        else merged.set(group.key, { destination: group.label, total: share });
       }
     }
     return [...merged.values()]
