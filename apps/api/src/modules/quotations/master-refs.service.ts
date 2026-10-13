@@ -56,6 +56,11 @@ export interface ServiceRefInput {
   vehicleId?: string | null | undefined;
   sightseeingId?: string | null | undefined;
   addOnServiceId?: string | null | undefined;
+  // Multi-room cruise stays carry per-line room-type references that must pass
+  // the same tenancy and parent-child rules as the row-level one.
+  cruiseRoomLines?: Array<{
+    cruiseRoomTypeId?: string | null | undefined;
+  }> | null | undefined;
 }
 
 /** Existing links which may be retained after a global master is hidden/archived. */
@@ -264,22 +269,43 @@ export async function validateMasterRefs(
   }
 
   // --- Services ------------------------------------------------------------
+  const cruiseLineRoomTypeIds = services.flatMap((row) =>
+    Array.isArray(
+      (row as unknown as { cruiseRoomLines?: unknown }).cruiseRoomLines,
+    )
+      ? (
+          (row as unknown as { cruiseRoomLines: Array<{ cruiseRoomTypeId?: string | null }> })
+            .cruiseRoomLines ?? []
+        ).map((line) => line?.cruiseRoomTypeId)
+      : [],
+  );
   const airlineIds = unique(services.map((row) => row.airlineId));
   const cruiseIds = unique(services.map((row) => row.cruiseId));
-  const cruiseRoomTypeIds = unique(services.map((row) => row.cruiseRoomTypeId));
+  const cruiseRoomTypeIds = unique([
+    ...services.map((row) => row.cruiseRoomTypeId),
+    ...cruiseLineRoomTypeIds,
+  ]);
   const vehicleIds = unique(services.map((row) => row.vehicleId));
   const sightseeingIds = unique(services.map((row) => row.sightseeingId));
   const addOnServiceIds = unique(services.map((row) => row.addOnServiceId));
   const retainedAirlineIds = ids((retained.services ?? []).map((row) => row.airlineId));
   const retainedCruiseIds = ids((retained.services ?? []).map((row) => row.cruiseId));
-  const retainedCruiseRoomTypeIds = ids(
-    (retained.services ?? []).map((row) => row.cruiseRoomTypeId),
-  );
+  const retainedCruiseRoomTypeIds = ids([
+    ...(retained.services ?? []).map((row) => row.cruiseRoomTypeId),
+    ...(retained.services ?? []).flatMap((row) =>
+      Array.isArray(row.cruiseRoomLines) ? row.cruiseRoomLines.map((line) => line?.cruiseRoomTypeId) : [],
+    ),
+  ]);
   const retainedVehicleIds = ids((retained.services ?? []).map((row) => row.vehicleId));
   const retainedSightseeingIds = ids((retained.services ?? []).map((row) => row.sightseeingId));
   const retainedAddOnServiceIds = ids((retained.services ?? []).map((row) => row.addOnServiceId));
 
-  if (services.some((row) => row.cruiseRoomTypeId && !row.cruiseId)) {
+  const cruiseRoomWithoutCruise = (row: ServiceRefInput) =>
+    Boolean(row.cruiseRoomTypeId) ||
+    (Array.isArray(row.cruiseRoomLines)
+      ? row.cruiseRoomLines.some((line) => Boolean(line?.cruiseRoomTypeId))
+      : false);
+  if (services.some((row) => cruiseRoomWithoutCruise(row) && !row.cruiseId)) {
     throw new ValidationError('Select a cruise before choosing a cruise room type.');
   }
 
@@ -352,14 +378,27 @@ export async function validateMasterRefs(
       missing('add-on service');
 
   const cruiseRoomTypeById = new Map(cruiseRoomTypes.map((row) => [row.id, row]));
-  for (const row of services) {
-    if (!row.cruiseRoomTypeId) continue;
-    const child = cruiseRoomTypeById.get(row.cruiseRoomTypeId);
+  const validateCruiseRoomTypeRef = (
+    cruiseRoomTypeId: string,
+    row: ServiceRefInput,
+    context: string,
+  ) => {
+    const child = cruiseRoomTypeById.get(cruiseRoomTypeId);
     const parent = row.cruiseId ? cruiseById.get(row.cruiseId) : undefined;
     if (!childAvailable(child, parent, cruiseScope, retainedCruiseRoomTypeIds, retainedCruiseIds))
       missing('cruise room type');
     if (child!.cruiseId !== row.cruiseId)
-      throw new ValidationError('The selected room type does not belong to the selected cruise.');
+      throw new ValidationError(
+        `The selected room type does not belong to the selected cruise${context}.`,
+      );
+  };
+  for (const row of services) {
+    if (row.cruiseRoomTypeId) validateCruiseRoomTypeRef(row.cruiseRoomTypeId, row, '');
+    // Every room allocation must point at the same cruise.
+    (Array.isArray(row.cruiseRoomLines) ? row.cruiseRoomLines : []).forEach((line, index) => {
+      if (line?.cruiseRoomTypeId)
+        validateCruiseRoomTypeRef(line.cruiseRoomTypeId, row, ` (Room ${index + 1})`);
+    });
   }
 
   return {

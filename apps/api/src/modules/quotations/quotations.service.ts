@@ -7,6 +7,7 @@ import {
   flightDetailsSchema,
   normalizeFlightDetails,
   sightseeingDetailsSchema,
+  calculateCruiseRoomLinesTotal,
   PERMISSIONS,
   normalizePublicSlug,
   isReservedPublicSlug,
@@ -796,6 +797,63 @@ function syncHotelLineScalars<T extends Pick<HotelRowInput, 'roomLines' | 'mealP
   } as T;
 }
 
+/**
+ * Cruise room allocations are authoritative; the legacy scalar columns mirror
+ * them so every legacy reader (PDF fallback, weblink tags, old revisions)
+ * keeps working without migration-time backfill.
+ *
+ * Only an explicit `cruiseRoomLines` array carries room-list intent. Legacy
+ * and template rows without the key are returned untouched so their scalars
+ * stay authoritative and keep synthesizing their single room on read.
+ *
+ * - With lines: the first line's room type mirrors onto cruiseRoomTypeId/city
+ *   and the per-night total mirrors onto quantity(1)/sellingPrice — the same
+ *   rule the builder's save path already applies client-side.
+ * - With an explicit empty list: the type scalars are nulled so a removed
+ *   room can never be resurrected from stale scalars on reload; the price
+ *   mirrors to 0 (quantity stays 1).
+ */
+function syncCruiseLineScalars<
+  T extends Pick<
+    QuotationVersionInput['services'][number],
+    'serviceType' | 'cruiseRoomLines' | 'cruiseNights'
+  > &
+    Record<string, unknown>,
+>(service: T): T {
+  if (service.serviceType !== 'CRUISE') return service;
+  const rawLines = service.cruiseRoomLines;
+  if (!Array.isArray(rawLines)) return service;
+  const lines = rawLines as NonNullable<QuotationVersionInput['services'][number]['cruiseRoomLines']>;
+  if (!lines.length) {
+    return {
+      ...service,
+      cruiseRoomTypeId: null,
+      city: null,
+      quantity: 1,
+      sellingPrice: 0,
+    } as T;
+  }
+  const first = lines[0] as unknown as {
+    cruiseRoomTypeId?: string | null;
+    roomType?: string | null;
+  };
+  const nights =
+    (service as unknown as { cruiseNights?: number | null }).cruiseNights ?? null;
+  const total = calculateCruiseRoomLinesTotal(
+    { cruiseRoomLines: lines, cruiseNights: nights } as unknown as Parameters<
+      typeof calculateCruiseRoomLinesTotal
+    >[0],
+    nights,
+  );
+  return {
+    ...service,
+    cruiseRoomTypeId: first?.cruiseRoomTypeId ?? null,
+    city: first?.roomType ?? null,
+    quantity: 1,
+    sellingPrice: total,
+  } as T;
+}
+
 function normalizeVersionInput(input: QuotationVersionInput, allowCosting: boolean) {
   return {
     ...input,
@@ -821,11 +879,22 @@ function normalizeVersionInput(input: QuotationVersionInput, allowCosting: boole
         })),
       }),
     ),
-    services: input.services.map((service) => ({
-      ...service,
-      internalCost: allowCosting ? (service.internalCost ?? 0) : 0,
-      sellingPrice: service.sellingPrice ?? 0,
-    })),
+    services: input.services.map((service) =>
+      syncCruiseLineScalars({
+        ...service,
+        internalCost: allowCosting ? (service.internalCost ?? 0) : 0,
+        sellingPrice: service.sellingPrice ?? 0,
+        // Preserve undefined for legacy/template rows without the key: only an
+        // explicit array (possibly empty) carries room-list intent.
+        cruiseRoomLines: Array.isArray(service.cruiseRoomLines)
+          ? service.cruiseRoomLines.map((line) => ({
+              ...line,
+              // Costing lines are internal data — same gating as the row-level cost.
+              internalCost: allowCosting ? (line.internalCost ?? null) : null,
+            }))
+          : service.cruiseRoomLines,
+      }),
+    ),
   };
 }
 
@@ -1164,6 +1233,16 @@ function versionCreateData(
       airlineId: row.airlineId ?? null,
       cruiseId: row.cruiseId ?? null,
       cruiseRoomTypeId: row.cruiseRoomTypeId ?? null,
+      // Cruise stays carry their structured duration and room allocations in
+      // dedicated columns. An explicitly saved [] persists as [] (roomless);
+      // legacy rows without the key persist SQL NULL and keep synthesizing
+      // their single room from the scalar columns on read.
+      cruiseNights: (row as unknown as { cruiseNights?: number | null }).cruiseNights ?? null,
+      cruiseRoomLines: Array.isArray(
+        (row as unknown as { cruiseRoomLines?: unknown }).cruiseRoomLines,
+      )
+        ? ((row as unknown as { cruiseRoomLines: unknown[] }).cruiseRoomLines as unknown as Prisma.InputJsonValue)
+        : undefined,
       vehicleId: row.vehicleId ?? null,
       sightseeingId: row.sightseeingId ?? null,
       addOnServiceId: row.addOnServiceId ?? null,
@@ -1329,12 +1408,22 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
         pricingBasis: rawPricingBasis,
         images: rawImages,
         pricingSnapshot: rawPricingSnapshot,
+        cruiseNights: rawCruiseNights,
+        cruiseRoomLines: rawCruiseRoomLines,
         ...row
       }) => ({
         ...row,
         quantity: row.quantity.toNumber(),
         internalCost: unitCost.toNumber(),
         sellingPrice: unitSellingPrice.toNumber(),
+        // Cruise duration persists in its own column (NULL for legacy rows).
+        cruiseNights: (rawCruiseNights as number | null | undefined) ?? null,
+        // Room allocations persist as JSON. An explicitly saved [] stays []
+        // (roomless); legacy NULL stays undefined so readers keep synthesizing
+        // the single room from the scalar columns.
+        cruiseRoomLines: Array.isArray(rawCruiseRoomLines)
+          ? (rawCruiseRoomLines as unknown as QuotationVersionInput['services'][number]['cruiseRoomLines'])
+          : undefined,
         // The DB column is free-form text; normalize to the shared enum so a
         // stale/unknown value can never leak into the quotation input.
         pricingBasis: (SERVICE_PRICING_BASES as readonly string[]).includes(rawPricingBasis ?? '')

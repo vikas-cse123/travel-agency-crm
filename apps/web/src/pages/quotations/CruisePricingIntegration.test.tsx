@@ -4,6 +4,7 @@ import {
   calculateCruiseRoomLinesTotal,
   resolveCruiseRoomLines,
   cruiseNightsToDays,
+  quotationServiceSchema,
 } from '@interscale/shared';
 
 const auth = vi.hoisted(() => ({ permissions: new Set<string>() }));
@@ -228,11 +229,12 @@ describe('Cruise structured duration and multi-room', () => {
       quantity: 1,
       sellingPrice: 2000,
     };
-    const lines = resolveCruiseRoomLines(legacy as never);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]!.cruiseRoomTypeId).toBe('rt-2');
-    expect(lines[0]!.rooms).toBe(1);
-    expect(lines[0]!.roomRate).toBe(2000);
+    // Display readers resolve key-less legacy rows to [] and fall back to the
+    // saved scalar columns instead of a badge; the builder applies its own
+    // editable synthesis for these rows (covered in QuotationCruiseRooms).
+    expect(resolveCruiseRoomLines(legacy as never)).toEqual([]);
+    // Pricing still totals the legacy scalars: 2000 × 1 × 2 nights.
+    expect(calculateCruiseRoomLinesTotal(legacy as never, 2)).toBe(4000);
   });
   it('Legacy with no room lines but quantity/sellingPrice still calculates', () => {
     const legacy = {
@@ -243,5 +245,124 @@ describe('Cruise structured duration and multi-room', () => {
     };
     // Helper should synthesize? Actually resolve will create line from legacy, then total = 2000*2*3
     expect(calculateCruiseRoomLinesTotal(legacy as never, 3)).toBe(12000);
+  });
+});
+
+describe('Cruise rooms — explicit empty list stays roomless', () => {
+  it('an explicit [] never synthesizes a phantom room, even with legacy scalars present', () => {
+    const roomless = {
+      serviceType: 'CRUISE',
+      cruiseRoomLines: [],
+      // Stale-looking scalars must not resurrect a room once the list is explicit.
+      cruiseRoomTypeId: null,
+      city: null,
+      quantity: 1,
+      sellingPrice: 0,
+      cruiseNights: 3,
+    };
+    expect(resolveCruiseRoomLines(roomless as never)).toEqual([]);
+  });
+
+  it('an explicit [] with nonzero legacy scalars still resolves to no rooms', () => {
+    const roomless = {
+      serviceType: 'CRUISE',
+      cruiseRoomLines: [],
+      quantity: 2,
+      sellingPrice: 2000,
+      cruiseNights: 3,
+    };
+    expect(resolveCruiseRoomLines(roomless as never)).toEqual([]);
+  });
+
+  it('key-less legacy rows resolve to [] at the shared reader (no badge synthesis)', () => {
+    const legacy = {
+      serviceType: 'CRUISE',
+      cruiseId: 'cruise-1',
+      cruiseRoomTypeId: 'rt-2',
+      city: 'Oceanview Stateroom',
+      quantity: 1,
+      sellingPrice: 2000,
+    };
+    // Display readers fall back to the saved scalar columns; the builder
+    // applies its own editable synthesis for these rows.
+    expect(resolveCruiseRoomLines(legacy as never)).toEqual([]);
+  });
+
+  it('missing room-list data (null) resolves to [] at the shared reader', () => {
+    const legacy = {
+      serviceType: 'CRUISE',
+      cruiseRoomLines: null,
+      city: 'Interior',
+      quantity: 1,
+      sellingPrice: 1000,
+    };
+    expect(resolveCruiseRoomLines(legacy as never)).toEqual([]);
+  });
+});
+
+describe('Cruise nights — optional and pricing-safe', () => {
+  const line = {
+    cruiseRoomTypeId: 'rt-1',
+    roomType: 'Interior',
+    rooms: 2,
+    roomRate: 1000,
+  };
+  const serviceWith = (cruiseNights: unknown) => ({
+    serviceType: 'CRUISE',
+    cruiseNights,
+    cruiseRoomLines: [line],
+  });
+
+  it('missing nights total rate × rooms without a multiplier (never NaN)', () => {
+    for (const nights of [null, undefined]) {
+      const total = calculateCruiseRoomLinesTotal(serviceWith(nights) as never, nights as null);
+      expect(total).toBe(2000);
+      expect(Number.isFinite(total)).toBe(true);
+    }
+  });
+
+  it('an explicit empty room list totals 0 with missing nights', () => {
+    const total = calculateCruiseRoomLinesTotal(
+      { serviceType: 'CRUISE', cruiseNights: null, cruiseRoomLines: [] } as never,
+      null,
+    );
+    expect(total).toBe(0);
+  });
+
+  it('valid nights keep the existing per-night behavior', () => {
+    expect(calculateCruiseRoomLinesTotal(serviceWith(3) as never, 3)).toBe(6000);
+    expect(calculateCruiseRoomLinesTotal(serviceWith(1) as never, 1)).toBe(2000);
+  });
+
+  it('cruiseNightsToDays stays null-safe', () => {
+    expect(cruiseNightsToDays(null)).toBeNull();
+    expect(cruiseNightsToDays(undefined)).toBeNull();
+    expect(cruiseNightsToDays(0)).toBeNull();
+    expect(cruiseNightsToDays(2)).toBe(3);
+  });
+
+  it('the service schema accepts empty/omitted nights and still rejects invalid ones', () => {
+    const base = {
+      serviceType: 'CRUISE',
+      name: 'Genting Dream',
+      quantity: 1,
+      sequence: 1,
+    };
+    expect(
+      quotationServiceSchema.safeParse({ ...base, cruiseNights: null }).success,
+    ).toBe(true);
+    expect(quotationServiceSchema.safeParse({ ...base }).success).toBe(true);
+    expect(
+      quotationServiceSchema.safeParse({ ...base, cruiseNights: 3 }).success,
+    ).toBe(true);
+    expect(
+      quotationServiceSchema.safeParse({ ...base, cruiseNights: 0 }).success,
+    ).toBe(false);
+    expect(
+      quotationServiceSchema.safeParse({ ...base, cruiseNights: -2 }).success,
+    ).toBe(false);
+    expect(
+      quotationServiceSchema.safeParse({ ...base, cruiseNights: 366 }).success,
+    ).toBe(false);
   });
 });

@@ -3970,6 +3970,14 @@ model QuotationVersionService {
   airlineId          String?          @db.Uuid
   cruiseId           String?          @db.Uuid
   cruiseRoomTypeId   String?          @db.Uuid
+  /// Nights for a cruise stay; NULL for legacy rows and non-cruise services.
+  cruiseNights       Int?
+  /// Ordered room allocations inside ONE cruise service (JSON array of
+  /// { cruiseRoomTypeId, roomType, rooms, roomRate, sellingPrice,
+  /// internalCost, notes }); NULL for legacy rows, which keep using the
+  /// scalar columns. An explicitly saved [] means "no rooms" and must stay
+  /// roomless on reload.
+  cruiseRoomLines    Json?            @db.Json
   vehicleId          String?          @db.Uuid
   sightseeingId      String?          @db.Uuid
   addOnServiceId     String?          @db.Uuid

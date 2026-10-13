@@ -37,7 +37,6 @@ import {
   QUOTATION_BOOKING_TERMS_MAX_LENGTH,
   quotationVersionInputSchema,
   quotationSnapshotImageIdentity,
-  resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
   resolveQuotationPricing,
@@ -938,16 +937,64 @@ const cruiseRoomLineHasData = (line: QuotationCruiseRoomLine): boolean =>
   Boolean(line.notes?.trim());
 
 const withCruiseSynthesizedLines = (service: unknown): unknown => {
-  const raw = service as unknown as { cruiseRoomLines?: QuotationCruiseRoomLine[]; cruiseNights?: number | null; quantity?: number | null; sellingPrice?: number | null; city?: string | null; cruiseRoomTypeId?: string | null };
-  const stored = Array.isArray(raw.cruiseRoomLines) ? raw.cruiseRoomLines : [];
-  const lines = stored.length ? stored : resolveCruiseRoomLines(service).map((l) => emptyCruiseRoomLine(l as unknown as Partial<QuotationCruiseRoomLine>));
-  const nights = raw.cruiseNights ?? 2;
-  const resolvedNights = nights ?? 2;
+  const raw = service as unknown as { cruiseRoomLines?: QuotationCruiseRoomLine[]; cruiseNights?: number | null; quantity?: number | null; sellingPrice?: number | null; city?: string | null; cruiseRoomTypeId?: string | null; roomRate?: number | null; internalCost?: number | null; roomType?: string | null };
+  // Only an explicit array carries room-list intent. An explicitly saved []
+  // means "no rooms" and must stay roomless until the user adds one — never
+  // force a default room back. Rows without the key (legacy/template rows)
+  // synthesize one editable line from the scalar columns here in the editor
+  // only, so existing quotations keep rendering exactly as before. Display
+  // readers (weblink, PDFs) intentionally do not synthesize.
+  const storedRaw = raw.cruiseRoomLines;
+  const lines = Array.isArray(storedRaw)
+    ? (storedRaw as QuotationCruiseRoomLine[])
+    : synthesizeLegacyCruiseRoomLine(service);
+  // Nights are optional and never backfilled: an empty stored value stays
+  // empty through hydration so saving and reopening preserves it.
+  const nights = raw.cruiseNights ?? null;
   return {
     ...(service as Record<string, unknown>),
-    cruiseNights: resolvedNights,
-    cruiseRoomLines: lines.length ? lines : [emptyCruiseRoomLine()],
+    cruiseNights: nights,
+    cruiseRoomLines: lines,
   } as unknown;
+};
+
+/**
+ * Editor-only compatibility: one editable room line synthesized from the
+ * scalar columns of a key-less legacy/template cruise row (quantity = Number
+ * of Rooms, sellingPrice/roomRate = per-night rate, city = snapshot name).
+ * Returns [] unless the row carries genuine room evidence — a bare default
+ * row (quantity 1, zero/blank prices, no type link or name) stays roomless so
+ * rooms only ever appear via an explicit Add Room.
+ */
+const synthesizeLegacyCruiseRoomLine = (service: unknown): QuotationCruiseRoomLine[] => {
+  const row = service as unknown as {
+    cruiseRoomTypeId?: string | null;
+    city?: string | null;
+    roomType?: string | null;
+    quantity?: number | null;
+    roomRate?: number | null;
+    sellingPrice?: number | null;
+    internalCost?: number | null;
+  };
+  const hasLegacyRoom =
+    row.cruiseRoomTypeId != null ||
+    (row.city ?? '').trim() !== '' ||
+    (row.roomType ?? '').trim() !== '' ||
+    (row.quantity != null && Number(row.quantity) !== 1) ||
+    (row.roomRate != null && Number(row.roomRate) !== 0) ||
+    (row.sellingPrice != null && Number(row.sellingPrice) !== 0);
+  if (!hasLegacyRoom) return [];
+  const legacyRate = row.roomRate ?? row.sellingPrice ?? null;
+  return [
+    emptyCruiseRoomLine({
+      cruiseRoomTypeId: row.cruiseRoomTypeId ?? null,
+      roomType: row.city ?? row.roomType ?? null,
+      rooms: row.quantity == null ? 1 : Number(row.quantity) || 1,
+      roomRate: legacyRate != null ? Number(legacyRate) : null,
+      sellingPrice: legacyRate != null ? Number(legacyRate) : null,
+      internalCost: row.internalCost ?? null,
+    }),
+  ];
 };
 
 // ---------------------------------------------------------------------------
@@ -1954,8 +2001,11 @@ const newCruiseServiceRow = (sequence: number) => ({
   sellingPrice: 0,
   taxCategory: 'Cruise Details',
   notes: null,
-  cruiseNights: 1 as unknown as number,
-  cruiseRoomLines: [emptyCruiseRoomLine()],
+  // Nights are optional: a new stay starts empty, never prefilled with 1.
+  cruiseNights: null as unknown as number,
+  // Rooms appear only when the user explicitly clicks Add Room: a new stay
+  // starts with zero room rows, never a default ROOM 1.
+  cruiseRoomLines: [],
   images: [],
   imageSnapshotPresent: false,
   pdfImageUrl: null,
@@ -4288,7 +4338,9 @@ export function QuotationBuilderPage() {
                 };
                 const lines = ((svc as unknown as { cruiseRoomLines?: QuotationCruiseRoomLine[] }).cruiseRoomLines ?? []).filter(cruiseRoomLineHasData) as QuotationCruiseRoomLine[];
                 // Keep partially filled lines for validation; drop untouched defaults
-                const nights = (svc as unknown as { cruiseNights?: number | null }).cruiseNights ?? 2;
+                // Nights stay null when empty (never defaulted); the shared
+                // helper totals rate × rooms without a multiplier then.
+                const nights = (svc as unknown as { cruiseNights?: number | null }).cruiseNights ?? null;
                 const total = lines.reduce((sum: number, line: QuotationCruiseRoomLine) => {
                   const rate = (line.roomRate ?? line.sellingPrice ?? 0) as number;
                   const rooms = (line.rooms ?? 1) as number;
@@ -4300,7 +4352,12 @@ export function QuotationBuilderPage() {
                   // Mirror total for legacy readers (PDF fallback) – quantity stays 1, sellingPrice is total
                   quantity: 1,
                   sellingPrice: total,
-                  ...(lines[0] ? { cruiseRoomTypeId: (lines[0] as QuotationCruiseRoomLine).cruiseRoomTypeId ?? null, city: (lines[0] as QuotationCruiseRoomLine).roomType ?? null } : {}),
+                  // With rooms, mirror the first line's type; with none, clear
+                  // the type scalars so stale values can never resurrect a
+                  // removed room from legacy synthesis on reload.
+                  ...(lines[0]
+                    ? { cruiseRoomTypeId: (lines[0] as QuotationCruiseRoomLine).cruiseRoomTypeId ?? null, city: (lines[0] as QuotationCruiseRoomLine).roomType ?? null }
+                    : { cruiseRoomTypeId: null, city: null }),
                 } as unknown as QuotationVersionInput['services'][number];
               })
               .filter((service) => {
@@ -5406,7 +5463,9 @@ export function QuotationBuilderPage() {
             {isCruiseSectionWise && primary && (() => {
               const total = cruiseRows.reduce((sum, { index: idx }) => {
                 const svc = watchedServices?.[idx] as unknown as { cruiseNights?: number | null } | undefined;
-                const nights = (svc as unknown as { cruiseNights?: number | null })?.cruiseNights != null ? Number((svc as unknown as { cruiseNights?: number | null })?.cruiseNights) : 2;
+                // Null nights flow into the shared helper, which totals
+                // rate × rooms without a nights multiplier (never NaN).
+                const nights = (svc as unknown as { cruiseNights?: number | null })?.cruiseNights ?? null;
                 return sum + calculateCruiseRoomLinesTotal(watchedServices?.[idx] ?? {}, nights);
               }, 0);
               return <div className={`${calculatedCard} flex items-center justify-between`}><span className={calculatedLabel}>Cruise Total</span><span className={calculatedValue}>{formatMoney(total)} {cruiseRows.length>1 ? `· ${cruiseRows.length} cruises` : ''}</span></div>;
@@ -5464,10 +5523,15 @@ export function QuotationBuilderPage() {
                                 );
                                 // Changing cruise revalidates rooms: clear invalid room lines
                                 cruisePriceOverridesRef.current.delete(index);
-                                const currentNights = (cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? 2;
+                                // Nights are optional: preserve whatever is set
+                                // (including empty), never backfill a default.
+                                const currentNights = (cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? null;
                                 applyService(index, {
                                   cruiseId: option?.id ?? null,
-                                  // Keep cruiseNights, reset room lines if cruise changed
+                                  // Keep cruiseNights, reset room lines if cruise changed.
+                                  // Rooms are never auto-created here: switching
+                                  // the cruise clears stale lines back to zero
+                                  // rows; the user adds rooms explicitly.
                                   ...(option?.id
                                     ? {
                                         cruiseRoomTypeId: null,
@@ -5475,15 +5539,15 @@ export function QuotationBuilderPage() {
                                         sellingPrice: 0,
                                         quantity: 1,
                                         cruiseNights: currentNights,
-                                        cruiseRoomLines: [emptyCruiseRoomLine()],
+                                        cruiseRoomLines: [],
                                       }
                                     : {
                                         cruiseRoomTypeId: null,
                                         city: null,
                                         sellingPrice: 0,
                                         quantity: 1,
-                                        cruiseNights: 2,
-                                        cruiseRoomLines: [emptyCruiseRoomLine()],
+                                        cruiseNights: null,
+                                        cruiseRoomLines: [],
                                       }),
                                   description: selectedMaster?.description ?? null,
                                   images: snapshot,
@@ -5516,16 +5580,23 @@ export function QuotationBuilderPage() {
                           </div>
                         </label>
                         <label className="text-sm font-semibold text-slate-800">
-                          Number of Nights <span className="text-red-500">*</span>
+                          Number of Nights
                           <input
                             aria-label="Cruise nights"
                             type="number"
                             min={1}
                             max={365}
                             step={1}
-                            value={Number((cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? 2)}
+                            placeholder="Optional"
+                            value={(cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? ''}
                             onChange={(event) => {
-                              const nights = Math.max(1, Math.min(365, Math.floor(Number(event.target.value) || 1)));
+                              const raw = event.target.value;
+                              // Clearing the field stores null (stays empty through
+                              // save/reload); a typed value is clamped to 1–365.
+                              const nights =
+                                raw === ''
+                                  ? null
+                                  : Math.max(1, Math.min(365, Math.floor(Number(raw) || 1)));
                               applyService(index, { cruiseNights: nights } as unknown as ServiceRowPatch);
                             }}
                             className={`${field} mt-1`}
@@ -5537,7 +5608,10 @@ export function QuotationBuilderPage() {
                         serviceIndex={index}
                         cruiseId={cruise?.cruiseId}
                         canCost={canCost}
-                        nights={Number((cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? 2)}
+                        // Display-only preview multiplier; unknown nights fall
+                        // back to 1 (rate × rooms), matching the shared pricing
+                        // fallback. The stored value itself stays null.
+                        nights={Number((cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? 1)}
                         recalculateTotals={() => {}}
                       />
                       <label className="block text-sm font-semibold text-slate-800">

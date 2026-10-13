@@ -859,35 +859,22 @@ const cruiseLineRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
 /**
- * The room allocations of one cruise service, always as a line array.
- * Rows saved with the multi-room structure return their lines as-is; legacy
- * rows (single cruiseRoomTypeId/quantity/sellingPrice scalar columns, NULL
- * cruiseRoomLines) are synthesized into exactly one line so every reader —
- * pricing, builder, PDF, weblink — consumes the same shape without migration.
+ * The stored room allocations of one cruise service, always as a line array.
+ *
+ * An explicit `cruiseRoomLines` array is authoritative — including an
+ * explicitly saved `[]`, which means the cruise has zero rooms. Display
+ * readers (public weblink, PDFs) must never invent a default room for it.
+ *
+ * Rows WITHOUT the key (legacy scalar rows and template rows, which predate
+ * the column) resolve to `[]` here; the quotation builder applies its own
+ * legacy single-room synthesis for editing, and every display reader falls
+ * back to the saved scalar columns (room name, notes) instead of a badge.
  */
 export function resolveCruiseRoomLines(service: unknown): QuotationCruiseRoomLine[] {
   const row = cruiseLineRecord(service);
-  const stored = Array.isArray(row.cruiseRoomLines) ? (row.cruiseRoomLines as unknown[]) : [];
-  if (stored.length > 0) return stored.map((line) => cruiseLineRecord(line)) as unknown as QuotationCruiseRoomLine[];
-  const hasLegacy =
-    row.cruiseRoomTypeId != null ||
-    row.city != null ||
-    row.quantity != null ||
-    row.sellingPrice != null;
-  if (!hasLegacy) return [];
-  // Legacy single-room: quantity = Number of Rooms, sellingPrice/roomRate = per-night rate, city = snapshot name
-  const legacyRate = (row.roomRate as number | null | undefined) ?? (row.sellingPrice as number | null | undefined) ?? null;
-  return [
-    {
-      cruiseRoomTypeId: (row.cruiseRoomTypeId as QuotationCruiseRoomLine['cruiseRoomTypeId']) ?? null,
-      roomType: (row.city as QuotationCruiseRoomLine['roomType']) ?? (row.roomType as QuotationCruiseRoomLine['roomType']) ?? null,
-      rooms: row.quantity == null ? 1 : Number(row.quantity) || 1,
-      roomRate: legacyRate != null ? Number(legacyRate) : null,
-      sellingPrice: legacyRate != null ? Number(legacyRate) : null,
-      internalCost: (row.internalCost as QuotationCruiseRoomLine['internalCost']) ?? null,
-      notes: null,
-    },
-  ];
+  if (Array.isArray(row.cruiseRoomLines))
+    return (row.cruiseRoomLines as unknown[]).map((line) => cruiseLineRecord(line)) as unknown as QuotationCruiseRoomLine[];
+  return [];
 }
 
 /**

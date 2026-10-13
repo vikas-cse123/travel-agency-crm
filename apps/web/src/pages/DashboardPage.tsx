@@ -1,11 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowRight,
   CalendarClock,
+  CalendarDays,
   CheckCircle,
+  ChevronDown,
   CreditCard,
   FileText,
   Flame,
@@ -16,7 +17,6 @@ import {
   PhoneCall,
   PieChart,
   Plane,
-  RefreshCw,
   TrendingUp,
   Truck,
   Users,
@@ -29,7 +29,6 @@ import {
   labelForLookup,
   type DashboardPeriod,
 } from '@interscale/shared';
-import { Button } from '@/components/ui/Button';
 import { MetricInfoTooltip } from '@/components/ui/Tooltip';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { ChartLegend } from '@/components/charts/ChartLegend';
@@ -366,7 +365,6 @@ export function DashboardPage() {
   const [applied, setApplied] = useState<DashboardParams>({ period: 'THIS_YEAR' });
 
   const analytics = useDashboardAnalytics(applied);
-  const queryClient = useQueryClient();
 
   // A custom range is only submittable with both dates in order (date
   // inputs emit YYYY-MM-DD, so lexicographic comparison is chronological).
@@ -381,22 +379,15 @@ export function DashboardPage() {
           : null
       : null;
 
-  const apply = () => {
+  // The filter applies itself: standard periods fetch immediately, and a
+  // custom range fetches as soon as both dates are valid. An invalid draft
+  // never touches `applied`, so the last valid results stay on screen with
+  // the message above explaining why nothing new was requested.
+  useEffect(() => {
     if (customRangeError) return;
-    setApplied({
-      period,
-      ...(period === 'CUSTOM' && from ? { from } : {}),
-      ...(period === 'CUSTOM' && to ? { to } : {}),
-    });
-  };
-
-  // Refresh refetches the analytics and the independent Upcoming Travel
-  // queries together. The applied period is untouched, so no draft state
-  // leaks in; each query keeps its own key, cancellation and error state.
-  const refreshAll = () => {
-    void analytics.refetch();
-    void queryClient.refetchQueries({ queryKey: ['dashboard', 'upcoming-travel'] });
-  };
+    if (period === 'CUSTOM') setApplied({ period, from, to });
+    else setApplied({ period });
+  }, [period, from, to, customRangeError]);
 
   const data = analytics.data;
   const caps = data?.capabilities;
@@ -415,19 +406,28 @@ export function DashboardPage() {
           <h1 className="text-xl font-semibold">Dashboard</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-card px-3 py-2 shadow-sm">
-          <span className="text-xs font-medium text-slate-500">Period</span>
-          <select
-            aria-label="Dashboard period"
-            className="rounded-md border border-slate-300 bg-card px-2 py-1.5 text-sm"
-            value={period}
-            onChange={(event) => setPeriod(event.target.value as DashboardPeriod)}
-          >
-            {DASHBOARD_PERIODS.map((value) => (
-              <option key={value} value={value}>
-                {DASHBOARD_PERIOD_LABELS[value]}
-              </option>
-            ))}
-          </select>
+          <div className="relative flex items-center">
+            <CalendarDays
+              className="pointer-events-none absolute left-3 h-4 w-4 text-slate-400"
+              aria-hidden="true"
+            />
+            <select
+              aria-label="Dashboard period"
+              className="h-10 appearance-none rounded-lg border border-slate-300 bg-white pl-9 pr-9 text-sm font-medium text-slate-800 shadow-sm transition-colors hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:border-brand-500"
+              value={period}
+              onChange={(event) => setPeriod(event.target.value as DashboardPeriod)}
+            >
+              {DASHBOARD_PERIODS.map((value) => (
+                <option key={value} value={value}>
+                  {DASHBOARD_PERIOD_LABELS[value]}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-3 h-4 w-4 text-slate-400"
+              aria-hidden="true"
+            />
+          </div>
           {period === 'CUSTOM' && (
             <>
               <input
@@ -448,18 +448,11 @@ export function DashboardPage() {
               />
             </>
           )}
-          <Button size="sm" onClick={apply} disabled={customRangeError !== null}>
-            Apply
-          </Button>
           {customRangeError && (
             <p role="alert" className="w-full text-xs font-medium text-red-600">
               {customRangeError}
             </p>
           )}
-          <Button size="sm" variant="secondary" onClick={refreshAll}>
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
         </div>
       </header>
 
