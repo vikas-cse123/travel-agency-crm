@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import { renderWithProviders } from '@/test/utils';
 import { LeadFormPage } from './LeadFormPage';
+import { destinationOptionLabel } from '@/features/queries/LeadForm';
 
 const authState = vi.hoisted(() => ({
   user: { id: 'me' } as { id: string } | null,
@@ -299,15 +300,22 @@ describe('Lead searchable fields regression', () => {
     const first = screen.getByLabelText('Destination 1');
 
     await search(first, 'thail');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
+    // The committed input shows only the public destination name.
     expect(first).toHaveValue('Thailand');
 
     // Backspace / clear / retype on the committed row.
     await userEvent.click(first);
     fireEvent.change(first, { target: { value: 'Thailan' } });
-    expect(screen.getByRole('option', { name: 'Thailand' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Thailand — Thai Private' })).toBeInTheDocument();
+    // Clearing collapses back to the country list.
     fireEvent.change(first, { target: { value: '' } });
     expect(first).toHaveValue('');
+    expect(
+      screen.queryByRole('option', { name: 'Thailand — Thai Private' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'OTHER' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'OTHER' }));
     expect(screen.getByRole('option', { name: 'Singapore' })).toBeInTheDocument();
     fireEvent.change(first, { target: { value: 'sing' } });
     await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
@@ -318,8 +326,8 @@ describe('Lead searchable fields regression', () => {
     const second = screen.getByLabelText('Destination 2');
     expect(second).toHaveValue('');
     await search(second, 'thail');
-    expect(screen.getByRole('option', { name: 'Thailand' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand' }));
+    expect(screen.getByRole('option', { name: 'Thailand — Thai Private' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
     expect(second).toHaveValue('Thailand');
     // The first row is untouched by the second row's search.
     expect(first).toHaveValue('Singapore');
@@ -334,7 +342,7 @@ describe('Lead searchable fields regression', () => {
     expect(city).toBeDisabled();
 
     await search(destination, 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
     await waitFor(() => expect(city).toBeEnabled());
 
     // City search, Backspace, clear, reselect.
@@ -361,7 +369,7 @@ describe('Lead searchable fields regression', () => {
     await userEvent.click(screen.getByRole('option', { name: 'Bangkok' }));
     expect(city).toHaveValue('Bangkok');
     await search(destination, 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
     expect(destination).toHaveValue('Thailand');
     expect(city).toHaveValue('Bangkok');
 
@@ -374,7 +382,7 @@ describe('Lead searchable fields regression', () => {
   it('Create: second itinerary City row is independent of the first', async () => {
     await renderCreate();
     await search(screen.getByLabelText('Destination 1'), 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
     await search(screen.getByLabelText('City 1'), 'phuk');
     await userEvent.click(screen.getByRole('option', { name: 'Phuket' }));
 
@@ -402,7 +410,7 @@ describe('Lead searchable fields regression', () => {
     const destination = screen.getByLabelText('Destination 1');
     const itineraryCity = screen.getByLabelText('City 1');
 
-    // Saved values load intact.
+    // Saved values load intact (committed input shows the public name).
     expect(country).toHaveValue('India');
     expect(city).toHaveValue('Chennai');
     expect(destination).toHaveValue('Thailand');
@@ -439,4 +447,310 @@ describe('Lead searchable fields regression', () => {
     fireEvent.change(itineraryCity, { target: { value: '' } });
     expect(itineraryCity).toHaveValue('');
   }, 30000);
+
+  it('Create: itinerary Destination is findable by private name and commits the public name', async () => {
+    await renderCreate();
+    const first = screen.getByLabelText('Destination 1');
+
+    // Searching the private name finds the combined option.
+    await search(first, 'thai private');
+    expect(
+      screen.getByRole('option', { name: 'Thailand — Thai Private' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Singapore' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
+    expect(first).toHaveValue('Thailand');
+  }, 30000);
 });
+
+describe('destinationOptionLabel', () => {
+  it('combines destination and private names with an em dash', () => {
+    expect(destinationOptionLabel('Malaysia', 'Malaysia - 3 Nights - Essential')).toBe(
+      'Malaysia — Malaysia - 3 Nights - Essential',
+    );
+  });
+
+  it('returns the plain name when the private name is missing or blank', () => {
+    expect(destinationOptionLabel('Singapore', null)).toBe('Singapore');
+    expect(destinationOptionLabel('Singapore', undefined)).toBe('Singapore');
+    expect(destinationOptionLabel('Singapore', '')).toBe('Singapore');
+    expect(destinationOptionLabel('Lucknow', '   ')).toBe('Lucknow');
+  });
+
+  it('never repeats the name when the private name is identical', () => {
+    expect(destinationOptionLabel('Kashmir 6N/7D', 'Kashmir 6N/7D')).toBe('Kashmir 6N/7D');
+    expect(destinationOptionLabel('Goa', '  Goa  ')).toBe('Goa');
+    expect(destinationOptionLabel('Goa', 'goa')).toBe('Goa');
+  });
+});
+
+describe('itinerary destination country groups', () => {
+  const groupedDestinations = [
+    {
+      id: 'dest-kashmir',
+      name: 'Kashmir 6N/7D',
+      privateName: 'Kashmir 6N/7D',
+      countryCode: 'IN',
+      countryName: 'India',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-k', sequence: 1, city: { name: 'Srinagar' } }],
+    },
+    {
+      id: 'dest-my',
+      name: 'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width',
+      privateName: 'Malaysia - Langkawi & Kuala Lumpur - 5Nights',
+      countryCode: 'MY',
+      countryName: 'Malaysia',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-m', sequence: 1, city: { name: 'Kuala Lumpur' } }],
+    },
+    {
+      id: 'dest-sg',
+      name: 'Singapore',
+      privateName: null,
+      countryCode: 'SG',
+      countryName: 'Singapore',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-s', sequence: 1, city: { name: 'Singapore' } }],
+    },
+    {
+      id: 'dest-nowhere',
+      name: 'Mystery Island',
+      privateName: null,
+      countryCode: '',
+      countryName: '',
+      status: 'ACTIVE',
+      cities: [{ id: 'dc-n', sequence: 1, city: { name: 'Mystery Island' } }],
+    },
+  ];
+
+  async function renderGroupedCreate() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/masters/destinations'))
+          return response({
+            data: groupedDestinations,
+            pagination: { page: 1, pageSize: 100, total: 4, totalPages: 1 },
+          });
+        return response(lookups);
+      }),
+    );
+    renderWithProviders(<LeadFormPage />);
+    await screen.findByRole('heading', { name: 'Create lead' });
+    await waitFor(() => expect(screen.getByLabelText('Destination 1')).toBeInTheDocument());
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('groups options by country with each heading once and full untruncated labels', async () => {
+    await renderGroupedCreate();
+    const input = screen.getByLabelText('Destination 1');
+    await userEvent.click(input);
+    const menu = await screen.findByRole('listbox', { name: 'Destination 1 search results' });
+
+    // Collapsed initially: country rows only, no destinations yet.
+    const headings = ['INDIA', 'MALAYSIA', 'SINGAPORE', 'OTHER'];
+    for (const heading of headings) {
+      expect(within(menu).getAllByText(heading)).toHaveLength(1);
+    }
+    const menuText = menu.textContent ?? '';
+    expect(menuText.indexOf('INDIA')).toBeLessThan(menuText.indexOf('MALAYSIA'));
+    expect(menuText.indexOf('MALAYSIA')).toBeLessThan(menuText.indexOf('SINGAPORE'));
+    expect(menuText.indexOf('SINGAPORE')).toBeLessThan(menuText.indexOf('OTHER'));
+    expect(
+      within(menu).queryByRole('option', { name: 'Singapore' }),
+    ).not.toBeInTheDocument();
+    // Country rows expose their expanded state and do not select anything.
+    const malaysiaRow = within(menu).getByRole('button', { name: 'MALAYSIA' });
+    expect(malaysiaRow).toHaveAttribute('aria-expanded', 'false');
+
+    // Expanding reveals that country's destinations with complete labels.
+    await userEvent.click(malaysiaRow);
+    expect(malaysiaRow).toHaveAttribute('aria-expanded', 'true');
+    const longLabel =
+      'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width — Malaysia - Langkawi & Kuala Lumpur - 5Nights';
+    const longOption = within(menu).getByRole('option', { name: longLabel });
+    expect(longOption.textContent).toContain(longLabel);
+    // No ellipsis truncation: the label span wraps instead.
+    const labelSpan = longOption.querySelector('span');
+    expect(labelSpan?.className).not.toMatch(/truncate/);
+    expect(labelSpan?.className).toMatch(/break-words/);
+    // Clicking the country did not select a destination.
+    expect(input).toHaveValue('');
+    // Other countries stay collapsed with their destinations hidden.
+    expect(
+      within(menu).queryByRole('option', { name: 'Singapore' }),
+    ).not.toBeInTheDocument();
+
+    // Clicking the same country again collapses it.
+    await userEvent.click(within(menu).getByRole('button', { name: 'MALAYSIA' }));
+    expect(
+      within(menu).queryByRole('option', { name: longLabel }),
+    ).not.toBeInTheDocument();
+    // Identical private names collapse; plain and Other rows render too.
+    await userEvent.click(within(menu).getByRole('button', { name: 'INDIA' }));
+    expect(
+      within(menu).getByRole('option', { name: 'Kashmir 6N/7D' }),
+    ).toBeInTheDocument();
+    await userEvent.click(within(menu).getByRole('button', { name: 'OTHER' }));
+    expect(within(menu).getByRole('option', { name: 'Mystery Island' })).toBeInTheDocument();
+  });
+
+  it('search keeps matching groups and hides empty ones', async () => {
+    await renderGroupedCreate();
+    const input = screen.getByLabelText('Destination 1');
+    await search(input, '5nights');
+
+    const menu = await screen.findByRole('listbox', { name: 'Destination 1 search results' });
+    // Private-name search finds the option under its own country group.
+    expect(
+      within(menu).getByRole('option', {
+        name: 'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width — Malaysia - Langkawi & Kuala Lumpur - 5Nights',
+      }),
+    ).toBeInTheDocument();
+    expect(within(menu).getByText('MALAYSIA')).toBeInTheDocument();
+    // Non-matching groups disappear entirely.
+    expect(within(menu).queryByText('INDIA')).not.toBeInTheDocument();
+    expect(within(menu).queryByText('SINGAPORE')).not.toBeInTheDocument();
+    expect(within(menu).queryByText('OTHER')).not.toBeInTheDocument();
+  });
+
+  it('selecting commits only the public name while the value stays the destination', async () => {
+    await renderGroupedCreate();
+    const input = screen.getByLabelText('Destination 1');
+    await search(input, 'langkawi');
+    await userEvent.click(
+      screen.getByRole('option', {
+        name: 'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width — Malaysia - Langkawi & Kuala Lumpur - 5Nights',
+      }),
+    );
+    expect(input).toHaveValue(
+      'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width',
+    );
+
+    // Keyboard selection works the same way on grouped options.
+    await search(input, 'mystery');
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    expect(input).toHaveValue('Mystery Island');
+  });
+
+  it('expanding one country collapses the previously expanded one', async () => {
+    await renderGroupedCreate();
+    const input = screen.getByLabelText('Destination 1');
+    await userEvent.click(input);
+    await screen.findByRole('listbox', { name: 'Destination 1 search results' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'MALAYSIA' }));
+    expect(
+      screen.queryByRole('option', {
+        name: 'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width — Malaysia - Langkawi & Kuala Lumpur - 5Nights',
+      }),
+    ).toBeInTheDocument();
+
+    // Expanding another country collapses Malaysia (accordion).
+    await userEvent.click(screen.getByRole('button', { name: 'INDIA' }));
+    expect(screen.getByRole('option', { name: 'Kashmir 6N/7D' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('option', {
+        name: 'Malaysia - Langkawi & Kuala Lumpur with a very long trailing suffix for width — Malaysia - Langkawi & Kuala Lumpur - 5Nights',
+      }),
+    ).not.toBeInTheDocument();
+    expect(input).toHaveValue('');
+  });
+
+  it('keyboard navigation toggles countries and commits options', async () => {
+    await renderGroupedCreate();
+    const input = screen.getByLabelText('Destination 1');
+    await userEvent.click(input);
+    await screen.findByRole('listbox', { name: 'Destination 1 search results' });
+
+    // Highlight starts on the first country row; Enter expands it.
+    expect(input).toHaveAttribute('aria-activedescendant');
+    await userEvent.keyboard('{Enter}');
+    expect(
+      screen.getByRole('option', { name: 'Kashmir 6N/7D' }),
+    ).toBeInTheDocument();
+    expect(input).toHaveValue('');
+
+    // ArrowDown reaches the destination; Enter commits its public name.
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    expect(input).toHaveValue('Kashmir 6N/7D');
+    expect(
+      screen.queryByRole('listbox', { name: 'Destination 1 search results' }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('itinerary City dropdown upward positioning', () => {
+  const originalRect = window.HTMLElement.prototype.getBoundingClientRect;
+  const originalInnerHeight = window.innerHeight;
+
+  // Destination sits left, City sits right; both near the viewport bottom so
+  // a downward menu would fit but must still open upward.
+  function mockTwoInputs() {
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+    window.HTMLElement.prototype.getBoundingClientRect = function () {
+      const label = (this as HTMLElement).getAttribute?.('aria-label') ?? '';
+      if (label === 'Destination 1')
+        return {
+          x: 100, y: 600, left: 100, top: 600, right: 350, bottom: 638,
+          width: 250, height: 38, toJSON: () => ({}),
+        } as DOMRect;
+      if (label === 'City 1')
+        return {
+          x: 400, y: 600, left: 400, top: 600, right: 650, bottom: 638,
+          width: 250, height: 38, toJSON: () => ({}),
+        } as DOMRect;
+      return originalRect.call(this);
+    };
+  }
+
+  afterEach(() => {
+    window.HTMLElement.prototype.getBoundingClientRect = originalRect;
+    Object.defineProperty(window, 'innerHeight', { value: originalInnerHeight, configurable: true });
+  });
+
+  const destMenu = () => screen.queryByRole('listbox', { name: 'Destination 1 search results' });
+
+  it('opens City above its own input, independent of the Destination menu', async () => {
+    mockTwoInputs();
+    await renderCreate();
+    const destination = screen.getByLabelText('Destination 1');
+    await search(destination, 'thailand');
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
+    const city = screen.getByLabelText('City 1') as HTMLInputElement;
+    await waitFor(() => expect(city).toBeEnabled());
+
+    await userEvent.click(city);
+    const first = await screen.findByRole('listbox', { name: 'City 1 search results' });
+    // Anchored to the City input (left 400), above it — not the Destination's.
+    expect(first.style.left).toBe('400px');
+    expect(Number.parseFloat(first.style.top)).toBeLessThan(600);
+    expect(destMenu()).not.toBeInTheDocument();
+  });
+
+  it('reopening City after selecting a city still opens above', async () => {
+    mockTwoInputs();
+    await renderCreate();
+    const destination = screen.getByLabelText('Destination 1');
+    await search(destination, 'thailand');
+    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
+    const city = screen.getByLabelText('City 1') as HTMLInputElement;
+    await waitFor(() => expect(city).toBeEnabled());
+
+    await search(city, 'bang');
+    await userEvent.click(screen.getByRole('option', { name: 'Bangkok' }));
+    expect(city).toHaveValue('Bangkok');
+
+    await userEvent.click(city);
+    const reopened = await screen.findByRole('listbox', { name: 'City 1 search results' });
+    expect(reopened.style.left).toBe('400px');
+    expect(Number.parseFloat(reopened.style.top)).toBeLessThan(600);
+  });
+});
+

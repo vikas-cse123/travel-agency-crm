@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, X } from 'lucide-react';
 
 /**
  * A generic searchable select for a fixed list of string options.
@@ -22,7 +22,22 @@ export interface SearchableSelectOption {
   label: string;
   /** Extra text used for search matching (e.g. an internal/private name). */
   searchText?: string | null;
+  /**
+   * Text shown in the closed input after selection. Defaults to `label`.
+   * Lets the menu show a long combined label while the committed field shows
+   * a short public name.
+   */
+  selectedLabel?: string | null;
+  /**
+   * Optional group heading this option belongs to (e.g. a country). Grouped
+   * rendering activates when at least one option carries a group; options
+   * without one fall into an `Other` group pinned last.
+   */
+  group?: string | null;
 }
+
+/** Fallback group for options without a country/group value. */
+export const SEARCHABLE_SELECT_OTHER_GROUP = 'Other';
 
 interface SearchableSelectProps {
   ariaLabel: string;
@@ -35,10 +50,132 @@ interface SearchableSelectProps {
   className?: string;
   /** Text shown when the query matches nothing. */
   emptyText?: string;
+  /**
+   * Render groups as collapsible country rows (accordion: expanding one
+   * collapses the previous). Groups start collapsed; typing a query
+   * auto-expands every group with matches, and clearing restores the
+   * collapsed list. Off by default — other dropdowns keep flat rendering.
+   */
+  expandableGroups?: boolean;
+  /**
+   * Always open the menu above the input (never below), with its bottom edge
+   * a small gap above the input's top edge. When space above is limited the
+   * menu shrinks to fit and scrolls internally instead of flipping below.
+   * Off by default — other dropdowns keep the automatic flip behavior.
+   */
+  openUpward?: boolean;
 }
 
-export function SearchableSelect({
-  ariaLabel,
+/** One visible menu row: a group header or a selectable option. */
+type SelectMenuRow =
+  | { kind: 'header'; key: string; id: string; heading: string; expanded: boolean }
+  | {
+      kind: 'option';
+      key: string;
+      id: string;
+      option: SearchableSelectOption;
+      /** Position in the flat filtered list (stable option identity). */
+      flatIndex: number;
+    };
+
+/** One selectable menu row. The label always renders in full and wraps onto
+ * multiple lines (never truncated) so long names stay visible; the row grows
+ * with its content. `rowIndex` is the row's position among the currently
+ * visible rows (headers included) for keyboard highlight; `optionId` is the
+ * stable dom id derived from the flat filtered position.
+ *
+ * Geometry is fully static: padding is spelled out explicitly (indented rows
+ * use `pl-9 pr-3`, never `px-3` plus an overriding `pl-9` that would depend
+ * on stylesheet ordering), and the hover/keyboard highlight toggles ONLY the
+ * background class — never padding, margin, border, transform or alignment —
+ * so hovering can never move the row by even one pixel. */
+function OptionRow({
+  option,
+  rowIndex,
+  optionId,
+  highlight,
+  selected,
+  value,
+  indent,
+  onHighlight,
+  onCommit,
+}: {
+  option: SearchableSelectOption;
+  rowIndex: number;
+  optionId: string;
+  highlight: number;
+  selected: SearchableSelectOption | null;
+  value: string;
+  indent?: boolean;
+  onHighlight: (index: number) => void;
+  onCommit: (option: SearchableSelectOption) => void;
+}) {
+  return (
+    // Key includes the label: distinct options may share a value
+    // (e.g. one city name in two states) while values stay plain
+    // city names for storage compatibility.
+    <li key={`${option.value}__${option.label}`} role="none">
+      <button
+        type="button"
+        role="option"
+        id={optionId}
+        aria-selected={option.value === value}
+        onMouseEnter={() => onHighlight(rowIndex)}
+        onClick={() => onCommit(option)}
+        className={`flex w-full items-start justify-between gap-2 py-2 text-left text-sm ${
+          indent ? 'pl-9 pr-3' : 'px-3'
+        } ${highlight === rowIndex ? 'bg-slate-100' : ''}`}
+      >
+        <span className="min-w-0 flex-1 whitespace-normal break-words">{option.label}</span>
+        {option.value === value && option.label === selected?.label && (
+          <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+        )}
+      </button>
+    </li>
+  );
+}
+
+/** One collapsible country header row. Toggling never selects a destination. */
+function CountryRow({
+  heading,
+  expanded,
+  rowIndex,
+  headerId,
+  highlight,
+  onHighlight,
+  onToggle,
+}: {
+  heading: string;
+  expanded: boolean;
+  rowIndex: number;
+  headerId: string;
+  highlight: number;
+  onHighlight: (index: number) => void;
+  onToggle: () => void;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <li key={`group-${heading}`} role="presentation">
+      <button
+        type="button"
+        id={headerId}
+        aria-expanded={expanded}
+        onMouseEnter={() => onHighlight(rowIndex)}
+        onClick={onToggle}
+        className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 ${
+          highlight === rowIndex ? 'bg-slate-100' : ''
+        } ${expanded ? 'bg-slate-50' : ''}`}
+      >
+        <Chevron className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+        <span className="min-w-0 flex-1 whitespace-normal break-words uppercase tracking-wide">
+          {heading.toUpperCase()}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+export function SearchableSelect({  ariaLabel,
   placeholder,
   options,
   value,
@@ -46,6 +183,8 @@ export function SearchableSelect({
   disabled = false,
   className = 'w-full rounded-lg border border-slate-300 bg-card py-2 pl-3 pr-8 text-sm',
   emptyText = 'No matching options',
+  expandableGroups = false,
+  openUpward = false,
 }: SearchableSelectProps) {
   const listboxId = useId();
   const [query, setQuery] = useState('');
@@ -66,6 +205,10 @@ export function SearchableSelect({
   // value match — otherwise picking "Aurangabad (Maharashtra)" would render
   // as "Aurangabad (Bihar)".
   const [lastPicked, setLastPicked] = useState<SearchableSelectOption | null>(null);
+  // Manually expanded group heading (accordion: at most one). Only used with
+  // `expandableGroups`; searching auto-expands every matching group instead,
+  // and clearing the search restores the collapsed list.
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   // Focus returns to the input after a pick so the keyboard stays put, but
   // that focus must not re-open the list the pick just closed.
   const justCommitted = useRef(false);
@@ -98,6 +241,88 @@ export function SearchableSelect({
     );
   }, [options, query]);
 
+  // Grouped menu model, derived from the FILTERED options so searching hides
+  // empty groups automatically. Headings follow first-seen order; `Other`
+  // (options without a group) is always pinned last. `flat` preserves the
+  // filtered order for highlight/keyboard indexing.
+  // With `expandableGroups` the grouped model is always on (options without
+  // a group collect under `Other`), so the collapsed country list works even
+  // when no option carries an explicit group.
+  const grouped = useMemo(() => {
+    const enabled =
+      expandableGroups || options.some((option) => (option.group ?? '').trim() !== '');
+    if (!enabled) return null;
+    const order: string[] = [];
+    const byGroup = new Map<string, typeof filtered>();
+    for (const option of filtered) {
+      const heading = (option.group ?? '').trim() || SEARCHABLE_SELECT_OTHER_GROUP;
+      if (!byGroup.has(heading)) {
+        byGroup.set(heading, []);
+        order.push(heading);
+      }
+      byGroup.get(heading)!.push(option);
+    }
+    const headings = [
+      ...order.filter((heading) => heading !== SEARCHABLE_SELECT_OTHER_GROUP),
+      ...(byGroup.has(SEARCHABLE_SELECT_OTHER_GROUP) ? [SEARCHABLE_SELECT_OTHER_GROUP] : []),
+    ];
+    return { headings, byGroup };
+  }, [filtered, options]);
+
+  const isSearching = query.trim() !== '';
+  // Visible menu rows. Without `expandableGroups` every filtered option shows
+  // (grouped or flat — exactly the previous behavior). With it, an empty
+  // query shows only the collapsed country rows; a query auto-expands every
+  // group that still has matches.
+  const visibleRows: SelectMenuRow[] = useMemo(() => {
+    if (!grouped || !expandableGroups) {
+      return filtered.map((option, flatIndex) => ({
+        kind: 'option' as const,
+        key: `${option.value}__${option.label}`,
+        id: `${listboxId}-${flatIndex}`,
+        option,
+        flatIndex,
+      }));
+    }
+    const rows: SelectMenuRow[] = [];
+    for (const heading of grouped.headings) {
+      const groupOptions = grouped.byGroup.get(heading)!;
+      if (!groupOptions.length) continue;
+      const expanded = isSearching ? true : expandedGroup === heading;
+      rows.push({
+        kind: 'header' as const,
+        key: `group-${heading}`,
+        id: `${listboxId}-header-${grouped.headings.indexOf(heading)}`,
+        heading,
+        expanded,
+      });
+      if (expanded) {
+        for (const option of groupOptions) {
+          const flatIndex = filtered.indexOf(option);
+          rows.push({
+            kind: 'option' as const,
+            key: `${option.value}__${option.label}`,
+            id: `${listboxId}-${flatIndex}`,
+            option,
+            flatIndex,
+          });
+        }
+      }
+    }
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, grouped, expandableGroups, expandedGroup, isSearching, listboxId]);
+
+  // Accordion toggle: expanding one country collapses the previous.
+  // Highlight stays on the toggled header; nothing is selected.
+  const toggleExpand = (heading: string) => {
+    const rowIndex = visibleRows.findIndex(
+      (row) => row.kind === 'header' && row.heading === heading,
+    );
+    setExpandedGroup((current) => (current === heading ? null : heading));
+    if (rowIndex >= 0) setHighlight(rowIndex);
+  };
+
   const close = () => {
     setOpen(false);
     setQuery('');
@@ -110,21 +335,57 @@ export function SearchableSelect({
   // Fixed portal position anchored to the input: same width, flips above the
   // input near the viewport bottom edge, and stays inside the viewport
   // horizontally. Mirrors the InlineLeadField portal positioning.
+  // The menu also grows (up to the viewport width) to fit the longest option
+  // label so full names stay visible instead of being cut off; anything
+  // longer still wraps inside its row (see the option button below).
+  //
+  // Horizontal stability: left/width are (re)calculated only when the menu
+  // opens, when the option content genuinely changes, or on window scroll /
+  // resize. Searching, expanding/collapsing groups, highlighting, selecting
+  // and option-array identity churn must never move the menu: content edits
+  // keep the anchored geometry instead of retriggering the measurement.
+  const liveOptionsRef = useRef<{ options: SearchableSelectOption[]; rowCount: number }>({
+    options,
+    rowCount: filtered.length,
+  });
+  liveOptionsRef.current = { options, rowCount: filtered.length };
+  // Signature of the option CONTENT (not array identity): a background
+  // refetch that returns the same destinations must not reposition anything,
+  // while genuinely new content deliberately re-fits the menu once.
+  const contentSignature = useMemo(() => {
+    let longest = 0;
+    for (const option of options) longest = Math.max(longest, option.label.length);
+    return `${options.length}:${longest}`;
+  }, [options]);
   const updateMenuPosition = useCallback(() => {
     const anchor = inputRef.current;
     if (!anchor) return;
+    const { options: liveOptions, rowCount } = liveOptionsRef.current;
     const rect = anchor.getBoundingClientRect();
-    const menuWidth = Math.max(rect.width, 176);
-    const estimatedHeight = Math.min(288, filtered.length * 36 + 8);
+    const longestLabel = liveOptions.reduce(
+      (max, option) => Math.max(max, option.label.length),
+      0,
+    );
+    const contentWidth = longestLabel * 7.5 + 56;
+    const viewportPadding = 8;
+    const maxWidth = Math.max(176, window.innerWidth - viewportPadding * 2);
+    const menuWidth = Math.min(maxWidth, Math.max(rect.width, 176, contentWidth));
+    const estimatedHeight = Math.min(288, rowCount * 36 + 8);
     const measuredHeight = menuRef.current?.offsetHeight;
     const needed = measuredHeight && measuredHeight > 0 ? measuredHeight : estimatedHeight;
-    const viewportPadding = 8;
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
     const spaceAbove = rect.top - viewportPadding;
     const shouldFlip = spaceBelow < needed && spaceAbove > spaceBelow;
     let top: number;
     let maxHeight: number;
-    if (shouldFlip) {
+    if (openUpward) {
+      // Upward-only dropdowns (e.g. itinerary destinations) never open
+      // below: the menu bottom sits a small gap above the input top, and
+      // limited space above shrinks the menu instead of flipping it.
+      maxHeight = Math.min(288, spaceAbove - 4);
+      const height = Math.min(needed, maxHeight);
+      top = rect.top - height - 4;
+    } else if (shouldFlip) {
       maxHeight = Math.min(288, spaceAbove - 4);
       const height = Math.min(needed, maxHeight);
       top = rect.top - height - 4;
@@ -138,11 +399,12 @@ export function SearchableSelect({
     }
     if (left < viewportPadding) left = viewportPadding;
     setMenuPos({ top, left, width: menuWidth, maxHeight: Math.max(120, maxHeight) });
-  }, [filtered.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openUpward]);
 
   useLayoutEffect(() => {
     if (open) updateMenuPosition();
-  }, [open, updateMenuPosition]);
+  }, [open, contentSignature, updateMenuPosition]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -197,7 +459,9 @@ export function SearchableSelect({
   // selection, and typing right after a clear starts from ''. When closed the
   // committed selection is shown. `query` is synced to the selection every
   // time the menu opens so editing starts from the current value.
-  const display = open ? query : (selected?.label ?? '');
+  // A per-option `selectedLabel` (e.g. a short public name) wins over the
+  // full menu label in the closed input; the menu always shows `label`.
+  const display = open ? query : (selected?.selectedLabel ?? selected?.label ?? '');
 
   return (
     <div ref={rootRef} className="relative">
@@ -209,8 +473,8 @@ export function SearchableSelect({
           aria-expanded={open}
           aria-controls={listboxId}
           aria-autocomplete="list"
-          {...(open && filtered[highlight]
-            ? { 'aria-activedescendant': `${listboxId}-${highlight}` }
+          {...(open && visibleRows[highlight]
+            ? { 'aria-activedescendant': visibleRows[highlight]!.id }
             : {})}
           disabled={disabled}
           placeholder={placeholder}
@@ -241,6 +505,8 @@ export function SearchableSelect({
           }}
           onChange={(event) => {
             setQuery(event.target.value);
+            // Clearing the search restores the collapsed country list.
+            if (expandableGroups && event.target.value.trim() === '') setExpandedGroup(null);
             setOpen(true);
           }}
           onKeyDown={(event) => {
@@ -249,15 +515,18 @@ export function SearchableSelect({
               if (!open) {
                 setQuery(selected?.label ?? '');
                 setOpen(true);
-              } else if (filtered.length) setHighlight((row) => (row + 1) % filtered.length);
+              } else if (visibleRows.length)
+                setHighlight((row) => (row + 1) % visibleRows.length);
             } else if (event.key === 'ArrowUp') {
               event.preventDefault();
-              if (filtered.length)
-                setHighlight((row) => (row - 1 + filtered.length) % filtered.length);
+              if (visibleRows.length)
+                setHighlight((row) => (row - 1 + visibleRows.length) % visibleRows.length);
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              const option = filtered[highlight];
-              if (open && option) commit(option);
+              const row = visibleRows[highlight];
+              if (!open || !row) return;
+              if (row.kind === 'header') toggleExpand(row.heading);
+              else commit(row.option);
             } else if (event.key === 'Escape') {
               close();
               inputRef.current?.blur();
@@ -311,29 +580,59 @@ export function SearchableSelect({
                 {query.trim() ? `No matches for "${query.trim()}"` : emptyText}
               </li>
             )}
-            {filtered.map((option, index) => (
-              // Key includes the label: distinct options may share a value
-              // (e.g. one city name in two states) while values stay plain
-              // city names for storage compatibility.
-              <li key={`${option.value}__${option.label}`} role="none">
-                <button
-                  type="button"
-                  role="option"
-                  id={`${listboxId}-${index}`}
-                  aria-selected={option.value === value}
-                  onMouseEnter={() => setHighlight(index)}
-                  onClick={() => commit(option)}
-                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
-                    highlight === index ? 'bg-slate-100' : ''
-                  }`}
-                >
-                  <span className="min-w-0 truncate">{option.label}</span>
-                  {option.value === value && option.label === selected?.label && (
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                  )}
-                </button>
-              </li>
-            ))}
+            {grouped && !expandableGroups
+              ? grouped.headings.map((heading) => (
+                  <li key={`group-${heading}`} role="presentation">
+                    <div
+                      aria-hidden="true"
+                      className="select-none px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+                    >
+                      {heading.toUpperCase()}
+                    </div>
+                    <ul>
+                      {grouped.byGroup.get(heading)!.map((option) => (
+                        <OptionRow
+                          key={`${option.value}__${option.label}`}
+                          option={option}
+                          rowIndex={filtered.indexOf(option)}
+                          optionId={`${listboxId}-${filtered.indexOf(option)}`}
+                          highlight={highlight}
+                          selected={selected}
+                          value={value}
+                          onHighlight={setHighlight}
+                          onCommit={commit}
+                        />
+                      ))}
+                    </ul>
+                  </li>
+                ))
+              : visibleRows.map((row, rowIndex) =>
+                  row.kind === 'header' ? (
+                    <CountryRow
+                      key={row.key}
+                      heading={row.heading}
+                      expanded={row.expanded}
+                      rowIndex={rowIndex}
+                      headerId={row.id}
+                      highlight={highlight}
+                      onHighlight={setHighlight}
+                      onToggle={() => toggleExpand(row.heading)}
+                    />
+                  ) : (
+                    <OptionRow
+                      key={row.key}
+                      option={row.option}
+                      rowIndex={rowIndex}
+                      optionId={row.id}
+                      highlight={highlight}
+                      selected={selected}
+                      value={value}
+                      indent={grouped != null}
+                      onHighlight={setHighlight}
+                      onCommit={commit}
+                    />
+                  ),
+                )}
           </ul>,
           document.body,
         )}

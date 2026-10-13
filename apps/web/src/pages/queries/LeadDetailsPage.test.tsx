@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import { renderWithProviders } from '@/test/utils';
 import { LeadDetailsPage } from './LeadDetailsPage';
+import { LeadFormPage } from './LeadFormPage';
 
 const authState = vi.hoisted(() => ({
   permissions: new Set<string>(['queries.view', 'queries.update']),
@@ -255,9 +256,8 @@ describe('Lead Detail page redesign', () => {
     await screen.findByText('Contact Information');
 
     // Removed: the entire top header card (back arrow button, stage badge,
-    // phone links, Edit) with no replacement card.
+    // phone links) with no replacement card.
     expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
     // Removed: right-side Lead actions panel and its controls.
     expect(screen.queryByText('Lead actions')).not.toBeInTheDocument();
     expect(screen.queryByText('Change stage')).not.toBeInTheDocument();
@@ -393,5 +393,96 @@ describe('Lead Detail page redesign', () => {
     // No misleading placeholders for missing optional values.
     expect(screen.queryByText('N/A')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain('null');
+  });
+});
+
+describe('Lead Details header Edit button', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    authState.permissions = new Set(['queries.view', 'queries.update']);
+  });
+
+  it('shows an Edit button in the header for authorized users', async () => {
+    stubDetail(richWorkspace);
+    renderDetail();
+    const heading = await screen.findByRole('heading', { name: 'Aarav Mehta' });
+
+    const edit = screen.getByRole('link', { name: 'Edit' });
+    expect(edit).toHaveAttribute('href', '/queries/lead-1/edit');
+    // Pencil icon, aligned with the lead name/ID block.
+    expect(edit.querySelector('svg')).not.toBeNull();
+    expect(heading.parentElement?.parentElement).toContainElement(edit);
+  });
+
+  it('hides the Edit button when the workspace forbids editing the lead', async () => {
+    stubDetail({
+      ...richWorkspace,
+      permissions: { ...richWorkspace.permissions, canEdit: false },
+    });
+    renderDetail();
+    await screen.findByRole('heading', { name: 'Aarav Mehta' });
+
+    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+
+  it('hides the Edit button without the global update permission', async () => {
+    authState.permissions = new Set(['queries.view']);
+    stubDetail(richWorkspace);
+    renderDetail();
+    await screen.findByRole('heading', { name: 'Aarav Mehta' });
+
+    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+
+  it('opens the existing lead in edit mode with saved values hydrated', async () => {
+    const lookups = {
+      countries: ['India'],
+      cities: ['Delhi'],
+      leadSources: [{ value: 'WEBSITE', label: 'Website' }],
+      leadTypes: [{ value: 'HOT', label: 'Hot' }],
+      leadStages: [{ value: 'NEW_LEAD', label: 'New Lead' }],
+      priorities: [{ value: 'HIGH', label: 'High' }],
+      serviceTypes: [
+        { value: 'FLIGHT', label: 'Flight' },
+        { value: 'HOTEL', label: 'Hotel' },
+      ],
+      tripTypes: ['Leisure'],
+      currencies: ['INR'],
+      assignableUsers: [{ id: 'me', fullName: 'Owner', username: 'owner' }],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('/workspace'))
+          return response({ ...richWorkspace, lead: richLead });
+        if (url.match(/\/queries\/lead-1(\?|$)/) && options?.method !== 'PATCH')
+          return response(richLead);
+        if (url.includes('/masters/destinations'))
+          return response({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } });
+        if (url.includes('/notes')) return response([]);
+        if (url.includes('/follow-ups')) return response([]);
+        if (url.includes('/timeline'))
+          return response({ data: [], pagination: {} });
+        if (url.includes('/lookups')) return response(lookups);
+        return response({ data: [], pagination: {} });
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:queryId" element={<LeadDetailsPage />} />
+        <Route path="/queries/:queryId/edit" element={<LeadFormPage />} />
+      </Routes>,
+      { route: '/queries/lead-1' },
+    );
+
+    await screen.findByRole('heading', { name: 'Aarav Mehta' });
+    await userEvent.click(screen.getByRole('link', { name: 'Edit' }));
+
+    // The existing Edit Lead route renders in edit mode for this lead.
+    await screen.findByRole('heading', { name: 'Edit lead' });
+    // Saved values hydrate into the form (lead name, phone, traveller name).
+    expect(screen.getByLabelText('Name')).toHaveValue('Aarav Mehta');
+    expect(screen.getByLabelText('Phone')).toHaveValue('+91 98765 43210');
   });
 });

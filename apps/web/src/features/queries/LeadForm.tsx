@@ -28,6 +28,22 @@ import { cn } from '@/utils/cn';
 
 const ITINERARY_DESTINATIONS_PARAMS = new URLSearchParams('pageSize=100&status=ACTIVE');
 
+/**
+ * Display label for an itinerary destination option: `Destination — Private`
+ * whenever a private name exists. A blank or destination-identical private
+ * name collapses to the plain destination name so text is never duplicated.
+ * Display/search only — the submitted value stays the destination name.
+ */
+export function destinationOptionLabel(
+  name: string,
+  privateName: string | null | undefined,
+): string {
+  const suffix = (privateName ?? '').trim();
+  if (!suffix) return name;
+  if (suffix.toLowerCase() === name.trim().toLowerCase()) return name;
+  return `${name} — ${suffix}`;
+}
+
 interface ItineraryForm {
   country: string;
   destination: string;
@@ -419,14 +435,18 @@ export function LeadForm({
     return map;
   }, [itineraryDestinations.data?.data]);
   // Searchable-select shape of the same destination list (Create form only).
-  // The closed field shows the plain public name — the submitted value is
-  // always the destination name — while the private name stays searchable.
+  // The menu option shows `Destination — Private Name` when a private name
+  // exists (plain name otherwise); the committed input shows only the public
+  // destination name. The submitted value is always the destination name,
+  // both names stay searchable, and options group by country.
   const destinationSelectOptions = useMemo(
     () =>
       (itineraryDestinations.data?.data ?? []).map((destination) => ({
         value: destination.name,
-        label: destination.name,
+        label: destinationOptionLabel(destination.name, destination.privateName),
+        selectedLabel: destination.name,
         searchText: destination.privateName ?? null,
+        group: destination.countryName,
       })),
     [itineraryDestinations.data?.data],
   );
@@ -974,6 +994,8 @@ export function LeadForm({
                   ariaLabel={`Destination ${index + 1}`}
                   placeholder="Select Destination"
                   options={destinationSelectOptions}
+                  expandableGroups
+                  openUpward
                   value={itineraryRows?.[index]?.country ?? ''}
                   onChange={(next) => {
                     setValue(`itinerary.${index}.country`, next, { shouldDirty: true });
@@ -995,6 +1017,7 @@ export function LeadForm({
                   options={(
                     destinationCityMap.get(itineraryRows?.[index]?.country ?? '') ?? []
                   ).map((cityName) => ({ value: cityName, label: cityName }))}
+                  openUpward
                   value={itineraryRows?.[index]?.destination ?? ''}
                   disabled={!itineraryRows?.[index]?.country}
                   onChange={(next) =>

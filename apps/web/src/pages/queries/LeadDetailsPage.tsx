@@ -7,6 +7,7 @@ import {
   History,
   MapPin,
   MessageSquarePlus,
+  Pencil,
   Route as RouteIcon,
   UserRound,
   Users,
@@ -210,15 +211,26 @@ export function LeadDetailsPage() {
       </div>
 
       {/* B. Lead identity */}
-      <div>
-        <h1 className="break-words text-2xl font-semibold text-slate-950">
-          {q.customerName}
-        </h1>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          <span className="font-medium text-slate-700">{q.queryNumber}</span>
-          <span aria-hidden="true">•</span>
-          <span>Created {dateTime(q.createdAt)}</span>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="break-words text-2xl font-semibold text-slate-950">
+            {q.customerName}
+          </h1>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span className="font-medium text-slate-700">{q.queryNumber}</span>
+            <span aria-hidden="true">•</span>
+            <span>Created {dateTime(q.createdAt)}</span>
+          </div>
         </div>
+        {allowed.canEdit && hasPermission('queries.update') && (
+          <Link
+            to={`/queries/${q.id}/edit`}
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground shadow-sm transition-all hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:enabled:translate-y-px"
+          >
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+            Edit
+          </Link>
+        )}
       </div>
 
       {/* C. Section navigation */}

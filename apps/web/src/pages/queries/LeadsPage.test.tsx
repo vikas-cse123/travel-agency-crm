@@ -1104,7 +1104,7 @@ describe('Phase 6 lead pages', () => {
       expect(body.services).toContain('SIGHTSEEING');
     });
   });
-  it('keeps destination private names searchable while storing only the destination name', async () => {
+  it('shows destination private names in options while storing only the destination name', async () => {
     authState.permissions.delete('queries.assign');
     const destinations = [
       {
@@ -1151,21 +1151,33 @@ describe('Phase 6 lead pages', () => {
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
     const destInput = screen.getByLabelText('Destination 1');
     await userEvent.click(destInput);
-    // The open list shows every destination by its public name.
+    // The open list starts collapsed showing only country rows (these
+    // fixtures carry no country, so everything sits under Other).
+    const menu = await screen.findByRole('listbox', { name: 'Destination 1 search results' });
+    expect(within(menu).getByRole('button', { name: 'OTHER' })).toBeInTheDocument();
     expect(
-      await screen.findByRole('listbox', { name: 'Destination 1 search results' }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Goa Beach Escape' })).toBeInTheDocument();
+      within(menu).queryByRole('option', { name: 'Goa Beach Escape — GBE' }),
+    ).not.toBeInTheDocument();
+    // Expanding the country reveals its destinations with combined labels;
+    // destinations without a private name (or a whitespace-only one) show
+    // the plain name.
+    await userEvent.click(within(menu).getByRole('button', { name: 'OTHER' }));
+    expect(screen.getByRole('option', { name: 'Goa Beach Escape — GBE' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Singapore' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Lucknow' })).toBeInTheDocument();
     // A private name still finds its destination through search, even with
     // whitespace-only private names treated as empty.
     fireEvent.change(destInput, { target: { value: 'gbe' } });
-    expect(screen.getByRole('option', { name: 'Goa Beach Escape' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Goa Beach Escape — GBE' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'Singapore' })).not.toBeInTheDocument();
     fireEvent.change(destInput, { target: { value: '' } });
-    await userEvent.click(screen.getByRole('option', { name: 'Goa Beach Escape' }));
-    // Closed field shows only the public name.
+    // Clearing restores the collapsed country list.
+    expect(
+      screen.queryByRole('option', { name: 'Goa Beach Escape — GBE' }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'OTHER' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Goa Beach Escape — GBE' }));
+    // Closed field shows only the public destination name.
     expect(destInput).toHaveValue('Goa Beach Escape');
     await pickItineraryCity(1, 'Goa');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
@@ -1518,14 +1530,16 @@ describe('Phase 6 lead pages', () => {
       { route: `/queries/${editLead.id}/edit` },
     );
     await screen.findByRole('heading', { name: 'Edit lead' });
-    // Stored values prefill the searchable fields once options load.
+    // Stored values prefill the searchable fields once options load. The
+    // destination input shows only the public name while the stored value
+    // stays plain.
     const destination = screen.getByLabelText('Destination 1');
     await waitFor(() => expect(destination).toHaveValue('Goa Beach Escape'));
     expect(screen.getByLabelText('City 1')).toHaveValue('Goa');
     // Private names stay searchable without leaking into stored values.
     await userEvent.click(destination);
     fireEvent.change(destination, { target: { value: 'avd' } });
-    expect(screen.getByRole('option', { name: 'Lucknow' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Lucknow — avd' })).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     // Changing the destination clears the city; saving keeps payload formats.
     await pickItineraryDestination(1, 'Singapore');
@@ -5097,3 +5111,4 @@ describe('Lead traveller names', () => {
     expect(screen.getByLabelText('Infant 1 Age (Months)')).toHaveValue(1);
   });
 });
+
