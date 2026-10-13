@@ -5587,7 +5587,6 @@ export function QuotationBuilderPage() {
                             min={1}
                             max={365}
                             step={1}
-                            placeholder="Optional"
                             value={(cruise as unknown as { cruiseNights?: number | null })?.cruiseNights ?? ''}
                             onChange={(event) => {
                               const raw = event.target.value;
