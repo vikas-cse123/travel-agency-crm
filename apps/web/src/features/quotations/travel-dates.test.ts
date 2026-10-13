@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { formatTravelMonthYear, resolveTravelDates } from './travel-dates';
+import {
+  formatDayMonthYear,
+  formatTravelMonthYear,
+  leadTravelDatesLabelDMY,
+  resolveTravelDates,
+} from './travel-dates';
 
 /**
  * Travel-date resolution. "Open" must never appear as an end date; when the end
@@ -154,5 +159,44 @@ describe('formatTravelMonthYear', () => {
     expect(formatTravelMonthYear(0, 2026)).toBeNull();
     expect(formatTravelMonthYear(13, 2026)).toBeNull();
     expect(formatTravelMonthYear(12.5, 2026)).toBeNull();
+  });
+});
+
+describe('leadTravelDatesLabelDMY', () => {
+  it('formats a stored range as DD-MM-YYYY on both ends', () => {
+    expect(leadTravelDatesLabelDMY('2026-11-05', '2026-11-10')).toBe('05-11-2026 – 10-11-2026');
+  });
+
+  it('zero-pads single-digit days and months', () => {
+    expect(leadTravelDatesLabelDMY('2026-01-05', '2026-02-09')).toBe('05-01-2026 – 09-02-2026');
+  });
+
+  it('shows only the start date when no reliable duration exists', () => {
+    expect(leadTravelDatesLabelDMY('2026-11-05', null)).toBe('05-11-2026');
+  });
+
+  it('derives the end from trip days in the same format', () => {
+    expect(leadTravelDatesLabelDMY('2026-11-05', null, 6)).toBe('05-11-2026 – 10-11-2026');
+  });
+
+  it('crosses month boundaries without shifting days', () => {
+    expect(leadTravelDatesLabelDMY('2026-01-30', '2026-02-02')).toBe('30-01-2026 – 02-02-2026');
+  });
+
+  it('returns an empty label when there is no start date', () => {
+    expect(leadTravelDatesLabelDMY(null, '2026-11-10')).toBe('');
+    expect(leadTravelDatesLabelDMY(null, null)).toBe('');
+  });
+
+  it('never uses locale slashes', () => {
+    expect(leadTravelDatesLabelDMY('2026-11-05', '2026-11-10')).not.toContain('/');
+  });
+});
+
+describe('formatDayMonthYear', () => {
+  it('formats UTC calendar days with padding', () => {
+    expect(formatDayMonthYear(new Date(Date.UTC(2026, 10, 5)))).toBe('05-11-2026');
+    expect(formatDayMonthYear(null)).toBe('');
+    expect(formatDayMonthYear(undefined)).toBe('');
   });
 });

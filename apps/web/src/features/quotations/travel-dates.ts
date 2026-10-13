@@ -20,6 +20,17 @@ function fmt(d: Date | null): string {
   return d ? d.toLocaleDateString() : '';
 }
 
+/**
+ * Format a UTC calendar day as DD-MM-YYYY (e.g. 05-11-2026), zero-padded.
+ * Reads UTC parts so date-only strings never shift a day across timezones.
+ */
+export function formatDayMonthYear(d: Date | null | undefined): string {
+  if (!d) return '';
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${day}-${month}-${d.getUTCFullYear()}`;
+}
+
 export interface TravelDateInput {
   start: string | Date | null | undefined;
   end: string | Date | null | undefined;
@@ -110,4 +121,20 @@ export function leadTravelDatesLabel(
   totalDays?: number | null | undefined,
 ): string {
   return resolveTravelDates({ start, end, totalDays }).label;
+}
+
+/**
+ * Lead Details page variant: full travel dates as DD-MM-YYYY (e.g.
+ * `05-11-2026 – 10-11-2026`), reusing the same range-resolution rules.
+ * Returns '' so callers can show their existing empty/fallback value.
+ */
+export function leadTravelDatesLabelDMY(
+  start: string | Date | null | undefined,
+  end: string | Date | null | undefined,
+  totalDays?: number | null | undefined,
+): string {
+  const { start: startDay, end: endDay } = resolveTravelDates({ start, end, totalDays });
+  if (!startDay) return '';
+  if (!endDay) return formatDayMonthYear(startDay);
+  return `${formatDayMonthYear(startDay)} – ${formatDayMonthYear(endDay)}`;
 }

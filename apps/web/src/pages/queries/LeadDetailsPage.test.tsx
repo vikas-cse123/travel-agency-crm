@@ -394,6 +394,29 @@ describe('Lead Detail page redesign', () => {
     expect(screen.queryByText('N/A')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain('null');
   });
+
+  it('displays stored travel dates as DD-MM-YYYY', async () => {
+    stubDetail({
+      ...richWorkspace,
+      lead: { ...richLead, travelStartDate: '2026-11-05', travelEndDate: '2026-11-10' },
+    });
+    renderDetail();
+    await screen.findByText('Contact Information');
+
+    // Range shares the row with the month label, so match on containment.
+    expect(document.body.textContent).toContain('05-11-2026 – 10-11-2026');
+    // No ambiguous locale-slash rendering of the range.
+    expect(document.body.textContent).not.toContain('11/5/2026');
+    expect(document.body.textContent).not.toContain('11/10/2026');
+  });
+
+  it('keeps month-only travel timing when no travel dates exist', async () => {
+    stubDetail(richWorkspace);
+    renderDetail();
+    await screen.findByText('Contact Information');
+
+    expect(screen.getByText('April 2025')).toBeInTheDocument();
+  });
 });
 
 describe('Lead Details header Edit button', () => {

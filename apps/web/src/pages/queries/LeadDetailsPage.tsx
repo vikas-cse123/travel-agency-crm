@@ -27,7 +27,7 @@ import {
   useTimeline,
   type Lead,
 } from '@/features/queries/queries.api';
-import { formatTravelMonthYear, leadTravelDatesLabel } from '@/features/quotations/travel-dates';
+import { formatTravelMonthYear, leadTravelDatesLabelDMY } from '@/features/quotations/travel-dates';
 
 const inputClass = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
 
@@ -173,7 +173,7 @@ export function LeadDetailsPage() {
 
   const travelDateLabel =
     [
-      leadTravelDatesLabel(
+      leadTravelDatesLabelDMY(
         q.travelStartDate,
         q.travelEndDate,
         q.itinerary.length
