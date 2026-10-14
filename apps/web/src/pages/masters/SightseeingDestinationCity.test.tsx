@@ -256,7 +256,7 @@ describe('Sightseeing edit destination/city IDs (regression)', () => {
   it('blocks submit while a different record is still loading', async () => {
     const user = userEvent.setup();
     const otherId = '11111111-2222-4333-8444-555555555555';
-    let resolveOther: ((value: unknown) => void) | null = null;
+    let resolveOther: ((value: Response | PromiseLike<Response>) => void) | null = null;
     const calls: Call[] = [];
     const otherRecord = makeRecord({
       id: otherId, title: 'OTHER ATTRACTION',
