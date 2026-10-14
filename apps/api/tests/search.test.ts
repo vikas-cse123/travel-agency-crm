@@ -169,6 +169,9 @@ describe('GET /api/search', () => {
     expect(calledUrl.href).toContain('checked_bags=2');
     expect(calledUrl.href).toContain('emissions=1');
     expect(calledUrl.href).toContain('flight_type=round_trip');
+    expect(calledUrl.href).toContain('show_hidden_flights=true');
+    expect(calledUrl.href).toContain('show_cheapest_flights=true');
+    expect(calledUrl.href).toContain('expanded_search=true');
     fetchMock.mockRestore();
   });
 
@@ -198,6 +201,9 @@ describe('GET /api/search', () => {
     // a same-day round trip and return round-trip fares).
     expect(calledUrl.href).not.toContain('return_date');
     expect(calledUrl.href).not.toContain('departure_token');
+    expect(calledUrl.href).toContain('show_hidden_flights=true');
+    expect(calledUrl.href).toContain('show_cheapest_flights=true');
+    expect(calledUrl.href).toContain('expanded_search=true');
     fetchMock.mockRestore();
   });
 
@@ -220,6 +226,9 @@ describe('GET /api/search', () => {
     expect(calledUrl.href).toContain('flight_type=round_trip');
     expect(calledUrl.href).toContain('outbound_date=2026-09-05');
     expect(calledUrl.href).toContain('return_date=2026-09-10');
+    expect(calledUrl.href).toContain('show_hidden_flights=true');
+    expect(calledUrl.href).toContain('show_cheapest_flights=true');
+    expect(calledUrl.href).toContain('expanded_search=true');
     fetchMock.mockRestore();
   });
 
@@ -242,6 +251,9 @@ describe('GET /api/search', () => {
     expect(calledUrl.href).toContain('departure_token=DEP_TOK_123');
     expect(calledUrl.href).toContain('flight_type=round_trip');
     expect(calledUrl.href).toContain('return_date=2026-09-10');
+    expect(calledUrl.href).toContain('show_hidden_flights=true');
+    expect(calledUrl.href).toContain('show_cheapest_flights=true');
+    expect(calledUrl.href).toContain('expanded_search=true');
     fetchMock.mockRestore();
   });
 
@@ -269,6 +281,82 @@ describe('GET /api/search', () => {
     expect(calledUrl.href).toContain('engine=google_flights');
     expect(calledUrl.href).toContain('departure_id=DEL');
     expect(calledUrl.href).toContain('return_date=2026-09-08');
+    fetchMock.mockRestore();
+  });
+
+  it('enables expanded search by default on every flight request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(flightFixture), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const client = createAuthClient(app);
+    await owner(client);
+
+    // Initial round-trip outbound search.
+    const outbound = await client.get(
+      '/api/search/flights?departure_id=DEL&arrival_id=SIN&outbound_date=2026-09-05&return_date=2026-09-10&type=2&currency=INR',
+    );
+    expect(outbound.status).toBe(200);
+
+    // Return-leg search using departure_token.
+    const ret = await client.get(
+      '/api/search/flights?departure_id=DEL&arrival_id=SIN&outbound_date=2026-09-05&return_date=2026-09-10&type=2&departure_token=DEP_TOK_123&currency=INR',
+    );
+    expect(ret.status).toBe(200);
+
+    // Refresh: repeat the outbound search; provider is hit again with same flags.
+    const refresh = await client.get(
+      '/api/search/flights?departure_id=DEL&arrival_id=SIN&outbound_date=2026-09-05&return_date=2026-09-10&type=2&currency=INR',
+    );
+    expect(refresh.status).toBe(200);
+
+    expect(fetchMock.mock.calls.length).toBe(3);
+    for (const call of fetchMock.mock.calls) {
+      const url = call[0] as URL;
+      expect(url.href).toContain('engine=google_flights');
+      expect(url.href).toContain('show_hidden_flights=true');
+      expect(url.href).toContain('show_cheapest_flights=true');
+      expect(url.href).toContain('expanded_search=true');
+    }
+    const returnUrl = fetchMock.mock.calls[1]?.[0] as URL;
+    expect(returnUrl.href).toContain('departure_token=DEP_TOK_123');
+    fetchMock.mockRestore();
+  });
+
+  it('passes best_flights and other_flights through unchanged with expanded search', async () => {
+    const expandedFixture = {
+      ...flightFixture,
+      best_flights: [
+        ...flightFixture.best_flights,
+        { ...flightFixture.best_flights[0], price: 388 },
+      ],
+      other_flights: [{ ...flightFixture.best_flights[0], price: 455 }],
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify(expandedFixture), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const client = createAuthClient(app);
+    await owner(client);
+    const response = await client.get(
+      '/api/search/flights?departure_id=DEL&arrival_id=LON&outbound_date=2026-09-01&type=1',
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.data.best_flights).toHaveLength(2);
+    expect(response.body.data.other_flights).toHaveLength(1);
+    expect(response.body.data.best_flights[1].price).toBe(388);
+    expect(response.body.data.other_flights[0].price).toBe(455);
+
+    const calledUrl = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(calledUrl.href).toContain('expanded_search=true');
     fetchMock.mockRestore();
   });
 
@@ -1210,8 +1298,91 @@ describe('Multi-key SearchAPI rotation', () => {
   });
 });
 
-describe('Owner SearchAPI usage dashboard', () => {
-  const flightUrl = () =>
+describe('POST /api/search/keys/test error categorization', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const okProvider = () =>
+    new Response(JSON.stringify({ suggestions: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  const errProvider = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  async function usageRows() {
+    return db.searchApiUsage.findMany({ orderBy: { createdAt: 'asc' } });
+  }
+
+  it('records SUCCESS when the provider answers', async () => {
+    const client = createAuthClient(app);
+    await owner(client, 'testcat1@test.in');
+    vi.stubGlobal('fetch', vi.fn(async () => okProvider()));
+    const response = await client.post('/api/search/keys/test', { apiKey: 'candidate-key-AAAA' });
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ connected: true });
+    const rows = await usageRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: 'AUTOCOMPLETE',
+      engine: 'google_hotels_autocomplete',
+      status: 'SUCCESS',
+    });
+    expect(JSON.stringify(response.body)).not.toContain('candidate-key-AAAA');
+  });
+
+  it('records NETWORK_ERROR (never invalid key) when the provider is unreachable', async () => {
+    const client = createAuthClient(app);
+    await owner(client, 'testcat2@test.in');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+    const response = await client.post('/api/search/keys/test', { apiKey: 'candidate-key-BBBB' });
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ connected: false, reason: 'unreachable' });
+    const rows = await usageRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: 'AUTOCOMPLETE', status: 'NETWORK_ERROR' });
+    expect(JSON.stringify(response.body)).not.toContain('candidate-key-BBBB');
+  });
+
+  it('records PROVIDER_ERROR for non-auth HTTP failures', async () => {
+    const client = createAuthClient(app);
+    await owner(client, 'testcat3@test.in');
+    vi.stubGlobal('fetch', vi.fn(async () => errProvider(500, { error: 'Internal error' })));
+    const response = await client.post('/api/search/keys/test', { apiKey: 'candidate-key-CCCC' });
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ connected: false, reason: 'error' });
+    const rows = await usageRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: 'AUTOCOMPLETE', status: 'PROVIDER_ERROR' });
+  });
+
+  it('keeps quota and invalid-key mapping for 429 and 401', async () => {
+    const client = createAuthClient(app);
+    await owner(client, 'testcat4@test.in');
+    vi.stubGlobal('fetch', vi.fn(async () => errProvider(429, { error: 'Rate limit exceeded' })));
+    const quota = await client.post('/api/search/keys/test', { apiKey: 'candidate-key-DDDD' });
+    expect(quota.body.data).toMatchObject({ connected: false, reason: 'quota' });
+
+    vi.stubGlobal('fetch', vi.fn(async () => errProvider(401, { error: 'Invalid API key' })));
+    const invalid = await client.post('/api/search/keys/test', { apiKey: 'candidate-key-EEEE' });
+    expect(invalid.body.data).toMatchObject({ connected: false, reason: 'invalid' });
+
+    const rows = await usageRows();
+    expect(rows.map((row) => row.status)).toEqual(['QUOTA_EXHAUSTED', 'INVALID_KEY']);
+  });
+});
+
+describe('Owner SearchAPI usage dashboard', () => {  const flightUrl = () =>
     '/api/search/flights?departure_id=DEL&arrival_id=SIN&outbound_date=2026-09-05&return_date=2026-09-10&type=2';
 
   beforeEach(async () => {

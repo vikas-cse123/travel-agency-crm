@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Baby,
   Ban,
@@ -23,14 +23,12 @@ import {
   MessageCircle,
   Phone,
   Ship,
-  Plane,
   Star,
   Utensils,
   XCircle,
 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import {
-  cabinLuggageLabel,
   formatDayPrefixedTitle,
   formatItineraryDayTitle,
   formatAgeList,
@@ -46,7 +44,6 @@ import {
   resolveQuotationPricing,
   resolveWeblinkSectionOrder,
   normalizeFaqs,
-  normalizeFlightDetails,
   getFlightPerTravelerBreakdown,
 } from '@interscale/shared';
 import { useFavicon } from '@/hooks/useFavicon';
@@ -54,16 +51,24 @@ import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { formatTime12Hour } from '@/utils/dateTime';
 import { buildQuotationDescription, normalizeWhatsAppPhone } from './quotationContact';
 import type {
-  FlightJourney,
-  FlightSegment,
   QuotationVersion,
   SightseeingDay,
 } from '@/features/quotations/quotations.api';
+import {
+  SectionTitle,
+  RichHtml,
+  dateShort,
+  sanitizeHtml,
+  FlightJourneyView,
+  FlightImageViewer,
+  buildFlightLegs,
+  flightSegmentHasData,
+} from './FlightPublicView';
 import { PublicQuotationContact } from './PublicQuotationContact';
 import { PublicQuotationFooter } from './PublicQuotationFooter';
 import { BackToTop } from './BackToTop';
 import { QuotationLightbox } from './QuotationLightbox';
-import { activeScrollSpyId, scrollToSectionId } from './scroll';
+import { activeScrollSpyId, prefersReducedMotion } from './scroll';
 import { serviceCardIcon, type ServiceCard } from './serviceCards';
 import { formatPublicQuotationNumber } from './quotationContact';
 import {
@@ -71,7 +76,7 @@ import {
   normalizeAddonPricingSnapshot,
 } from '@/features/quotations/addonPricing';
 
-interface PublicQuotation {
+export interface PublicQuotation {
   company: {
     name: string;
     email: string;
@@ -208,30 +213,6 @@ const ADDON_SERVICE_TYPES = new Set([
   'GENERAL_ENQUIRY',
 ]);
 
-/** Staff-authored rich text, defanged before it reaches the customer's browser. */
-const sanitizeHtml = (html: string) =>
-  html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/\son\w+="[^"]*"/gi, '')
-    .replace(/\son\w+='[^']*'/gi, '')
-    .replace(/javascript:/gi, '');
-
-function RichHtml({ html }: { html: string }) {
-  return (
-    <div
-      className="weblink-rich-text rich-text-content text-sm leading-relaxed text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
-      dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
-    />
-  );
-}
-
-const dateShort = (value: string | null | undefined) =>
-  value
-    ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(
-        new Date(value),
-      )
-    : null;
-
 /** True when rich-text HTML contains visible content (editor-empty markup excluded). */
 const hasPolicyHtml = (html?: string | null): boolean =>
   Boolean(html && html.replace(/<[^>]*>/g, '').trim());
@@ -324,54 +305,77 @@ function Info({ label, value, full }: { label: string; value: string; full?: boo
   );
 }
 
-/** Stable anchor id derived from a section's title. */
-const sectionAnchorId = (title: string) =>
-  `section-${title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')}`;
-
-function SectionTitle({ children }: { children: string }) {
-  return (
-    <h2
-      id={sectionAnchorId(children)}
-      data-section-title={children}
-      className="mb-4 scroll-mt-24 border-l-4 pl-3 text-2xl font-bold text-[#000000]"
-      style={{ borderColor: '#16a34a' }}
-    >
-      {children}
-    </h2>
-  );
-}
+/**
+ * Document scope for DOM-reading descendants of the shared quotation view
+ * (quick navigation, scroll-spy). On the real weblink this resolves to
+ * `document`; when the view is portalled into a builder preview iframe it
+ * resolves to that frame's document, so section queries never leak across.
+ */
+const QuotationDocumentContext = createContext<() => Document>(() => document);
 
 /**
  * "Quick Navigation" index shown near the top of the public quotation. It reads
  * the rendered section headings from the DOM (every SectionTitle carries a
  * data-section-title), so it always reflects exactly the sections that are
  * present for this quotation, and smooth-scrolls to one on click.
+ *
+ * All DOM access is scoped to this quotation's own document, so the index also
+ * works when the quotation renders inside a preview iframe: on the real
+ * weblink the scope is `document` and behaviour is unchanged.
  */
 function SectionNav({ sticky }: { sticky: boolean }) {
   const [sections, setSections] = useState<Array<{ id: string; label: string }>>([]);
   const [activeId, setActiveId] = useState<string>('');
+  // The document this instance lives in — `document` on the real weblink, the
+  // frame document inside a builder preview. Stable across renders.
+  const getOwnerDoc = useContext(QuotationDocumentContext);
+  const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    const root = getOwnerDoc();
     const collect = () => {
-      const nodes = Array.from(document.querySelectorAll<HTMLElement>('[data-section-title]'));
-      setSections(
-        nodes
-          .filter((node) => node.id)
-          .map((node) => ({
-            id: node.id,
-            label: node.dataset.sectionTitle ?? node.textContent ?? '',
-          })),
+      const nodes = Array.from(root.querySelectorAll<HTMLElement>('[data-section-title]'));
+      const next = nodes
+        .filter((node) => node.id)
+        .map((node) => ({
+          id: node.id,
+          label: node.dataset.sectionTitle ?? node.textContent ?? '',
+        }));
+      // Section headings re-render with live data (e.g. an edited Section
+      // Title in the builder preview), so only skip the update when nothing
+      // actually changed — this also keeps the observer below from looping.
+      setSections((current) =>
+        current.length === next.length &&
+        current.every(
+          (entry, index) => entry.id === next[index]?.id && entry.label === next[index]?.label,
+        )
+          ? current
+          : next,
       );
     };
     collect();
     // Re-read once more after paint in case a section renders asynchronously
     // (e.g. once its images resolve).
     const timer = window.setTimeout(collect, 400);
-    return () => window.clearTimeout(timer);
-  }, []);
+    // Headings can change after mount (live preview edits), so re-collect on
+    // DOM changes within this quotation's own document only.
+    let observer: MutationObserver | null = null;
+    const target = root.documentElement ?? root.body;
+    if (target && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(collect);
+      observer.observe(target, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['data-section-title'],
+      });
+    }
+    return () => {
+      window.clearTimeout(timer);
+      observer?.disconnect();
+    };
+  }, [getOwnerDoc]);
 
   // Scroll-spy: the active chip always tracks the section currently in view.
   // The active section is the last heading at or above a trigger line just
@@ -382,8 +386,10 @@ function SectionNav({ sticky }: { sticky: boolean }) {
   // scroll fully under the bar, and without this the previous section would
   // incorrectly keep the green state. Exactly one id is ever active.
   useEffect(() => {
+    const root = getOwnerDoc();
+    const view = root.defaultView ?? window;
     const nodes = sections
-      .map((section) => document.getElementById(section.id))
+      .map((section) => root.getElementById(section.id))
       .filter((node): node is HTMLElement => Boolean(node));
     if (!nodes.length) return;
     let frame = 0;
@@ -394,25 +400,25 @@ function SectionNav({ sticky }: { sticky: boolean }) {
         sections,
         (id) => tops.get(id) ?? null,
         {
-          scrollY: window.scrollY,
-          innerHeight: window.innerHeight,
-          documentHeight: document.documentElement.scrollHeight,
+          scrollY: view.scrollY,
+          innerHeight: view.innerHeight,
+          documentHeight: root.documentElement.scrollHeight,
         },
       );
       setActiveId((current) => (current === next ? current : next));
     };
     const schedule = () => {
-      if (!frame) frame = window.requestAnimationFrame(update);
+      if (!frame) frame = view.requestAnimationFrame(update);
     };
     update();
-    window.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', schedule);
+    view.addEventListener('scroll', schedule, { passive: true });
+    view.addEventListener('resize', schedule);
     return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      window.removeEventListener('scroll', schedule);
-      window.removeEventListener('resize', schedule);
+      if (frame) view.cancelAnimationFrame(frame);
+      view.removeEventListener('scroll', schedule);
+      view.removeEventListener('resize', schedule);
     };
-  }, [sections]);
+  }, [sections, getOwnerDoc]);
 
   // Keep the active chip centred within the horizontally scrollable bar (only
   // the bar scrolls, never the page), so it stays visible when chips overflow.
@@ -432,11 +438,16 @@ function SectionNav({ sticky }: { sticky: boolean }) {
 
   const goTo = (id: string) => {
     setActiveId(id);
-    scrollToSectionId(id);
+    // Same behaviour as scrollToSectionId, but scoped to this nav's own
+    // document so quick navigation also works inside a preview iframe.
+    const el = getOwnerDoc().getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
   };
 
   return (
     <nav
+      ref={navRef}
       aria-label="Quotation sections"
       className={`${
         sticky ? 'sticky top-3 z-30' : ''
@@ -742,174 +753,6 @@ function FaqSection({ faqs }: { faqs: Array<{ question: string; answer: string }
   );
 }
 
-/** A single flight journey (outbound or return) rendered as timeline cards. */
-function FlightJourneyView({
-  title,
-  journey,
-  color,
-  airlinePresentations,
-}: {
-  title: string;
-  journey: FlightJourney;
-  color: string;
-  airlinePresentations?: Record<string, { name: string; logoUrl: string | null }> | undefined;
-}) {
-  const segments = (journey.segments ?? []).filter(
-    (s) => s.airlineName || s.from || s.to || s.departureTime || s.flightNumber,
-  );
-  if (!segments.length) return null;
-  const route = [journey.fromCity, journey.toCity].filter(Boolean).join(' → ');
-  return (
-    <section className="overflow-hidden rounded-xl border shadow-sm">
-      <div
-        className="flex flex-wrap items-center gap-2 px-5 py-3 font-semibold text-white"
-        style={{ backgroundColor: color }}
-      >
-        <Plane className="h-5 w-5" /> {title}
-        {route && <span className="text-sm font-normal opacity-90">{route}</span>}
-      </div>
-      <div className="space-y-4 p-4">
-        {segments.map((s, i) => {
-          const airline = s.airlineId ? airlinePresentations?.[s.airlineId] : undefined;
-          const airlineName = s.airlineName || airline?.name || 'Airline';
-          return (
-            <div key={i} className="rounded-lg border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="rounded px-2 py-0.5 text-xs font-semibold text-white"
-                    style={{ backgroundColor: color }}
-                  >
-                    Segment {i + 1}
-                  </span>
-                  {airline?.logoUrl ? (
-                    <img
-                      src={airline.logoUrl}
-                      alt={`${airlineName} logo`}
-                      className="h-8 w-12 rounded bg-white object-contain"
-                    />
-                  ) : (
-                    <Plane className="h-4 w-4" style={{ color }} />
-                  )}
-                  <strong className="text-[#000000]">{airlineName}</strong>
-                  {s.flightNumber && <span className="text-[#000000]">{s.flightNumber}</span>}
-                </div>
-                {s.travelClass && (
-                  <span className="text-sm font-medium text-[#000000]">{s.travelClass} Class</span>
-                )}
-              </div>
-              {i > 0 && s.connectionVia && (
-                <p className="mt-2 text-xs text-[#000000]">Connection via {s.connectionVia}</p>
-              )}
-              <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                <div className="text-left">
-                  <div className="text-2xl font-bold" style={{ color }}>
-                    {formatTime12Hour(s.departureTime, '--:--')}
-                  </div>
-                  <div className="font-medium text-[#000000]">{s.from || '—'}</div>
-                  <div className="text-xs text-[#000000]">{dateShort(s.departureDate) ?? ''}</div>
-                </div>
-                <div className="flex flex-col items-center px-1">
-                  <div className="flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-                    <span className="h-px w-10 sm:w-24" style={{ backgroundColor: color }} />
-                    <Plane className="h-4 w-4" style={{ color }} />
-                    <span className="h-px w-10 sm:w-24" style={{ backgroundColor: color }} />
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-                  </div>
-                  {s.duration && <div className="mt-1 text-xs text-[#000000]">🕐 {s.duration}</div>}
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold" style={{ color }}>
-                    {formatTime12Hour(s.arrivalTime, '--:--')}
-                  </div>
-                  <div className="font-medium text-[#000000]">{s.to || '—'}</div>
-                  <div className="text-xs text-[#000000]">{dateShort(s.arrivalDate) ?? ''}</div>
-                </div>
-              </div>
-              {(s.cabinLuggage || s.checkInLuggage) && (
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-[#000000]">
-                  <span className="font-semibold">🧳 Baggage:</span>
-                  {s.cabinLuggage && (
-                    <span className="rounded border px-2 py-0.5">
-                      Cabin: {cabinLuggageLabel(s.cabinLuggage)}
-                    </span>
-                  )}
-                  {s.checkInLuggage && (
-                    <span className="rounded border px-2 py-0.5">Check-in: {s.checkInLuggage}</span>
-                  )}
-                </div>
-              )}
-              {s.notes && s.notes.replace(/<[^>]*>/g, '').trim() && (
-                <div className="flight-notes mt-3 border-t pt-3">
-                  <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-[#000000]">
-                    ℹ️ Notes:
-                  </p>
-                  <RichHtml html={s.notes} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function FlightImageViewer({
-  images,
-}: {
-  images: Array<{ description?: string | null; url: string }>;
-}) {
-  if (!images.length) return null;
-
-  return (
-    <div className="mx-auto grid max-w-4xl items-start gap-5">
-      {images.map((image, index) => {
-        const description = image.description?.trim() || '';
-        const accessibleTitle = description || 'flight document';
-        return (
-          <figure
-            key={`${image.url}-${index}`}
-            className="group w-full self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg ring-1 ring-slate-900/5"
-          >
-            <a
-              href={image.url}
-              target="_blank"
-              rel="noreferrer"
-              aria-label={`View ${accessibleTitle}`}
-              className="block w-full bg-slate-50"
-            >
-              <img
-                src={image.url}
-                alt={description}
-                loading="lazy"
-                className="block h-auto w-full"
-              />
-            </a>
-            <figcaption
-              className={`flex min-h-16 items-center gap-3 border-t border-slate-200 bg-white px-3.5 py-3 ${description ? 'justify-between' : 'justify-end'}`}
-            >
-              {description && (
-                <p className="min-w-0 text-sm leading-relaxed text-[#000000]">{description}</p>
-              )}
-              <a
-                href={image.url}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Preview ${accessibleTitle}`}
-                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-[#000000] transition hover:border-slate-300 hover:bg-slate-100 hover:text-[#000000]"
-              >
-                <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                Preview
-              </a>
-            </figcaption>
-          </figure>
-        );
-      })}
-    </div>
-  );
-}
 
 const SIGHTSEEING_TRANSFER_LABELS: Record<string, string> = {
   PRIVATE: 'Private Transfer',
@@ -1738,18 +1581,6 @@ export function PublicQuotationPage() {
     : `/api/public/quotations/${encodeURIComponent(token)}`;
   const [data, setData] = useState<PublicQuotation | null>(null);
   const [error, setError] = useState('');
-  // Public Policies accordion: only one section is open at a time; Inclusions
-  // (or the first non-empty section) starts open.
-  const [openPolicy, setOpenPolicy] = useState<string | null>(null);
-  const policyDefaultSetRef = useRef(false);
-  useEffect(() => {
-    if (policyDefaultSetRef.current || !data) return;
-    const first = buildPolicySections(data.version).find((section) => section.visible);
-    if (first) {
-      policyDefaultSetRef.current = true;
-      setOpenPolicy(first.key);
-    }
-  }, [data]);
   // Company logo becomes the browser-tab favicon once the quotation loads;
   // restored to the default when the data has no logo or the page unmounts.
   useFavicon(data?.company.logoUrl);
@@ -1911,6 +1742,31 @@ export function PublicQuotationPage() {
       </main>
     );
   if (!data) return <div className="min-h-screen animate-pulse bg-slate-100" />;
+  return <PublicQuotationView data={data} />;
+}
+
+/**
+ * Pure customer-facing quotation presentation, shared by the public weblink
+ * route and the Quotation Builder's full live preview. Everything renders
+ * from `data` alone: no fetching, no telemetry, no saves.
+ */
+export function PublicQuotationView({ data }: { data: PublicQuotation }) {
+  // Public Policies accordion: only one section is open at a time; Inclusions
+  // (or the first non-empty section) starts open.
+  const [openPolicy, setOpenPolicy] = useState<string | null>(null);
+  const policyDefaultSetRef = useRef(false);
+  // Document scope for DOM-reading descendants: the main document on the real
+  // weblink, the preview frame's document when portalled into the builder.
+  const rootRef = useRef<HTMLElement | null>(null);
+  const getOwnerDoc = useCallback(() => rootRef.current?.ownerDocument ?? document, []);
+  useEffect(() => {
+    if (policyDefaultSetRef.current || !data) return;
+    const first = buildPolicySections(data.version).find((section) => section.visible);
+    if (first) {
+      policyDefaultSetRef.current = true;
+      setOpenPolicy(first.key);
+    }
+  }, [data]);
   const q = data.quotation,
     v = data.version,
     company = data.company;
@@ -2009,47 +1865,8 @@ export function PublicQuotationPage() {
   // Reference "Flight Details" — every flight record in order, each with
   // its own journeys. Legacy single-flight rows normalize into one record.
   const fd = v.flightDetails;
-  const flightRecords = (
-    (normalizeFlightDetails(fd) as { flights?: unknown } | null)?.flights ?? []
-  ) as Array<{
-    bookmarkCode?: string | null;
-    journeyType?: string;
-    outbound?: FlightJourney;
-    returnJourney?: FlightJourney;
-  }>;
-  const flightJourneys =
-    fd && fd.include && fd.entryMode !== 'IMAGE'
-      ? flightRecords.flatMap((flight, flightIndex) => {
-          const prefix = flightRecords.length > 1 ? `Flight ${flightIndex + 1} · ` : '';
-          return ([
-            (flight.journeyType === 'ROUND_TRIP' || flight.journeyType === 'ONEWAY_OUTBOUND') && {
-              key: `flight-${flightIndex}-outbound`,
-              title: `${prefix}Outbound Journey`,
-              journey: flight.outbound,
-              color: '#2563eb',
-            },
-            (flight.journeyType === 'ROUND_TRIP' || flight.journeyType === 'ONEWAY_RETURN') && {
-              key: `flight-${flightIndex}-return`,
-              title: `${prefix}Return Journey`,
-              journey: flight.returnJourney,
-              color: '#16a34a',
-            },
-          ].filter(Boolean) as Array<{
-            key: string;
-            title: string;
-            journey: FlightJourney;
-            color: string;
-          }>);
-        })
-      : [];
-  const segmentHasData = (segment: FlightSegment) =>
-    Boolean(
-      segment.airlineName ||
-      segment.from ||
-      segment.to ||
-      segment.departureTime ||
-      segment.flightNumber,
-    );
+  const flightJourneys = buildFlightLegs(fd);
+  const segmentHasData = flightSegmentHasData;
   const hasFlights =
     (fd?.include &&
       fd.entryMode === 'IMAGE' &&
@@ -2104,7 +1921,8 @@ export function PublicQuotationPage() {
   const heroIntroduction = publicHeroIntroduction(v.introduction);
 
   return (
-    <main className="flex min-h-screen flex-col bg-slate-100">
+    <QuotationDocumentContext.Provider value={getOwnerDoc}>
+    <main ref={rootRef} className="flex min-h-screen flex-col bg-slate-100">
       <div className="flex-1 pb-16">
         {/* Hero */}
         <header
@@ -2155,7 +1973,7 @@ export function PublicQuotationPage() {
         {/* Summary + price cards sit in normal flow below the complete hero. */}
         <div className="mx-auto mt-8 max-w-5xl space-y-6 px-4">
           {/* Summary + price */}
-          <section className="grid gap-4 lg:grid-cols-3">
+          <section data-preview-section="pricing" className="grid gap-4 lg:grid-cols-3">
             <div className="rounded-2xl bg-card p-6 shadow-lg lg:col-span-2">
               <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 md:grid-cols-4">
                 <Info label="Traveler Name" value={q.customerName} />
@@ -2649,7 +2467,7 @@ export function PublicQuotationPage() {
                     {vehicles[0]?.taxCategory?.trim() || 'Transportation'}
                   </SectionTitle>
                   <div className="grid gap-4 md:grid-cols-2">
-                    {vehicles.map((vehicle) => {
+                    {vehicles.map((vehicle, vehicleIndex) => {
                       const presentation = data.vehiclePresentations?.[vehicle.id];
                       const snapshotImages = quotationGalleryImages(vehicle.images);
                       const snapshotPresent =
@@ -2662,7 +2480,7 @@ export function PublicQuotationPage() {
                           : [];
                       return (
                         <article
-                          key={vehicle.id}
+                          key={vehicle.id ?? `vehicle-${vehicleIndex}`}
                           className="max-w-xl overflow-hidden rounded-xl border bg-card shadow-sm"
                         >
                           <QuotationMediaFrame
@@ -2704,7 +2522,7 @@ export function PublicQuotationPage() {
                 <section>
                   <SectionTitle>{cruises[0]?.taxCategory?.trim() || 'Cruise Details'}</SectionTitle>
                   <div className="grid gap-5 md:grid-cols-2">
-                    {cruises.map((cruise) => {
+                    {cruises.map((cruise, cruiseIndex) => {
                       const presentation = data.cruisePresentations?.[cruise.id];
                       const snapshotImages = quotationGalleryImages(cruise.images);
                       const snapshotPresent =
@@ -2731,7 +2549,7 @@ export function PublicQuotationPage() {
                         !/^https?:\/\/\S+$/i.test(rawDescription);
                       return (
                         <article
-                          key={cruise.id}
+                          key={cruise.id ?? `cruise-${cruiseIndex}`}
                           className="overflow-hidden rounded-xl border bg-card shadow-sm"
                         >
                           <QuotationMediaFrame
@@ -2784,7 +2602,7 @@ export function PublicQuotationPage() {
                 <section>
                   <SectionTitle>Additional Services</SectionTitle>
                   <div className="grid gap-4 md:grid-cols-2">
-                    {addonServices.map((service) => {
+                    {addonServices.map((service, serviceIndex) => {
                       const plainText = (service.description ?? '')
                         .replace(/<[^>]*>/g, ' ')
                         .replace(/\s+/g, ' ')
@@ -2811,7 +2629,7 @@ export function PublicQuotationPage() {
                         pricingBasis: service.pricingBasisLabel,
                       });
                       return (
-                        <article key={service.id} className="rounded-2xl bg-card p-6 shadow-sm">
+                        <article key={service.id ?? `addon-${serviceIndex}`} className="rounded-2xl bg-card p-6 shadow-sm">
                           {displayImages.length > 0 && (
                             <div className="mb-4">
                               <QuotationMediaFrame
@@ -2963,7 +2781,14 @@ export function PublicQuotationPage() {
               <>
                 {renderOrder.map((id) => {
                   const node = nodes[id];
-                  return node ? <Fragment key={id}>{node}</Fragment> : null;
+                  // Stable anchor for preview deep-linking (e.g. the builder
+                  // live preview opens at the active tab's section). The
+                  // wrapper is layout-neutral under the space-y parent.
+                  return node ? (
+                    <div key={id} data-preview-section={id}>
+                      {node}
+                    </div>
+                  ) : null;
                 })}
               </>
             );
@@ -2997,5 +2822,6 @@ export function PublicQuotationPage() {
 
       <BackToTop />
     </main>
+    </QuotationDocumentContext.Provider>
   );
 }

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useFieldArray, type FieldPath, type UseFormReturn } from 'react-hook-form';
-import { AlertTriangle, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { cabinLuggageLabel, type LiveSearchBookmark, type QuotationVersionInput } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { RichTextEditor } from '@/components/ui/RichTextEditor';
+import { TimePicker } from '@/components/ui/TimePicker';
 import { BookmarkLoadField } from '@/features/quotations/BookmarkImport';
 import type { Airline } from '@/features/masters/masters.api';
 import {
@@ -25,6 +26,11 @@ const fieldMuted =
 const calculatedLabel = 'text-xs font-semibold uppercase tracking-wide text-muted-foreground';
 const subsectionHeading = 'text-xs font-semibold uppercase tracking-widest text-brand-700';
 const labelCls = 'text-xs font-semibold uppercase tracking-wide text-slate-500';
+// Compact inputs/controls that sit on the blue/green journey headers.
+const routeEditInput =
+  'w-28 select-text rounded-md border border-white/40 bg-white/15 px-2 py-1 text-sm font-medium text-white placeholder:text-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 sm:w-36';
+const routeEditButton =
+  'rounded p-1 text-white/80 hover:bg-white/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70';
 
 export interface FlightRecordCardProps {
   flightIndex: number;
@@ -61,6 +67,18 @@ export function FlightRecordCard({
     outbound: true,
     returnJourney: true,
   });
+  // Inline route editor state per journey leg ({ from, to } draft) — null
+  // when not editing. Committing writes through to the journey's fromCity /
+  // toCity and its first segment's From / last segment's To (see below), so
+  // the header, segments, weblink, and PDF always share one source of truth.
+  const [editingRoute, setEditingRoute] = useState<{
+    leg: 'outbound' | 'returnJourney';
+    from: string;
+    to: string;
+  } | null>(null);
+  // Each flight card collapses independently. Expanded initially; collapsing
+  // only unmounts the body (react-hook-form retains the values).
+  const [expanded, setExpanded] = useState(true);
   const [expandedSegments, setExpandedSegments] = useState<Record<string, boolean>>({});
   const journeyType = (form.watch(fp(`${base}.journeyType`)) as string) ?? 'ROUND_TRIP';
   const bookmarkCode = (form.watch(fp(`${base}.bookmarkCode`)) as string | null) ?? null;
@@ -93,6 +111,25 @@ export function FlightRecordCard({
     );
     const segmentKey = `${leg}-${index}`;
     const isSegmentExpanded = expandedSegments[segmentKey] ?? true;
+    const isFirstSegment = index === 0;
+    const isLastSegment = index === arr.fields.length - 1;
+    const fromRegistration = form.register(fp(`${segBase}.from`));
+    const toRegistration = form.register(fp(`${segBase}.to`));
+    // Removing the last segment promotes the new last segment's To to the
+    // journey destination; removing any other segment cannot change either
+    // endpoint (index 0 has no remove control, so the origin is untouched).
+    const removeSegment = (removeIndex: number) => {
+      const count = arr.fields.length;
+      arr.remove(removeIndex);
+      if (removeIndex === count - 1 && count > 1) {
+        const promotedTo = form.getValues(
+          fp(`${base}.${leg}.segments.${count - 2}.to`),
+        ) as string | null;
+        form.setValue(fp(`${base}.${leg}.toCity`), ((promotedTo ?? '') as string) as never, {
+          shouldDirty: true,
+        });
+      }
+    };
     return (
       <article key={id} className="overflow-hidden rounded-lg border border-border/60 bg-card">
         <button
@@ -114,12 +151,12 @@ export function FlightRecordCard({
               tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
-                arr.remove(index);
+                removeSegment(index);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.stopPropagation();
-                  arr.remove(index);
+                  removeSegment(index);
                 }
               }}
               className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50"
@@ -163,7 +200,6 @@ export function FlightRecordCard({
           <label className={labelCls}>
             Flight Number
             <input
-              placeholder="e.g. AI101"
               className={`${field} mt-1`}
               {...form.register(fp(`${segBase}.flightNumber`))}
             />
@@ -180,11 +216,39 @@ export function FlightRecordCard({
         <div className="grid gap-3 md:grid-cols-2">
           <label className={labelCls}>
             From <span className="text-red-500">*</span>
-            <input className={`${field} mt-1`} {...form.register(fp(`${segBase}.from`))} />
+            <input
+              className={`${field} mt-1`}
+              {...fromRegistration}
+              onChange={(event) => {
+                void fromRegistration.onChange(event);
+                // The first segment's From is the journey origin.
+                if (isFirstSegment) {
+                  form.setValue(
+                    fp(`${base}.${leg}.fromCity`),
+                    event.target.value as never,
+                    { shouldDirty: true },
+                  );
+                }
+              }}
+            />
           </label>
           <label className={labelCls}>
             To <span className="text-red-500">*</span>
-            <input className={`${field} mt-1`} {...form.register(fp(`${segBase}.to`))} />
+            <input
+              className={`${field} mt-1`}
+              {...toRegistration}
+              onChange={(event) => {
+                void toRegistration.onChange(event);
+                // The last segment's To is the journey destination.
+                if (isLastSegment) {
+                  form.setValue(
+                    fp(`${base}.${leg}.toCity`),
+                    event.target.value as never,
+                    { shouldDirty: true },
+                  );
+                }
+              }}
+            />
           </label>
         </div>
         <div className="grid gap-3 md:grid-cols-4">
@@ -198,12 +262,19 @@ export function FlightRecordCard({
           </label>
           <label className={labelCls}>
             Departure Time
-            <input
-              type="time"
-              lang="en-US"
-              className={`${field} mt-1`}
-              {...form.register(fp(`${segBase}.departureTime`))}
-            />
+            <span className="mt-1 block">
+              <TimePicker
+                ariaLabel="Departure Time"
+                className={field}
+                value={(form.watch(fp(`${segBase}.departureTime`)) as string | null) ?? null}
+                onChange={(next) =>
+                  form.setValue(fp(`${segBase}.departureTime`), next as never, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+              />
+            </span>
           </label>
           <label className={labelCls}>
             Arrival Date
@@ -215,12 +286,19 @@ export function FlightRecordCard({
           </label>
           <label className={labelCls}>
             Arrival Time
-            <input
-              type="time"
-              lang="en-US"
-              className={`${field} mt-1`}
-              {...form.register(fp(`${segBase}.arrivalTime`))}
-            />
+            <span className="mt-1 block">
+              <TimePicker
+                ariaLabel="Arrival Time"
+                className={field}
+                value={(form.watch(fp(`${segBase}.arrivalTime`)) as string | null) ?? null}
+                onChange={(next) =>
+                  form.setValue(fp(`${segBase}.arrivalTime`), next as never, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+              />
+            </span>
           </label>
           {invalidArrival && (
             <p
@@ -289,6 +367,32 @@ export function FlightRecordCard({
     const from = (form.watch(fp(`${journeyBase}.fromCity`)) as string) || '';
     const to = (form.watch(fp(`${journeyBase}.toCity`)) as string) || '';
     const isJourneyExpanded = expandedJourneys[leg] ?? true;
+    const segmentCount = arr.fields.length;
+    const isEditingRoute = editingRoute?.leg === leg;
+    const routeFieldLabel = (end: 'origin' | 'destination') =>
+      `Flight ${flightIndex + 1} ${title} ${end}`;
+    const openRouteEditor = () => setEditingRoute({ leg, from, to });
+    const cancelRouteEdit = () => setEditingRoute(null);
+    // Committing writes the journey endpoints and mirrors them onto the
+    // first segment's From / last segment's To, so the header, the segment
+    // editors, the live preview, the weblink, and the PDF stay in sync from
+    // a single edit. Intermediate segments are never touched.
+    const commitRouteEdit = () => {
+      if (!editingRoute || editingRoute.leg !== leg) return;
+      const nextFrom = editingRoute.from;
+      const nextTo = editingRoute.to;
+      form.setValue(fp(`${journeyBase}.fromCity`), nextFrom as never, { shouldDirty: true });
+      form.setValue(fp(`${journeyBase}.toCity`), nextTo as never, { shouldDirty: true });
+      if (segmentCount > 0) {
+        form.setValue(fp(`${journeyBase}.segments.0.from`), nextFrom as never, {
+          shouldDirty: true,
+        });
+        form.setValue(fp(`${journeyBase}.segments.${segmentCount - 1}.to`), nextTo as never, {
+          shouldDirty: true,
+        });
+      }
+      setEditingRoute(null);
+    };
     return (
       <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div
@@ -303,17 +407,85 @@ export function FlightRecordCard({
               setExpandedJourneys((prev) => ({ ...prev, [leg]: !isJourneyExpanded }));
             }
           }}
-          className={`flex cursor-pointer select-none items-center justify-between px-5 py-3 font-semibold text-white ${headerClass}`}
+          className={`flex cursor-pointer select-none items-center justify-between gap-3 px-5 py-3 font-semibold text-white ${headerClass}`}
         >
-          <span className="flex items-center gap-2">
+          <span className="flex shrink-0 items-center gap-2">
             <ChevronDown
               className={`h-4 w-4 text-white/80 transition-transform ${isJourneyExpanded ? 'rotate-180' : ''}`}
             />
             ✈ {title}
           </span>
-          <span className="text-sm opacity-90">
-            {from && to ? `${from} → ${to}` : 'Route will appear here'}
-          </span>
+          {isEditingRoute && editingRoute ? (
+            <span
+              className="flex min-w-0 items-center gap-1.5 text-sm"
+              onClick={(e) => e.stopPropagation()}
+              onBlur={(e) => {
+                // Save when focus leaves both fields (tabbing between them
+                // keeps the editor open).
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  commitRouteEdit();
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  cancelRouteEdit();
+                } else if (e.key === 'Enter') {
+                  // Save instead of submitting the builder form.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  commitRouteEdit();
+                } else if (e.key === ' ') {
+                  // Let spaces type normally without toggling the journey.
+                  e.stopPropagation();
+                }
+              }}
+            >
+              <input
+                aria-label={routeFieldLabel('origin')}
+                autoFocus
+                placeholder="Origin"
+                value={editingRoute.from}
+                onChange={(e) =>
+                  setEditingRoute({ leg, from: e.target.value, to: editingRoute.to })
+                }
+                className={routeEditInput}
+              />
+              <span aria-hidden="true" className="shrink-0 text-white/80">
+                →
+              </span>
+              <input
+                aria-label={routeFieldLabel('destination')}
+                placeholder="Destination"
+                value={editingRoute.to}
+                onChange={(e) =>
+                  setEditingRoute({ leg, from: editingRoute.from, to: e.target.value })
+                }
+                className={routeEditInput}
+              />
+            </span>
+          ) : (
+            <span className="flex min-w-0 items-center gap-2 text-sm opacity-90">
+              <span className="truncate">
+                {from && to ? `${from} → ${to}` : 'Route will appear here'}
+              </span>
+              <button
+                type="button"
+                aria-label={`Edit ${title} route`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openRouteEditor();
+                }}
+                onKeyDown={(e) => {
+                  // Keep Enter/Space on the pencil from toggling the journey.
+                  if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+                }}
+                className={routeEditButton}
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </span>
+          )}
         </div>
         {isJourneyExpanded && (
           <div className="p-5">
@@ -337,12 +509,25 @@ export function FlightRecordCard({
       className="space-y-4 rounded-xl border border-border bg-muted/20 p-4 shadow-sm"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-sm font-bold text-slate-800">
-          Flight {flightIndex + 1}
-          <span className="ml-2 text-xs font-medium text-slate-500">
-            {bookmarkCode ? `· Loaded from ${bookmarkCode}` : '· Manual entry'}
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} flight ${flightIndex + 1}`}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
+        >
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          />
+          <span className="truncate text-sm font-bold text-slate-800">
+            Flight Details {flightIndex + 1}
+            {bookmarkCode ? (
+              <span className="ml-2 text-xs font-medium text-slate-500">
+                {`· Loaded from ${bookmarkCode}`}
+              </span>
+            ) : null}
           </span>
-        </h3>
+        </button>
         <Button
           type="button"
           size="sm"
@@ -354,31 +539,38 @@ export function FlightRecordCard({
           <Trash2 className="h-4 w-4" /> Remove flight
         </Button>
       </div>
-      <BookmarkLoadField
-        type="FLIGHT"
-        placeholder="FLT-000456"
-        ariaLabel={`Flight ${flightIndex + 1} bookmark ID`}
-        onLoaded={(bookmarks) => onLoadBookmarks(flightIndex, bookmarks)}
-      />
-      <label className="block max-w-md text-sm font-semibold text-slate-800">
-        Journey Type <span className="text-red-500">*</span>
-        <select
-          aria-label={`Journey type for flight ${flightIndex + 1}`}
-          className={`${field} mt-1`}
-          {...form.register(fp(`${base}.journeyType`))}
-        >
-          {Object.entries(FLIGHT_JOURNEY_TYPE_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <span className="mt-1 block text-xs font-normal text-slate-500">
-          Select flight direction to show relevant sections.
-        </span>
-      </label>
-      {showOutbound && journeyBlock('outbound', outboundSegments, 'bg-brand-600', 'Outbound Journey')}
-      {showReturn && journeyBlock('returnJourney', returnSegments, 'bg-emerald-600', 'Return Journey')}
+      {/* Collapsing hides the body with CSS (rather than unmounting) so
+          every entered value — including local input state — survives. */}
+      <div
+        data-testid={`flight-${flightIndex + 1}-body`}
+        className={expanded ? 'space-y-4' : 'hidden'}
+      >
+        <BookmarkLoadField
+          type="FLIGHT"
+          label="Bookmark ID"
+          ariaLabel={`Flight ${flightIndex + 1} bookmark ID`}
+          onLoaded={(bookmarks) => onLoadBookmarks(flightIndex, bookmarks)}
+        />
+        <label className="block max-w-md text-sm font-semibold text-slate-800">
+          Journey Type <span className="text-red-500">*</span>
+          <select
+            aria-label={`Journey type for flight ${flightIndex + 1}`}
+            className={`${field} mt-1`}
+            {...form.register(fp(`${base}.journeyType`))}
+          >
+            {Object.entries(FLIGHT_JOURNEY_TYPE_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs font-normal text-slate-500">
+            Select flight direction to show relevant sections.
+          </span>
+        </label>
+        {showOutbound && journeyBlock('outbound', outboundSegments, 'bg-brand-600', 'Outbound Journey')}
+        {showReturn && journeyBlock('returnJourney', returnSegments, 'bg-emerald-600', 'Return Journey')}
+      </div>
     </article>
   );
 }

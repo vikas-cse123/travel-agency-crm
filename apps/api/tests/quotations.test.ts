@@ -522,6 +522,80 @@ describe('Phase 8 customer quotations', () => {
     ]);
   });
 
+  it('preserves a custom weblinkHeading when duplicating and revising a version', async () => {
+    const { client, lead, template } = await setup();
+    const quotation = (
+      await client.post('/api/quotations', { queryId: lead.id, templateId: template.id })
+    ).body.data;
+    const first = quotation.versions[0];
+    const customTitle = 'Goa Honeymoon Special';
+    const customHeading = 'King Kong SRK';
+    const customPackage = 'Goa Family Holiday Package';
+    const patched = await client.patch(`/api/quotations/${quotation.id}/versions/${first.id}`, {
+      title: customTitle,
+      weblinkHeading: customHeading,
+      packageHeading: customPackage,
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body.data).toMatchObject({
+      title: customTitle,
+      weblinkHeading: customHeading,
+      packageHeading: customPackage,
+    });
+
+    const duplicated = await client.post(
+      `/api/quotations/${quotation.id}/versions/${first.id}/duplicate`,
+    );
+    expect(duplicated.status).toBe(201);
+    expect(duplicated.body.data).toMatchObject({
+      title: customTitle,
+      weblinkHeading: customHeading,
+      packageHeading: customPackage,
+    });
+
+    const revised = await client.post(`/api/quotations/${quotation.id}/versions`, {
+      sourceVersionId: first.id,
+    });
+    expect(revised.status).toBe(201);
+    expect(revised.body.data).toMatchObject({
+      title: customTitle,
+      weblinkHeading: customHeading,
+      packageHeading: customPackage,
+    });
+
+    // Source version itself is unchanged.
+    const versions = await client.get(`/api/quotations/${quotation.id}/versions`);
+    const source = versions.body.data.find(
+      (version: { id: string }) => version.id === first.id,
+    ) as { title: string; weblinkHeading: string | null; packageHeading: string | null };
+    expect(source).toMatchObject({
+      title: customTitle,
+      weblinkHeading: customHeading,
+      packageHeading: customPackage,
+    });
+  });
+
+  it('keeps a missing weblinkHeading empty on duplicate/revision so the weblink fallback applies', async () => {
+    const { client, lead, template } = await setup();
+    const quotation = (
+      await client.post('/api/quotations', { queryId: lead.id, templateId: template.id })
+    ).body.data;
+    const first = quotation.versions[0];
+    expect(first.weblinkHeading).toBeNull();
+
+    const duplicated = await client.post(
+      `/api/quotations/${quotation.id}/versions/${first.id}/duplicate`,
+    );
+    expect(duplicated.status).toBe(201);
+    expect(duplicated.body.data.weblinkHeading).toBeNull();
+
+    const revised = await client.post(`/api/quotations/${quotation.id}/versions`, {
+      sourceVersionId: first.id,
+    });
+    expect(revised.status).toBe(201);
+    expect(revised.body.data.weblinkHeading).toBeNull();
+  });
+
   it('keeps quotation access lead-scoped for revisions: assignment (not permission) grants it', async () => {
     const { client, lead, template } = await setup();
     const quotation = (

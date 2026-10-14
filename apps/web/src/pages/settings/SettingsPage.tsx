@@ -971,6 +971,10 @@ function LiveSearchKeyTab() {
         if (result.connected) applyMessage('ok', 'API key connected successfully');
         else if (result.reason === 'quota')
           applyMessage('error', 'SearchAPI monthly quota exhausted');
+        else if (result.reason === 'unreachable')
+          applyMessage('error', 'Could not reach SearchAPI. Check your connection and try again.');
+        else if (result.reason === 'error')
+          applyMessage('error', 'SearchAPI returned an error for the test request.');
         else applyMessage('error', 'Invalid SearchAPI key');
       },
       onError: () => applyMessage('error', 'Could not test the key.'),

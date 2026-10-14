@@ -468,6 +468,30 @@
   margin-top: 0;
   margin-bottom: 0;
 }
+
+/* Slim scrollbars for the custom time-picker Hour/Minute columns.
+ *
+ * WebKit scrollbars honour only the pseudo-element widths below; Firefox
+ * uses `scrollbar-width: thin` plus `scrollbar-color` as its fallback.
+ * Thumb stays 4px in every state (hover darkens the colour only), the track
+ * stays transparent, and scrolling behaviour is untouched. */
+.time-picker-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 0.55) transparent;
+}
+.time-picker-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.time-picker-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.time-picker-scroll::-webkit-scrollbar-thumb {
+  background: rgb(148 163 184 / 0.55);
+  border-radius: 9999px;
+}
+.time-picker-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139 / 0.75);
+}
 label[data-image-drop-active='true'],
 input[data-image-drop-active='true'] {
   outline: 3px solid rgb(37 99 235 / 55%);

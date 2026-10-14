@@ -575,7 +575,7 @@ export interface SearchApiMetadata {
 /** Result of the Test connection action. */
 export interface LiveSearchTestResult {
   connected: boolean;
-  reason?: 'invalid' | 'quota';
+  reason?: 'invalid' | 'quota' | 'unreachable' | 'error';
 }
 
 // ---------------------------------------------------------------------------

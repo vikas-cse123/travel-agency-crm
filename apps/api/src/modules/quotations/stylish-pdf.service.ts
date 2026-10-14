@@ -5,6 +5,7 @@ import sharp from 'sharp';
 import {
   formatAgeList,
   formatInfantAgeList,
+  flightRecordPrefix,
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
   normalizeFaqs,
@@ -1552,7 +1553,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
     const flights = flightRecordsOf(flightDetails);
     const journeys: Array<{ label: string; journey: FlightJourney }> = [];
     flights.forEach((flight, flightIndex) => {
-      const prefix = flights.length > 1 ? `FLIGHT ${flightIndex + 1} · ` : '';
+      const prefix = flightRecordPrefix(flightIndex, flights.length, true);
       if (flight.outbound?.segments?.length)
         journeys.push({ label: `${prefix}OUTBOUND`, journey: flight.outbound });
       if (flight.returnJourney?.segments?.length)
@@ -1631,14 +1632,17 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
             );
 
             rounded(M, top, CONTENT_W, 30, PALE, NAVY, 5);
-            doc.roundedRect(M, top, 88, 30, 5).fill(NAVY);
+            // Parent-flight labels grew (`FLIGHT DETAILS 1 · OUTBOUND`), so
+            // the navy tab sizes to its text instead of clipping or wrapping.
+            // Single-flight labels keep the original 88pt tab.
+            doc.font('Bold').fontSize(9);
+            const labelWidth = Math.max(88, Math.ceil(doc.widthOfString(label)) + 16);
+            doc.roundedRect(M, top, labelWidth, 30, 5).fill(NAVY);
             doc
-              .font('Bold')
-              .fontSize(9)
               .fillColor('#ffffff')
-              .text(label, M, top + 10, { width: 88, align: 'center', lineBreak: false });
+              .text(label, M, top + 10, { width: labelWidth, align: 'center', lineBreak: false });
             const routeText = `${journey.fromCity || segment.from || '-'}  →  ${journey.toCity || segment.to || '-'}`;
-            const routeWidth = CONTENT_W - 116;
+            const routeWidth = CONTENT_W - labelWidth - 28;
             doc.font('Body').fontSize(9);
             const routeFontSize = Math.max(
               7,
@@ -1648,7 +1652,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
               .font('Body')
               .fontSize(routeFontSize)
               .fillColor(NAVY)
-              .text(routeText, M + 102, top + 10, {
+              .text(routeText, M + labelWidth + 12, top + 10, {
                 width: routeWidth,
                 height: 11,
                 ellipsis: true,

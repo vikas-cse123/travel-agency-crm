@@ -660,6 +660,22 @@ export const quotationTemplateUpdateSchema = quotationTemplateInputSchema
 export const FLIGHT_JOURNEY_TYPES = ['ROUND_TRIP', 'ONEWAY_OUTBOUND', 'ONEWAY_RETURN'] as const;
 
 /**
+ * Parent-flight label prefix shared by the builder, public weblink, and both
+ * PDF renderers, e.g. `Flight Details 1 · `. Empty for single-flight
+ * sections so lone journeys keep their bare titles (`Outbound Journey`).
+ * Pass `uppercase` for the Stylish PDF's uppercase journey labels.
+ */
+export function flightRecordPrefix(
+  flightIndex: number,
+  totalFlights: number,
+  uppercase = false,
+): string {
+  if (totalFlights <= 1) return '';
+  const label = `Flight Details ${flightIndex + 1}`;
+  return `${uppercase ? label.toUpperCase() : label} · `;
+}
+
+/**
  * User-facing label for a cabin-luggage option. The stored/API value stays
  * "10kg" for backward compatibility with existing quotations; it is displayed
  * as "10 kg+". Every other value renders unchanged.

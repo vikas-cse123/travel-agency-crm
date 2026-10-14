@@ -83,8 +83,10 @@ const optionalMoney = z.coerce.number().min(0).max(999999999999).nullable().opti
 /**
  * Month/year pair rule (both or neither; absent counts as neither so partial
  * updates and legacy exact-date payloads without the pair stay valid).
+ * Exported for reuse by the WACRM integration contract, which mirrors
+ * the native pair semantics exactly.
  */
-function assertTravelMonthYearPair(
+export function assertTravelMonthYearPair(
   v: { travelMonth?: number | null | undefined; travelYear?: number | null | undefined },
   ctx: z.RefinementCtx,
 ) {

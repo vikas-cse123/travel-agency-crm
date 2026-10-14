@@ -119,7 +119,9 @@ export const searchController = {
         ? 'QUOTA_EXHAUSTED'
         : result.reason === 'invalid'
           ? 'INVALID_KEY'
-          : 'NETWORK_ERROR';
+          : result.reason === 'unreachable'
+            ? 'NETWORK_ERROR'
+            : 'PROVIDER_ERROR';
     await recordSearchApiUsage(actor, {
       type: 'AUTOCOMPLETE',
       engine: 'google_hotels_autocomplete',
@@ -137,7 +139,14 @@ export const searchController = {
       sendSuccess(res, { connected: false, reason: 'quota' });
       return;
     }
-    sendSuccess(res, { connected: false, reason: 'invalid' });
+    if (result.reason === 'invalid') {
+      sendSuccess(res, { connected: false, reason: 'invalid' });
+      return;
+    }
+    sendSuccess(res, {
+      connected: false,
+      reason: result.reason === 'unreachable' ? 'unreachable' : 'error',
+    });
   },
 
   /** List the current user's bookmarks (DB only; never calls SearchAPI). */

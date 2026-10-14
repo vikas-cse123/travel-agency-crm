@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { LEAD_STAGES, LEAD_SOURCES, LEAD_TYPES, SERVICE_TYPES } from './queries.js';
+import {
+  assertTravelMonthYearPair,
+  LEAD_STAGES,
+  LEAD_SOURCES,
+  LEAD_TYPES,
+  SERVICE_TYPES,
+} from './queries.js';
 
 /**
  * WACRM server-to-server lead-creation contract.
@@ -41,6 +47,11 @@ export const wacrmLeadPayloadSchema = z
     assignedToEmail: z.string().trim().email().max(255),
     dateOfBirth: optionalDate,
     travelStartDate: optionalDate,
+    // Month-based travel timing (Phase 2): same ranges and pair
+    // semantics as the native lead schema. Absent counts as neither,
+    // so legacy exact-date payloads stay valid unchanged.
+    travelMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
+    travelYear: z.coerce.number().int().min(1900).max(2100).nullable().optional(),
     departureCountry: optionalText(80),
     departureCity: optionalText(100),
     rooms: z.coerce.number().int().min(1).max(100).nullable().optional(),
@@ -70,6 +81,26 @@ export const wacrmLeadPayloadSchema = z
     itinerary: z.array(wacrmItineraryRowSchema).min(1).max(100),
   })
   .superRefine((v, ctx) => {
+    // Native pair semantics: month and year travel together or not
+    // at all (same helper, same issue path/message as the UI path).
+    assertTravelMonthYearPair(v, ctx);
+    // Conflict rule (integration-only, stricter than the native
+    // schema): an exact date and a complete month/year pair must
+    // never be persisted together. The native schema tolerates the
+    // combination for legacy records, but the native FORM guarantees
+    // mutual exclusivity by clearing the inactive side — new writes
+    // through this contract follow the form's guarantee and fail
+    // closed with a clear error instead of persisting ambiguity.
+    if (
+      v.travelStartDate != null &&
+      v.travelMonth != null &&
+      v.travelYear != null
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['travelStartDate'],
+        message: 'Travel timing must be either an exact date or a month/year pair, not both.',
+      });
     if (new Set(v.itinerary.map((r) => r.sequence)).size !== v.itinerary.length)
       ctx.addIssue({
         code: 'custom',

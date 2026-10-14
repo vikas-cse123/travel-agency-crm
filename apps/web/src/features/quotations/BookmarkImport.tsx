@@ -446,7 +446,7 @@ export function hotelBookmarkToDetails(bookmark: LiveSearchBookmark): {
 }
 
 /**
- * A small "Bookmark ID (optional) [ Load ]" field for a quotation section.
+ * A small "Bookmark ID [ Load ]" field for a quotation section.
  *
  * Accepts a single ID or a comma/newline-separated list of IDs (e.g.
  * "HTL-000023, HTL-000045" / "HTL-000067"). Each resolved bookmark is verified
@@ -455,12 +455,16 @@ export function hotelBookmarkToDetails(bookmark: LiveSearchBookmark): {
  */
 export function BookmarkLoadField({
   type,
-  placeholder,
+  label = 'Bookmark ID (optional)',
+  placeholder = '',
   onLoaded,
   ariaLabel = 'Bookmark ID',
 }: {
   type: 'FLIGHT' | 'HOTEL';
-  placeholder: string;
+  /** Visible field label. Flight cards use a plain "Bookmark ID". */
+  label?: string;
+  /** Input placeholder; empty by default so saved values stand alone. */
+  placeholder?: string;
   onLoaded: (bookmarks: LiveSearchBookmark[]) => void;
   /** Accessible label for the input; scoped per entry when repeated on a page. */
   ariaLabel?: string;
@@ -531,11 +535,11 @@ export function BookmarkLoadField({
   return (
     <div className="space-y-1.5">
       <label className="block text-sm font-semibold text-slate-800">
-        Bookmark ID (optional)
+        {label}
         <div className="mt-1 flex items-center gap-2">
           <input
             aria-label={ariaLabel}
-            className="w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm"
+            className="h-[38px] min-w-0 flex-1 rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors"
             placeholder={placeholder}
             value={code}
             onChange={(event) => setCode(event.target.value)}
@@ -546,7 +550,14 @@ export function BookmarkLoadField({
               }
             }}
           />
-          <Button type="button" size="sm" variant="secondary" onClick={load} disabled={loading}>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={load}
+            disabled={loading}
+            className="h-[38px] shrink-0 px-4"
+          >
             {loading ? 'Loading…' : 'Load'}
           </Button>
         </div>
@@ -617,7 +628,6 @@ export function HotelBookmarkListField({
         <input
           aria-label="Hotel Bookmark ID"
           className="mt-1 w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm"
-          placeholder="HTL-000123"
           value={code}
           disabled={loading}
           onChange={(event) => setCode(event.target.value)}

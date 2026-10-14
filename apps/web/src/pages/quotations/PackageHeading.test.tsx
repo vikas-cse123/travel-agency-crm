@@ -4,8 +4,9 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { PublicQuotationPage } from './PublicQuotationPage';
+import { QuotationBuilderPage } from './QuotationBuilderPage';
+import { QuotationDetailsPage } from './QuotationDetailsPage';
 import {
-  QuotationBuilderPage,
   normalizeQuotationVersionForBuilder,
 } from './QuotationBuilderPage';
 
@@ -313,47 +314,47 @@ const renderBuilder = () =>
     { route: '/quotations/quotation-1/versions/version-1/edit' },
   );
 
-describe('Builder Weblink Package Heading field', () => {
+describe('Builder metadata card removal', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.stubGlobal('scrollTo', vi.fn());
     auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
   });
 
-  it('shows the saved heading and persists edits without touching the title', async () => {
+  it('no longer shows the title/weblink metadata fields but keeps tabs and save', async () => {
+    vi.stubGlobal('fetch', builderFetch(builderDetail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    // All five metadata fields are gone from the builder.
+    expect(screen.queryByLabelText('Title')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Weblink Heading')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Weblink Package Heading')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quotation Title')).not.toBeInTheDocument();
+    expect(screen.queryByText('Weblink Heading')).not.toBeInTheDocument();
+    expect(screen.queryByText('Weblink Package Heading')).not.toBeInTheDocument();
+    expect(screen.queryByText('Lead Stage')).not.toBeInTheDocument();
+    // Builder chrome is unchanged.
+    expect(screen.getAllByRole('button', { name: 'Save quotation' }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Pricing Method' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Summary & Pricing' })).toBeInTheDocument();
+  });
+
+  it('preserves the stored title and headings on save without visible inputs', async () => {
     const fetchMock = builderFetch(
       builderDetail({ packageHeading: 'Singapore Package for Akash Sahni' }),
     );
     vi.stubGlobal('fetch', fetchMock);
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    // A: default generated value shown for editing.
-    expect(screen.getByLabelText('Weblink Package Heading')).toHaveValue(
-      'Singapore Package for Akash Sahni',
-    );
-    // B: user edits the heading.
-    await userEvent.clear(screen.getByLabelText('Weblink Package Heading'));
-    await userEvent.type(
-      screen.getByLabelText('Weblink Package Heading'),
-      'Singapore Family Holiday Package',
-    );
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
     );
     const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
     const body = JSON.parse(String(patch![1]!.body));
-    expect(body.packageHeading).toBe('Singapore Family Holiday Package');
-    // Quotation title behavior unchanged.
+    // Hidden builder fields carry the loaded values through untouched.
     expect(body.title).toBe('Singapore Package');
-  });
-
-  it('starts empty for legacy versions without a saved heading', async () => {
-    const fetchMock = builderFetch(builderDetail());
-    vi.stubGlobal('fetch', fetchMock);
-    renderBuilder();
-    await screen.findByRole('heading', { name: 'Quotation builder' });
-    expect(screen.getByLabelText('Weblink Package Heading')).toHaveValue('');
+    expect(body.packageHeading).toBe('Singapore Package for Akash Sahni');
   });
 
   it('normalizeQuotationVersionForBuilder keeps or nulls the heading', () => {
@@ -363,5 +364,118 @@ describe('Builder Weblink Package Heading field', () => {
       } as never).packageHeading,
     ).toBe('Singapore Family Holiday Package');
     expect(normalizeQuotationVersionForBuilder({} as never).packageHeading).toBeNull();
+  });
+});
+
+const detailFetch = (base: unknown) =>
+  vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    const url = String(input);
+    const method = (options?.method ?? 'GET').toUpperCase();
+    if (url.includes('/public-link') && method === 'POST')
+      return response({ url: 'https://preview.test/q/preview-token-1234567890abcdef1234567890' });
+    if (url.includes('/api/quotations/quotation-1') && method === 'GET') return response(base);
+    if (url.includes('/api/quotations/quotation-1') && method === 'PATCH') {
+      const body = JSON.parse(String(options?.body ?? '{}'));
+      const current = (base as { versions: Array<Record<string, unknown>> }).versions[0]!;
+      return response({ ...current, ...body });
+    }
+    return response({});
+  });
+
+const renderDetails = () =>
+  renderWithProviders(
+    <Routes>
+      <Route path="/quotations/:quotationId" element={<QuotationDetailsPage />} />
+    </Routes>,
+    { route: '/quotations/quotation-1' },
+  );
+
+describe('Details page quotation title and package heading', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  it('shows the saved title and package heading from the current version', async () => {
+    vi.stubGlobal(
+      'fetch',
+      detailFetch(
+        builderDetail({
+          title: 'Singapore Escape',
+          packageHeading: 'Singapore Family Holiday Package',
+        }),
+      ),
+    );
+    renderDetails();
+    await screen.findByRole('heading', { name: /Akash Sahni/ });
+    // Actual saved values, not reconstructed ones.
+    expect(screen.getByText('Singapore Escape')).toBeInTheDocument();
+    expect(screen.getByText('Singapore Family Holiday Package')).toBeInTheDocument();
+    expect(screen.queryByText('Custom Package for Akash Sahni')).not.toBeInTheDocument();
+  });
+
+  it('falls back to "Custom Package for [Lead]" when the saved heading is blank', async () => {
+    vi.stubGlobal('fetch', detailFetch(builderDetail()));
+    renderDetails();
+    await screen.findByRole('heading', { name: /Akash Sahni/ });
+    expect(screen.getByText('Custom Package for Akash Sahni')).toBeInTheDocument();
+  });
+
+  it('edits and saves both fields to the current version', async () => {
+    const fetchMock = detailFetch(
+      builderDetail({ packageHeading: 'Singapore Package for Akash Sahni' }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetails();
+    await screen.findByRole('heading', { name: /Akash Sahni/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Edit title' }));
+    expect(screen.getByLabelText('Quotation Title')).toHaveValue('Singapore Package');
+    expect(screen.getByLabelText('Weblink Package Heading')).toHaveValue(
+      'Singapore Package for Akash Sahni',
+    );
+    await userEvent.clear(screen.getByLabelText('Quotation Title'));
+    await userEvent.type(screen.getByLabelText('Quotation Title'), 'Singapore Escape');
+    await userEvent.clear(screen.getByLabelText('Weblink Package Heading'));
+    await userEvent.type(
+      screen.getByLabelText('Weblink Package Heading'),
+      'Singapore Family Holiday Package',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, options]) =>
+            String(url).includes('/versions/version-1') && options?.method === 'PATCH',
+        ),
+      ).toBe(true),
+    );
+    const patch = fetchMock.mock.calls.find(
+      ([url, options]) =>
+        String(url).includes('/versions/version-1') && options?.method === 'PATCH',
+    );
+    const body = JSON.parse(String(patch![1]!.body));
+    expect(body.title).toBe('Singapore Escape');
+    expect(body.packageHeading).toBe('Singapore Family Holiday Package');
+  });
+
+  it('hides the editor for finalized versions and without update permission', async () => {
+    const { cleanup } = await import('@testing-library/react');
+    vi.stubGlobal(
+      'fetch',
+      detailFetch(builderDetail({ status: 'FINALIZED' } as never)),
+    );
+    const first = renderDetails();
+    await screen.findByRole('heading', { name: /Akash Sahni/ });
+    // Version history marks it finalized; no inline editor is offered.
+    expect(screen.queryByRole('button', { name: 'Edit title' })).not.toBeInTheDocument();
+    first.unmount();
+    cleanup();
+
+    vi.stubGlobal('fetch', detailFetch(builderDetail()));
+    auth.permissions = new Set(['quotations.view']);
+    renderDetails();
+    await screen.findByRole('heading', { name: /Akash Sahni/ });
+    expect(screen.queryByRole('button', { name: 'Edit title' })).not.toBeInTheDocument();
   });
 });

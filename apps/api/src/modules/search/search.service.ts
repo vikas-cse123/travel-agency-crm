@@ -371,6 +371,12 @@ function flightParams(query: FlightSearchQuery): Record<string, string | number 
     included_connecting_airports: query.included_connecting_airports,
     excluded_connecting_airports: query.excluded_connecting_airports,
     emissions: query.emissions,
+    // Expanded search: always request the largest result set the provider
+    // supports. expanded_search only takes effect together with
+    // show_hidden_flights and/or show_cheapest_flights.
+    show_hidden_flights: 'true',
+    show_cheapest_flights: 'true',
+    expanded_search: 'true',
   };
 
   // Only send return_date for round-trip searches. For one-way (flight_type
@@ -612,8 +618,10 @@ export const searchService = {
   /**
    * Validate a SearchAPI key with the smallest reasonable request (a hotel
    * autocomplete query). Returns a discriminated result so the caller can tell
-   * "connected", "invalid key" and "quota exhausted" apart without exposing the
-   * secret itself.
+   * "connected", "invalid key", "quota exhausted", "unreachable" and "provider
+   * error" apart without exposing the secret itself. Unlike the old behaviour,
+   * transport failures and non-auth HTTP errors are never reported as an
+   * invalid key.
    */
   async testConnection(apiKey: string): Promise<{ ok: boolean; reason?: string }> {
     const url = new URL(env.SEARCHAPI_BASE_URL);
@@ -635,7 +643,7 @@ export const searchService = {
         },
         'SearchApi test connection could not be completed',
       );
-      return { ok: false, reason: 'Could not reach SearchAPI.' };
+      return { ok: false, reason: 'unreachable' };
     }
 
     if (response.ok) return { ok: true };
@@ -645,6 +653,6 @@ export const searchService = {
     if (response.status === 401 || response.status === 403) {
       return { ok: false, reason: 'invalid' };
     }
-    return { ok: false, reason: 'invalid' };
+    return { ok: false, reason: 'error' };
   },
 };

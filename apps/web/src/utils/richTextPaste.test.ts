@@ -125,6 +125,49 @@ describe('normalizePastedHtml — Google Docs paste', () => {
     expect(normalized).not.toMatch(/rgb\(0,\s*0,\s*0\)/);
   });
 
+  it('I2. drops near-white text colours that would be invisible on white surfaces', () => {
+    // Representative fixture for white-on-dark source content (e.g. a
+    // dark-mode document): without normalization the white survives into the
+    // stored HTML and renders white-on-white in the editor. This does not
+    // claim to be any actual stored record.
+    const root = parse(
+      normalizePastedHtml(
+        '<p><span style="color:#ffffff">white hex</span> ' +
+          '<span style="color:#fff">white short hex</span> ' +
+          '<span style="color:rgb(255, 255, 255)">white rgb</span> ' +
+          '<span style="color:white">white keyword</span> ' +
+          '<span style="color:#FFFAFA">snow</span> ' +
+          '<span style="color:rgb(230,0,0)">kept red</span></p>',
+      ),
+    );
+    expect(root.textContent).toContain('white hex');
+    expect(root.textContent).toContain('snow');
+    // No color declaration survives except the intentional red.
+    const styled = Array.from(root.querySelectorAll('span[style]')).map((el) =>
+      el.getAttribute('style'),
+    );
+    expect(styled).toHaveLength(1);
+    expect(styled[0]).toMatch(/rgb\(230,\s*0,\s*0\)/);
+  });
+
+  it('I3. drops near-white colours from font tags and backgrounds too', () => {
+    const root = parse(
+      normalizePastedHtml(
+        '<p><font color="white">font white</font> ' +
+          '<span style="background-color:#ffffff">white highlight</span> ' +
+          '<span style="color:#000000">black dropped</span></p>',
+      ),
+    );
+    expect(root.textContent).toContain('font white');
+    expect(root.textContent).toContain('white highlight');
+    // No style declaration retains a near-white colour (text itself may
+    // mention the word "white", so inspect attributes, not markup text).
+    const styles = Array.from(root.querySelectorAll('[style]')).map((el) =>
+      el.getAttribute('style'),
+    );
+    expect(styles).toHaveLength(0);
+  });
+
   it('J. preserves unordered lists and their items', () => {
     const list = root.querySelector('ul');
     expect(list).not.toBeNull();

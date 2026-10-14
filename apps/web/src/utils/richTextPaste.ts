@@ -108,6 +108,28 @@ const ALLOWED_ALIGN = new Set(['left', 'center', 'right', 'justify']);
 
 const COLOR_PATTERN = /^(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-zA-Z]+)$/;
 
+/**
+ * Named CSS colours with every channel at/above 240 — effectively invisible
+ * on the CRM's white surfaces, so they are dropped like any other near-white.
+ */
+const NEAR_WHITE_KEYWORDS = new Set([
+  'white',
+  'snow',
+  'ghostwhite',
+  'whitesmoke',
+  'ivory',
+  'floralwhite',
+  'honeydew',
+  'aliceblue',
+  'azure',
+  'mintcream',
+]);
+
+/** True when every RGB channel is at/above 240 (near-white, invisible on white). */
+function isNearWhiteRgb(r: number, g: number, b: number): boolean {
+  return r >= 240 && g >= 240 && b >= 240;
+}
+
 interface Format {
   bold: boolean;
   italic: boolean;
@@ -160,6 +182,11 @@ function isHidden(style: Record<string, string>): boolean {
  * Also drops default grayish body colours (slate-500/600/700 etc.) so pasted
  * normal text inherits the weblink's dark slate-800, while intentional
  * saturated colours (red, magenta, blue) are preserved.
+ * Also drops near-white colours (white, snow, #fff, rgb(255,255,255), ...):
+ * every CRM surface behind these notes is white, so near-white text is
+ * invisible there — typically pasted from a dark-background source — and
+ * keeping it would store white-on-white content. Bold/italic/underline,
+ * lists, links and saturated colours are unaffected.
  */
 function normalizeColor(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -171,12 +198,15 @@ function normalizeColor(value: string | null | undefined): string | null {
   ) {
     return null;
   }
+  if (NEAR_WHITE_KEYWORDS.has(lower)) return null;
   if (/^rgba?\(\s*0\s*,\s*0\s*,\s*0(?:\s*,\s*0(?:\.0+)?)?\s*\)$/.test(lower)) return null;
   if (/^#(?:000|000000|00000000)$/.test(lower) || lower === 'black') return null;
   if (!COLOR_PATTERN.test(trimmed)) return null;
   // Strip default grayish body colours (e.g. #475569 slate-600, #64748b slate-500,
   // #334155 slate-700, #57534e stone) so they inherit the weblink's dark.
   // Keep intentional saturated colours (red, magenta, blue).
+  // Near-white (every channel at/above 240) is dropped just above instead:
+  // it is invisible on every white CRM surface.
   const hexMatch = lower.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/);
   if (hexMatch?.[1]) {
     const rawHex = hexMatch[1];
@@ -184,23 +214,26 @@ function normalizeColor(value: string | null | undefined): string | null {
     const r = parseInt(hex.slice(0, 2), 16);
     const g = parseInt(hex.slice(2, 4), 16);
     const b = parseInt(hex.slice(4, 6), 16);
+    if (isNearWhiteRgb(r, g, b)) return null;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    if (max - min < 60 && !(r > 240 && g > 240 && b > 240)) {
+    if (max - min < 60) {
       const isRed = r > 150 && g < 80 && b < 80;
       const isMagenta = r > 150 && b > 150 && g < 80;
       const isBlue = b > 150 && r < 80 && g < 100;
       if (!isRed && !isMagenta && !isBlue) return null;
     }
+    return trimmed;
   }
   const rgbMatch = lower.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
   if (rgbMatch?.[1] && rgbMatch[2] && rgbMatch[3]) {
     const r = parseInt(rgbMatch[1], 10);
     const g = parseInt(rgbMatch[2], 10);
     const b = parseInt(rgbMatch[3], 10);
+    if (isNearWhiteRgb(r, g, b)) return null;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    if (max - min < 60 && !(r > 240 && g > 240 && b > 240)) {
+    if (max - min < 60) {
       const isRed = r > 150 && g < 80 && b < 80;
       const isMag = r > 150 && b > 150 && g < 80;
       const isBlue = b > 150 && r < 80 && g < 100;

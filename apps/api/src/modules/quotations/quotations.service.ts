@@ -1280,6 +1280,7 @@ function versionCreateData(
 function fromVersion(source: FullVersion): QuotationVersionInput {
   return {
     title: source.title,
+    weblinkHeading: source.weblinkHeading,
     packageHeading: source.packageHeading,
     introduction: source.introduction,
     destinationSummary: source.destinationSummary,

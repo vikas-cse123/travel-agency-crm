@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm, useWatch, type FieldPath, type UseFormReturn } from 'react-hook-form';
@@ -9,6 +9,7 @@ import {
   ArrowUp,
   Building2,
   ChevronDown,
+  Eye,
   ImageIcon,
   Pencil,
   Plus,
@@ -117,6 +118,7 @@ import {
   resolveFlightSegmentAirlines,
 } from '@/features/quotations/BookmarkImport';
 import { FlightRecordCard } from './FlightRecordCard';
+import { PinnedLiveQuotationPreview, previewSectionForBuilderTab } from './FullQuotationPreview';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -2399,6 +2401,29 @@ export function QuotationBuilderPage() {
     useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
   );
   const [activeTab, setActiveTab] = useState('pricingMethod');
+  // Overflow container for the sub-tab bar: the active tab is scrolled into
+  // view on switch so it never hides outside the visible strip.
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  // Edge-arrow visibility for the tab strip: shown only while scrolling in
+  // that direction is possible. Recomputed on scroll and tab switches.
+  const [tabScroll, setTabScroll] = useState({ left: false, right: false });
+  const updateTabScroll = () => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    setTabScroll({
+      left: el.scrollLeft > 0,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+  };
+  useEffect(() => {
+    tabBarRef.current
+      ?.querySelector<HTMLElement>('[data-active-tab="true"]')
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    updateTabScroll();
+  }, [activeTab]);
+  const scrollTabs = (direction: 1 | -1) => {
+    tabBarRef.current?.scrollBy?.({ left: direction * 240, behavior: 'smooth' });
+  };
   // If the temporarily hidden Visa tab is somehow the active tab, fall back to
   // the nearest visible tab instead of showing a blank panel.
   useEffect(() => {
@@ -2474,6 +2499,19 @@ export function QuotationBuilderPage() {
   const [flightImagePreviewUrls, setFlightImagePreviewUrls] = useState<Record<string, string>>({});
   const [flightImageUploading, setFlightImageUploading] = useState(false);
   const [flightImageError, setFlightImageError] = useState('');
+  // Sightseeing quotation-document image URLs keyed by document id, mirroring
+  // the flight pattern: saved attachments resolve below, fresh uploads patch
+  // the map through onSightseeingPreviewUrl so the preview updates instantly.
+  const [sightseeingPreviewUrls, setSightseeingPreviewUrls] = useState<Record<string, string>>({});
+  const handleSightseeingPreviewUrl = useCallback((documentId: string, url: string) => {
+    setSightseeingPreviewUrls((current) => ({ ...current, [documentId]: url }));
+  }, []);
+  // Persistent side-by-side live preview: the editor narrows and the complete
+  // customer quotation stays mounted beside it until the user exits the mode.
+  // This is the single quotation preview feature.
+  const [livePreviewPinned, setLivePreviewPinned] = useState(false);
+  // Narrow-screen pane switch for persistent mode (desktop shows both panes).
+  const [pinnedPane, setPinnedPane] = useState<'editor' | 'preview'>('editor');
   // "Tax Note on Total Price" is a control dropdown: it defaults to the sentinel
   // (keep the saved note) and only writes `taxNote` when a real option is picked.
   const [taxNoteChoice, setTaxNoteChoice] = useState<string>(QUOTATION_TAX_NOTE_SENTINEL);
@@ -2547,6 +2585,23 @@ export function QuotationBuilderPage() {
   );
   const createAirline = useCreateAirline();
   const queryClient = useQueryClient();
+  // Master lists the live preview resolves presentations from. These are the
+  // builder's own picker queries (already loaded); the preview never refetches
+  // lists — only signed download URLs and uncached hotel details on demand.
+  const previewMasters = useMemo(
+    () => ({
+      destinations: destinationMasters.data?.data ?? [],
+      cruises: cruiseMasters.data?.data ?? [],
+      vehicles: vehicleMasters.data?.data ?? [],
+      airlines: airlines.data?.data ?? [],
+    }),
+    [
+      destinationMasters.data?.data,
+      cruiseMasters.data?.data,
+      vehicleMasters.data?.data,
+      airlines.data?.data,
+    ],
+  );
   const expertUsersQuery = useUsers(useMemo(() => new URLSearchParams({ pageSize: '100' }), []));
   const settingsQuery = useSettings();
   const destinationExpertPresetsQuery = useDestinationExpertPresets();
@@ -2815,6 +2870,40 @@ export function QuotationBuilderPage() {
       active = false;
     };
   }, [quotationId, builderVersion?.flightDetails]);
+
+  // Sightseeing activity attachment URLs for the live preview, mirroring the
+  // flight pattern above: saved documents resolve here, fresh uploads patch
+  // the map through onSightseeingPreviewUrl.
+  useEffect(() => {
+    const documentIds = [
+      ...new Set(
+        (builderVersion?.sightseeingDetails?.days ?? []).flatMap((day) =>
+          (day.activities ?? [])
+            .map((activity) => activity.imageDocumentId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ),
+    ];
+    if (documentIds.length === 0) {
+      setSightseeingPreviewUrls({});
+      return;
+    }
+    let active = true;
+    void Promise.all(
+      documentIds.map(async (documentId) => {
+        try {
+          return [documentId, await quotationDocumentInlineUrl(quotationId, documentId)] as const;
+        } catch {
+          return [documentId, ''] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (active) setSightseeingPreviewUrls(Object.fromEntries(entries));
+    });
+    return () => {
+      active = false;
+    };
+  }, [quotationId, builderVersion?.sightseeingDetails]);
   // Tabs requested by the Lead — the source of truth for the red `*` on each
   // service tab. Derived from the lead's own service selections, never from the
   // quotation's saved state (so a requested-but-unchecked service still shows
@@ -5867,37 +5956,43 @@ export function QuotationBuilderPage() {
             {isFlightSectionWise && <div className={`${calculatedCard} flex items-center justify-between`}><span className={calculatedLabel}>Flight Section Total</span><span className={calculatedValue}>{formatMoney(flightSectionTotal)}</span></div>}
 
             <div>
-              <span className={subsectionHeadingMuted}>Flight Information</span>
               <div
                 role="radiogroup"
                 aria-label="Flight information mode"
-                className="mt-2 grid max-w-xl grid-cols-2 rounded-lg border border-border bg-muted/30 p-1"
+                className="grid w-full max-w-md grid-cols-2 gap-1 rounded-[20px] border border-slate-200 bg-white p-1"
               >
                 {(
                   [
                     ['MANUAL', 'Fill details'],
                     ['IMAGE', 'Upload image'],
                   ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={entryMode === value}
-                    className={cn(
-                      'rounded-md px-4 py-2 text-sm font-semibold transition',
-                      entryMode === value
-                        ? 'bg-white text-brand-700 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800',
-                    )}
-                    onClick={() =>
-                      form.setValue('flightDetails.entryMode', value, { shouldDirty: true })
-                    }
-                  >
-                    {value === 'IMAGE' ? <Upload className="mr-2 inline h-4 w-4" /> : null}
-                    {label}
-                  </button>
-                ))}
+                ).map(([value, label]) => {
+                  const selected = entryMode === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className={cn(
+                        'flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-[14px] px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600/60',
+                        selected
+                          ? 'bg-brand-600 text-white'
+                          : 'bg-white text-slate-700 hover:bg-slate-50',
+                      )}
+                      onClick={() =>
+                        form.setValue('flightDetails.entryMode', value, { shouldDirty: true })
+                      }
+                    >
+                      {value === 'IMAGE' ? (
+                        <Upload
+                          className={cn('h-4 w-4', selected ? 'text-white' : 'text-slate-400')}
+                        />
+                      ) : null}
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -5958,7 +6053,7 @@ export function QuotationBuilderPage() {
                     <span className="font-semibold text-slate-800">
                       {flightImages.length
                         ? 'Add another flight image'
-                        : 'Upload flight screenshot or itinerary'}
+                        : 'Upload flight screenshot'}
                     </span>
                     <span className="text-xs text-slate-500">
                       Choose, drop, or paste · PNG, JPG or WebP
@@ -6472,7 +6567,51 @@ export function QuotationBuilderPage() {
   };
 
   return (
-    <form className="space-y-5" onSubmit={submit}>
+    // When the live preview is pinned, the whole row is bounded to the
+    // visible viewport so the complete phone is on screen from the initial
+    // render with no desktop page scroll: 56px app topbar + 24px main top
+    // padding + 24px main bottom padding = 6.5rem of surrounding chrome.
+    // The editor form scrolls internally (see below); the preview panel
+    // fills the row height. Mobile (<lg) keeps the stacked Editor/Preview
+    // switch with its own max-height behavior.
+    <div className={livePreviewPinned ? 'flex flex-col gap-4 lg:h-[calc(100vh-6.5rem)] lg:flex-row lg:items-stretch lg:supports-[height:100dvh]:h-[calc(100dvh-6.5rem)]' : undefined}>
+      {livePreviewPinned && (
+        <div
+          role="group"
+          aria-label="Builder view"
+          className="flex gap-1 rounded-xl border border-border bg-card p-1 lg:hidden"
+        >
+          {(
+            [
+              ['editor', 'Editor'],
+              ['preview', 'Preview'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={pinnedPane === value}
+              onClick={() => setPinnedPane(value)}
+              className={cn(
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+                pinnedPane === value
+                  ? 'bg-brand-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <form
+        onSubmit={submit}
+        className={
+          livePreviewPinned
+            ? cn('min-w-0 space-y-5 lg:h-full lg:min-h-0 lg:w-[57%] lg:shrink-0 lg:overflow-y-auto', pinnedPane === 'preview' && 'hidden lg:block')
+            : 'space-y-5'
+        }
+      >
       <PersistInitialQuotationSnapshot
         enabled={
           version.versionNumber === 1 &&
@@ -6508,10 +6647,22 @@ export function QuotationBuilderPage() {
             <h1 className="text-2xl font-semibold">Quotation builder</h1>
           </div>
         </div>
-        <Button type="submit" isLoading={save.isPending}>
-          <Save className="h-4 w-4" />
-          Save quotation
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            aria-pressed={livePreviewPinned}
+            onClick={() => setLivePreviewPinned((open) => !open)}
+            disabled={!quotation.data}
+          >
+            <Eye className="h-4 w-4" />
+            {livePreviewPinned ? 'Close Live Preview' : 'Keep Live Preview Open'}
+          </Button>
+          <Button type="submit" isLoading={save.isPending}>
+            <Save className="h-4 w-4" />
+            Save quotation
+          </Button>
+        </div>
       </header>
       {save.isError && (
         <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{save.error.message}</p>
@@ -6527,80 +6678,75 @@ export function QuotationBuilderPage() {
         </div>
       )}
 
-      <div className="rounded-t-xl bg-gradient-to-r from-brand-700 to-blue-600 px-5 py-4 font-semibold text-white">
-        Quotation for {q.customerName}
-        {nights != null && ` (${nights} Nights / ${nights + 1} Days)`}
-        {q.destinationSummary && ` — ${q.destinationSummary}`}
-      </div>
+      {/* Quotation title and weblink headings are displayed and edited on the
+          Quotation Details page. They stay registered here (hidden) so every
+          save preserves the stored values without resetting them. */}
+      <input type="hidden" {...form.register('title')} />
+      <input type="hidden" {...form.register('weblinkHeading')} />
+      <input type="hidden" {...form.register('packageHeading')} />
 
-      <section className="rounded-xl border bg-card p-5">
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="text-sm font-semibold text-slate-800">
-            Quotation Title <span className="text-red-500">*</span>
-            <input aria-label="Title" {...form.register('title')} className={`${field} mt-1`} />
-          </label>
-          <label className="text-sm font-semibold text-slate-800">
-            Weblink Heading
-            <input
-              aria-label="Weblink Heading"
-              placeholder="e.g. Singapore Family Holiday"
-              {...form.register('weblinkHeading')}
-              className={`${field} mt-1`}
-            />
-            <p className="mt-1 text-xs font-normal text-slate-400">
-              Optional override for the large hero heading on the public weblink.
-            </p>
-          </label>
-          <label className="text-sm font-semibold text-slate-800">
-            Weblink Package Heading
-            <input
-              aria-label="Weblink Package Heading"
-              placeholder="e.g. Goa Family Holiday"
-              {...form.register('packageHeading')}
-              className={`${field} mt-1`}
-            />
-            <p className="mt-1 text-xs font-normal text-slate-400">
-              Third line of the public weblink hero. Leave blank for the default
-              &ldquo;Custom Package for [Lead]&rdquo;.
-            </p>
-          </label>
-          <label className="text-sm font-semibold text-slate-800">
-            Version
-            <input
-              value={version.versionNumber}
-              readOnly
-              className={`${field} mt-1 bg-slate-100`}
-            />
-          </label>
-          <label className="text-sm font-semibold text-slate-800">
-            Lead Stage
-            <input
-              value={q.query?.leadStage ? labelForLookup(q.query.leadStage) : ''}
-              readOnly
-              className={`${field} mt-1 bg-slate-100`}
-            />
-          </label>
-        </div>
-      </section>
-
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-border px-1">
-        {visibleTabs.map((tab) => (
+      {/* Sub-tab navigation: restrained white container, vertical separators
+          between tabs, blue-text + 3px underline active state on a transparent
+          background, and edge arrows only while the strip overflows. */}
+      <div className="relative rounded-xl border border-border bg-card">
+        {tabScroll.left && (
           <button
-            key={tab.key}
             type="button"
-            aria-label={tab.label}
-            onClick={() => setActiveTab(tab.key)}
-            className={cn(
-              'relative -mb-px whitespace-nowrap rounded-t-md border-b-2 px-3 py-2.5 text-sm font-medium transition-colors',
-              activeTab === tab.key
-                ? 'border-brand-600 bg-brand-50/50 text-brand-700'
-                : 'border-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900',
-            )}
+            aria-label="Scroll tabs left"
+            onClick={() => scrollTabs(-1)}
+            className="absolute left-1 top-1/2 z-10 -translate-y-1/2 rounded-full border border-border bg-card p-1.5 text-slate-500 shadow-sm hover:bg-slate-50 hover:text-slate-700"
           >
-            {tab.label}
-            {leadRequested.has(tab.key) && <span className="ml-0.5 text-red-500">*</span>}
+            <ArrowLeft className="h-4 w-4" />
           </button>
-        ))}
+        )}
+        <div
+          ref={tabBarRef}
+          onScroll={updateTabScroll}
+          className="flex items-center gap-1 overflow-x-auto scroll-smooth px-3 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {visibleTabs.map((tab, index) => (
+            <Fragment key={tab.key}>
+              {index > 0 && (
+                <span aria-hidden="true" className="h-6 w-px shrink-0 bg-slate-200" />
+              )}
+              <button
+                type="button"
+                aria-label={tab.label}
+                data-active-tab={activeTab === tab.key ? 'true' : undefined}
+                onClick={() => setActiveTab(tab.key)}
+                className={cn(
+                  // Transparent tabs, blue text plus a 3px rounded underline
+                  // for the active tab only. The transparent bottom border
+                  // reserves the underline space so switching tabs never
+                  // shifts layout; hover only tints the background.
+                  'relative shrink-0 whitespace-nowrap rounded-md border-b-2 border-transparent bg-transparent px-4 py-2.5 text-sm font-medium transition-colors',
+                  activeTab === tab.key
+                    ? 'text-brand-600'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+                )}
+              >
+                {tab.label}
+                {leadRequested.has(tab.key) && <span className="ml-0.5 text-red-500">*</span>}
+                {activeTab === tab.key && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-x-0 bottom-0 h-[3px] rounded-full bg-brand-600"
+                  />
+                )}
+              </button>
+            </Fragment>
+          ))}
+        </div>
+        {tabScroll.right && (
+          <button
+            type="button"
+            aria-label="Scroll tabs right"
+            onClick={() => scrollTabs(1)}
+            className="absolute right-1 top-1/2 z-10 -translate-y-1/2 rounded-full border border-border bg-card p-1.5 text-slate-500 shadow-sm hover:bg-slate-50 hover:text-slate-700"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* Tab panels — only the active tab is mounted (RHF keeps field values). */}
@@ -6748,6 +6894,7 @@ export function QuotationBuilderPage() {
             quotationId={quotationId}
             quotationVersionId={versionId}
             destination={sightseeingDestinationName}
+            onDocumentPreviewUrl={handleSightseeingPreviewUrl}
             pax={{
               adults: pax.adults,
               childrenWithBed: pax.cwb,
@@ -6775,7 +6922,6 @@ export function QuotationBuilderPage() {
             <IncludeBar tabKey="hotel" label="Hotel" />
             {isIncluded('hotel') && (
               <>
-                <HotelBookmarkListField onLoaded={importHotelBookmark} />
                 <div className="grid gap-4 md:grid-cols-2">
                   <label className="text-sm font-semibold text-slate-800">
                     Section Title
@@ -6810,6 +6956,7 @@ export function QuotationBuilderPage() {
                   const hotelTotal = rows.filter(r=> r.selected!==false).reduce((sum,row)=> sum + calculateHotelRowTotal(row).total, 0);
                   return hotelTotal>0 ? <div className={`${calculatedCard} flex items-center justify-between`}><span className={calculatedLabel}>Hotel Section Total</span><span className={calculatedValue}>{currency} {hotelTotal.toFixed(2)}</span></div> : null;
                 })()}
+                <HotelBookmarkListField onLoaded={importHotelBookmark} />
 
                 <div>
                   <h3 className="mb-1 text-sm font-semibold text-slate-800">Description</h3>
@@ -8723,6 +8870,34 @@ export function QuotationBuilderPage() {
           </Link>
         </div>
       )}
-    </form>
+      </form>
+      {livePreviewPinned && quotation.data && version && (
+        <aside
+          data-testid="live-preview-panel"
+          aria-label="Live weblink preview"
+          className={cn(
+            'min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card',
+            pinnedPane === 'preview' ? 'flex' : 'hidden',
+            // Fills the viewport-bounded row (no sticky needed: the desktop
+            // page no longer scrolls in pinned mode, so the panel is at its
+            // final position from the initial render).
+            'lg:flex lg:h-full lg:min-h-0 lg:w-[43%] lg:shrink-0',
+          )}
+        >
+          <PinnedLiveQuotationPreview
+            quotation={quotation.data}
+            savedVersion={version}
+            settings={settingsQuery.data ?? null}
+            control={form.control}
+            flightPreviewUrls={flightImagePreviewUrls}
+            onClose={() => setLivePreviewPinned(false)}
+            masters={previewMasters}
+            sightseeingPreviewUrls={sightseeingPreviewUrls}
+            expertUsers={expertUsersQuery.data?.data ?? []}
+            activeSection={previewSectionForBuilderTab(activeTab)}
+          />
+        </aside>
+      )}
+    </div>
   );
 }

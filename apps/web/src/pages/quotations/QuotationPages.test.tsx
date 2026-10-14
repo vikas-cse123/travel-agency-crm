@@ -10612,7 +10612,9 @@ describe('Quotation Builder — defensive legacy normalization', () => {
     const fetchMock = masterFetch(builderQuotation({ title: '' }));
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
-    await screen.findByLabelText('Title');
+    // The title input moved to the Quotation Details page; the builder keeps
+    // the value hidden, so wait for the builder itself to load instead.
+    await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[0]!);
 
     expect(await screen.findByText('Quotation title is required.')).toBeInTheDocument();
@@ -11702,7 +11704,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Flight');
     // Each flight card carries its own bookmark loader, starting with one card.
-    expect(await screen.findByText('Flight 1')).toBeInTheDocument();
+    expect(await screen.findByText('Flight Details 1')).toBeInTheDocument();
     expect(screen.getByLabelText('Flight 1 bookmark ID')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Load' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add Flight/i })).toBeInTheDocument();
@@ -12230,7 +12232,7 @@ describe.skip('Phase 14 master selectors', () => {
     vi.stubGlobal('fetch', masterFetch(quotation));
     renderBuilderPage();
 
-    expect(await screen.findByLabelText('Title')).toHaveValue('Singapore Package for Vikas Singh');
+    expect(await screen.findByDisplayValue('Singapore Package for Vikas Singh')).toBeInTheDocument();
   });
 
   it('hides alternative Hotel Options without removing the hotel editor', async () => {
@@ -16417,11 +16419,11 @@ describe.skip('Phase 14 master selectors', () => {
     await userEvent.type(await screen.findByLabelText('Flight 1 bookmark ID'), 'FLT-000123');
     await userEvent.click(screen.getByRole('button', { name: 'Load' }));
     expect(await screen.findByDisplayValue('AI101')).toBeInTheDocument();
-    expect(screen.getByText('Flight 1')).toBeInTheDocument();
+    expect(screen.getByText('Flight Details 1')).toBeInTheDocument();
 
     // A second card loads independently; the first is untouched.
     await userEvent.click(screen.getByRole('button', { name: /Add Flight/i }));
-    expect(screen.getByText('Flight 2')).toBeInTheDocument();
+    expect(screen.getByText('Flight Details 2')).toBeInTheDocument();
     await userEvent.type(await screen.findByLabelText('Flight 2 bookmark ID'), 'FLT-000456');
     await userEvent.click(screen.getAllByRole('button', { name: 'Load' })[1]!);
     expect(await screen.findByDisplayValue('6E202')).toBeInTheDocument();
@@ -16551,7 +16553,7 @@ describe.skip('Phase 14 master selectors', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Remove flight 1' }));
     expect(screen.queryByDisplayValue('AI101')).not.toBeInTheDocument();
     expect(screen.getByDisplayValue('6E202')).toBeInTheDocument();
-    expect(screen.queryByText('Flight 2')).not.toBeInTheDocument();
+    expect(screen.queryByText('Flight Details 2')).not.toBeInTheDocument();
   });
 
   it('opens a legacy single-flight quotation as one flight card', async () => {
@@ -16593,8 +16595,8 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Flight');
     // Legacy rows normalize into exactly one card with their segments intact.
-    expect(screen.getByText('Flight 1')).toBeInTheDocument();
-    expect(screen.queryByText('Flight 2')).not.toBeInTheDocument();
+    expect(screen.getByText('Flight Details 1')).toBeInTheDocument();
+    expect(screen.queryByText('Flight Details 2')).not.toBeInTheDocument();
     expect(await screen.findByDisplayValue('AI101')).toBeInTheDocument();
   });
 

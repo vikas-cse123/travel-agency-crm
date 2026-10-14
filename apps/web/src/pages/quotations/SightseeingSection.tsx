@@ -607,6 +607,7 @@ function DayCard({
   onInsertBefore,
   onInsertAfter,
   onRemove,
+  onDocumentPreviewUrl,
 }: {
   form: Form;
   quotationId: string;
@@ -621,6 +622,8 @@ function DayCard({
   onInsertBefore?: (() => void) | undefined;
   onInsertAfter: () => void;
   onRemove: () => void;
+  /** Receives freshly uploaded activity-image URLs (for the live preview). */
+  onDocumentPreviewUrl?: ((documentId: string, url: string) => void) | undefined;
 }) {
   const fp = (path: string) => path as FieldPath<QuotationVersionInput>;
   const base = `sightseeingDetails.days.${dayIndex}`;
@@ -947,6 +950,7 @@ function DayCard({
       form.setValue(fp(`${abase}.imageSnapshotPresent`), false as never, { shouldDirty: true });
       form.setValue(fp(`${abase}.pdfImageUrl`), null as never, { shouldDirty: true });
       setDocumentPreviews((current) => ({ ...current, [documentId]: url }));
+      onDocumentPreviewUrl?.(documentId, url);
     } catch (error) {
       setImageError(
         error instanceof Error ? error.message : 'The sightseeing image upload failed.',
@@ -1453,6 +1457,7 @@ export function SightseeingSection({
   quotationVersionId = '',
   destination,
   pax,
+  onDocumentPreviewUrl,
 }: {
   form: Form;
   quotationId?: string;
@@ -1460,6 +1465,8 @@ export function SightseeingSection({
   /** Resolved destination/country name (e.g. "Malaysia") for the activities lookup. */
   destination?: string | null;
   pax?: { adults: number; childrenWithBed: number; childrenWithoutBed: number; infants: number };
+  /** Receives freshly uploaded activity-image URLs (for the live preview). */
+  onDocumentPreviewUrl?: ((documentId: string, url: string) => void) | undefined;
 }) {
   const effectivePax = pax ?? { adults: 2, childrenWithBed: 0, childrenWithoutBed: 0, infants: 0 };
   const destinationSummary = (form.watch('destinationSummary') as string) ?? '';
@@ -1708,6 +1715,7 @@ export function SightseeingSection({
                   destinationLabel={destinationLabel}
                   attractionsStatus={attractionsStatus}
                   pax={effectivePax}
+                  onDocumentPreviewUrl={onDocumentPreviewUrl}
                   onInsertBefore={
                     selectedDayIndex === 0
                       ? () => {

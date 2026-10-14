@@ -65,15 +65,29 @@ const LINK_SELECT = { id: true, queryId: true, status: true } as const;
  * `value` as `destinationValue`. Only ACTIVE rows are
  * exposed, and linked cities must belong to the same scope company
  * (a cross-company city can never leak into another workspace's feed).
+ * Each destination additionally carries its stored `countryName` and
+ * `privateName` (null when blank) for country grouping and
+ * private-name search: both come from the SAME tenant-scoped,
+ * ACTIVE-owned row already selected above, so no new tenant data is
+ * exposed beyond what the owning account sees natively — and
+ * private names are metadata for option labels/search only, never
+ * itinerary values (leads still store public names).
  */
 interface ItineraryDestinationFeed {
-  destinations: Array<{ value: string; label: string }>;
+  destinations: Array<{
+    value: string;
+    label: string;
+    countryName: string | null;
+    privateName: string | null;
+  }>;
   cities: Array<{ value: string; label: string; destinationValue: string }>;
 }
 
 interface MasterDestinationRow {
   id: string;
   name: string;
+  countryName?: string | null;
+  privateName?: string | null;
   cities?: Array<{
     cityId: string;
     city?: { id: string; name: string; companyId: string; status?: string } | null;
@@ -97,7 +111,16 @@ async function itineraryDestinationFeed(companyId: string): Promise<ItineraryDes
     if (!row || typeof row.id !== 'string' || typeof row.name !== 'string') continue;
     if (!seenDestinations.has(row.id)) {
       seenDestinations.add(row.id);
-      destinations.push({ value: row.id, label: row.name });
+      // countryName/privateName are read from this same owned row
+      // (already tenant-scoped + ACTIVE-filtered above); blank
+      // values degrade to null so consumers never invent data.
+      const countryName = typeof row.countryName === 'string' && row.countryName.trim()
+        ? row.countryName
+        : null;
+      const privateName = typeof row.privateName === 'string' && row.privateName.trim()
+        ? row.privateName
+        : null;
+      destinations.push({ value: row.id, label: row.name, countryName, privateName });
     }
     for (const link of row.cities ?? []) {
       const city = link?.city;
@@ -278,6 +301,14 @@ export const wacrmService = {
         assignedToId: ownerUser.id,
         dateOfBirth: input.dateOfBirth ?? undefined,
         travelStartDate: input.travelStartDate ?? undefined,
+        // Month-based timing (optional pair, validated by the
+        // contract's pair + conflict rules above). Absent/null
+        // preserves legacy exact-date behavior byte-for-byte;
+        // persistence reuses the existing Query columns via the
+        // canonical schema + scalarData — no migration, no new
+        // columns, never an invented day.
+        travelMonth: input.travelMonth ?? undefined,
+        travelYear: input.travelYear ?? undefined,
         departureCountry: input.departureCountry ?? undefined,
         departureCity: input.departureCity ?? undefined,
         rooms: input.rooms ?? undefined,

@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import {
   cabinLuggageLabel,
+  flightRecordPrefix,
   formatAgeList,
   formatDayPrefixedTitle,
   formatInfantAgeList,
@@ -1947,7 +1948,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
       Boolean(s.airlineName || s.from || s.to || s.flightNumber);
     const legs = hasFlights
       ? flightRecords.flatMap((flight, flightIndex) => {
-          const prefix = flightRecords.length > 1 ? `Flight ${flightIndex + 1} · ` : '';
+          const prefix = flightRecordPrefix(flightIndex, flightRecords.length);
           return [
             flight.journeyType === 'ONEWAY_RETURN'
               ? null

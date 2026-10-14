@@ -831,6 +831,17 @@ describe('Stylish quotation PDF', () => {
       // Stored order is preserved: the first flight renders first.
       expect(visible.indexOf('AI101')).toBeLessThan(visible.indexOf('6E202'));
     }
+    // Parent flight entries share the builder's Flight Details N labels.
+    const classicText = pdfText(await renderQuotationPdf(input));
+    expect(classicText).toContain('Flight Details 1 · Outbound Journey');
+    expect(classicText).toContain('Flight Details 2 · Outbound Journey');
+    expect(classicText).not.toContain('Flight 1 ·');
+    expect(classicText).not.toContain('Flight 2 ·');
+    const stylishText = pdfText(await renderStylishQuotationPdf(input));
+    expect(stylishText).toContain('FLIGHT DETAILS 1 · OUTBOUND');
+    expect(stylishText).toContain('FLIGHT DETAILS 2 · OUTBOUND');
+    expect(stylishText).not.toContain('FLIGHT 1 ·');
+    expect(stylishText).not.toContain('FLIGHT 2 ·');
   });
 
   it('renders legacy single-flight rows without a flights array', async () => {
@@ -865,6 +876,10 @@ describe('Stylish quotation PDF', () => {
     };
     for (const pdf of [await renderQuotationPdf(input), await renderStylishQuotationPdf(input)]) {
       expect(pdfText(pdf)).toContain('AI101');
+    }
+    // A lone flight keeps its bare journey title: no numbered parent label.
+    for (const pdf of [await renderQuotationPdf(input), await renderStylishQuotationPdf(input)]) {
+      expect(pdfText(pdf)).not.toContain('Flight Details 1');
     }
   });
 

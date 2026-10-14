@@ -135,6 +135,7 @@ async function createDestination(
   name: string,
   cityIds: string[],
   countryCode = 'IN',
+  extra: Record<string, unknown> = {},
 ) {
   const response = await client.post('/api/masters/destinations', {
     countryCode,
@@ -142,6 +143,7 @@ async function createDestination(
     destinationType: 'DOMESTIC',
     cityIds,
     status: 'ACTIVE',
+    ...extra,
   });
   expect(response.status).toBe(201);
   return response.body.data as { id: string; name: string };
@@ -449,7 +451,14 @@ describe('WACRM lookups: itinerary destinations come from the Destinations maste
     const data = res.body.data;
 
     expect(data.destinations).toEqual(
-      expect.arrayContaining([{ value: destRajasthan.id, label: 'Wacrm Rajasthan' }]),
+      expect.arrayContaining([
+        {
+          value: destRajasthan.id,
+          label: 'Wacrm Rajasthan',
+          countryName: 'India',
+          privateName: null,
+        },
+      ]),
     );
     expect(data.cities).toEqual(
       expect.arrayContaining([
@@ -1014,7 +1023,14 @@ describe('WACRM per-account permanent credential', () => {
     const resA = await bearer(alpha.token).get('/api/integrations/wacrm/lookups');
     expect(resA.status).toBe(200);
     expect(resA.body.data.destinations).toEqual(
-      expect.arrayContaining([{ value: dest.id, label: 'Alpha Only Dest' }]),
+      expect.arrayContaining([
+        {
+          value: dest.id,
+          label: 'Alpha Only Dest',
+          countryName: 'India',
+          privateName: null,
+        },
+      ]),
     );
 
     const resB = await bearer(beta.token).get('/api/integrations/wacrm/lookups');
@@ -1635,7 +1651,9 @@ describe('WACRM lookups tenant isolation', () => {
     // Workspace A: exactly its own master, nothing from B.
     const resA = await bearer(alpha.token).get('/api/integrations/wacrm/lookups');
     expect(resA.status).toBe(200);
-    expect(resA.body.data.destinations).toEqual([{ value: kashmir.id, label: 'Kashmir' }]);
+    expect(resA.body.data.destinations).toEqual([
+      { value: kashmir.id, label: 'Kashmir', countryName: 'India', privateName: null },
+    ]);
     expect(resA.body.data.cities).toEqual([
       { value: kashmirCity.id, label: 'Kashmir City', destinationValue: kashmir.id },
     ]);
@@ -1645,8 +1663,8 @@ describe('WACRM lookups tenant isolation', () => {
     expect(resB.status).toBe(200);
     expect(resB.body.data.destinations).toEqual(
       expect.arrayContaining([
-        { value: singapore.id, label: 'Singapore' },
-        { value: bangkok.id, label: 'Bangkok' },
+        { value: singapore.id, label: 'Singapore', countryName: 'India', privateName: null },
+        { value: bangkok.id, label: 'Bangkok', countryName: 'Thailand', privateName: null },
       ]),
     );
     expect(resB.body.data.destinations).toHaveLength(2);
@@ -1683,5 +1701,210 @@ describe('WACRM lookups tenant isolation', () => {
     expect(cityValues).toEqual([ownCity.id]);
     expect(destValues).not.toContain(globalDest.id);
     expect(cityValues).not.toContain(globalCity.id);
+  });
+});
+
+describe('WACRM month-based travel timing (Phase 2A)', () => {
+  async function setup() {
+    const admin = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(admin, 'sales@alpha.test');
+    const token = await mintToken(admin, 'owner@alpha.test');
+    return { admin, token };
+  }
+
+  const monthPayload = (overrides: Record<string, unknown> = {}) => {
+    const { travelStartDate: _dropped, ...noDate } = payload();
+    return { ...noDate, travelMonth: 5, travelYear: 2027, ...overrides };
+  };
+
+  it('accepts a complete month/year pair and persists it without an invented day', async () => {
+    const { token } = await setup();
+    const res = await bearer(token).post('/api/integrations/wacrm/leads').send(monthPayload());
+    expect(res.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: res.body.data.leadId } });
+    expect(row.travelMonth).toBe(5);
+    expect(row.travelYear).toBe(2027);
+    expect(row.travelStartDate).toBeNull();
+  });
+
+  it('rejects an invalid month and an invalid year', async () => {
+    const { token } = await setup();
+    for (const bad of [
+      { travelMonth: 0, travelYear: 2027 },
+      { travelMonth: 13, travelYear: 2027 },
+      { travelMonth: 5, travelYear: 1899 },
+      { travelMonth: 5, travelYear: 2101 },
+    ]) {
+      const res = await bearer(token).post('/api/integrations/wacrm/leads').send(monthPayload(bad));
+      expect(res.status).toBe(400);
+      expect(await db.query.count()).toBe(0);
+    }
+  });
+
+  it('rejects a half pair (month without year, year without month)', async () => {
+    const { token } = await setup();
+    for (const half of [{ travelMonth: 5 }, { travelYear: 2027 }]) {
+      const { travelStartDate: _dropped, ...noTiming } = payload();
+      const res = await bearer(token)
+        .post('/api/integrations/wacrm/leads')
+        .send({ ...noTiming, ...half });
+      expect(res.status).toBe(400);
+      expect(res.body.error.fields).toHaveProperty('travelMonth');
+      expect(await db.query.count()).toBe(0);
+    }
+  });
+
+  it('rejects a date combined with a complete month/year pair (no silent conflict)', async () => {
+    const { token } = await setup();
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(monthPayload({ travelStartDate: '2026-05-01' }));
+    expect(res.status).toBe(400);
+    expect(res.body.error.fields).toHaveProperty('travelStartDate');
+    expect(await db.query.count()).toBe(0);
+  });
+
+  it('keeps exact-date-only payloads backward-compatible', async () => {
+    const { token } = await setup();
+    const res = await bearer(token).post('/api/integrations/wacrm/leads').send(payload());
+    expect(res.status).toBe(201);
+    const row = await db.query.findUniqueOrThrow({ where: { id: res.body.data.leadId } });
+    expect(row.travelStartDate).not.toBeNull();
+    expect(row.travelMonth).toBeNull();
+    expect(row.travelYear).toBeNull();
+  });
+});
+
+describe('WACRM lookup feed metadata (Phase 2B)', () => {
+  async function setup() {
+    const admin = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(admin, 'sales@alpha.test');
+    const token = await mintToken(admin, 'owner@alpha.test');
+    return { admin, token };
+  }
+
+  it('exposes countryName and privateName on destination options', async () => {
+    const { admin, token } = await setup();
+    const city = await createCity(admin, 'Wacrm Meta City');
+    const dest = await createDestination(admin, 'Wacrm Meta Dest', [city.id], 'IN', {
+      privateName: 'Meta Private',
+    });
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    const entry = (res.body.data.destinations as Array<Record<string, unknown>>).find(
+      (d) => d.value === dest.id,
+    );
+    expect(entry).toMatchObject({
+      value: dest.id,
+      label: 'Wacrm Meta Dest',
+      countryName: 'India',
+      privateName: 'Meta Private',
+    });
+  });
+
+  it('degrades blank private names to null without breaking the feed', async () => {
+    const { admin, token } = await setup();
+    const city = await createCity(admin, 'Wacrm Plain City');
+    const dest = await createDestination(admin, 'Wacrm Plain Dest', [city.id]);
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    const entry = (res.body.data.destinations as Array<Record<string, unknown>>).find(
+      (d) => d.value === dest.id,
+    );
+    expect(entry).toMatchObject({
+      value: dest.id,
+      label: 'Wacrm Plain Dest',
+      countryName: 'India',
+      privateName: null,
+    });
+  });
+
+  it('never leaks one tenant’s private names to another tenant', async () => {
+    const alpha = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(alpha, 'sales@alpha.test');
+    const tokenA = await mintToken(alpha, 'owner@alpha.test');
+    const beta = await owner('owner@beta.test', 'Beta Travel');
+    await employeeEmail(beta, 'sales@beta.test');
+    const tokenB = await mintToken(beta, 'owner@beta.test');
+
+    const cityA = await createCity(alpha, 'Alpha Secret City');
+    await createDestination(alpha, 'Alpha Secret Dest', [cityA.id], 'IN', {
+      privateName: 'Alpha Secret Private',
+    });
+    const cityB = await createCity(beta, 'Beta City');
+    await createDestination(beta, 'Beta Dest', [cityB.id], 'IN', {
+      privateName: 'Beta Private',
+    });
+
+    const resB = await bearer(tokenB).get('/api/integrations/wacrm/lookups');
+    expect(resB.status).toBe(200);
+    expect(JSON.stringify(resB.body)).not.toContain('Alpha Secret Private');
+    expect(JSON.stringify(resB.body)).not.toContain('Alpha Secret Dest');
+    expect(JSON.stringify(resB.body)).toContain('Beta Private');
+
+    const resA = await bearer(tokenA).get('/api/integrations/wacrm/lookups');
+    expect(resA.status).toBe(200);
+    expect(JSON.stringify(resA.body)).toContain('Alpha Secret Private');
+  });
+
+  it('keeps city associations, ordering, and value/label shape unchanged', async () => {
+    const { admin, token } = await setup();
+    const c1 = await createCity(admin, 'Wacrm Shape City One');
+    const c2 = await createCity(admin, 'Wacrm Shape City Two');
+    const dest = await createDestination(admin, 'Wacrm Shape Dest', [c1.id, c2.id], 'IN', {
+      privateName: 'Shape Private',
+    });
+
+    const res = await bearer(token).get('/api/integrations/wacrm/lookups');
+    expect(res.status).toBe(200);
+    // Destination entries carry exactly the documented keys.
+    for (const d of res.body.data.destinations as Array<Record<string, unknown>>) {
+      expect(Object.keys(d).sort()).toEqual(
+        ['countryName', 'label', 'privateName', 'value'].sort(),
+      );
+    }
+    // Cities keep their exact existing shape and parent linkage.
+    expect(res.body.data.cities).toEqual(
+      expect.arrayContaining([
+        { value: c1.id, label: 'Wacrm Shape City One', destinationValue: dest.id },
+        { value: c2.id, label: 'Wacrm Shape City Two', destinationValue: dest.id },
+      ]),
+    );
+  });
+});
+
+describe('WACRM itinerary compatibility with private-named destinations (Phase 2C)', () => {
+  it('stores public destination and city names only — private names never persist', async () => {
+    const admin = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(admin, 'sales@alpha.test');
+    const token = await mintToken(admin, 'owner@alpha.test');
+
+    const city = await createCity(admin, 'Wacrm Compat City');
+    await createDestination(admin, 'Wacrm Compat Dest', [city.id], 'IN', {
+      privateName: 'Compat Private',
+    });
+
+    const { travelStartDate: _dropped, ...noDate } = payload();
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send({
+        ...noDate,
+        travelMonth: 5,
+        travelYear: 2027,
+        itinerary: [
+          { country: 'Wacrm Compat Dest', destination: 'Wacrm Compat City', nights: 2, sequence: 1 },
+        ],
+      });
+    expect(res.status).toBe(201);
+    const rows = await db.queryItinerary.findMany({
+      where: { queryId: res.body.data.leadId as string },
+      orderBy: { sequence: 'asc' },
+    });
+    expect(rows).toMatchObject([
+      { country: 'Wacrm Compat Dest', destination: 'Wacrm Compat City', nights: 2 },
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('Compat Private');
   });
 });
