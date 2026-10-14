@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { AppShell } from '@/layouts/AppShell';
+import { AppShell, QUOTATION_BUILDER_EDIT_PATTERN } from '@/layouts/AppShell';
 import {
   PermissionRoute,
   ProtectedRoute,
@@ -348,7 +348,7 @@ export function AppRoutes() {
             }
           />
           <Route
-            path="/quotations/:quotationId/versions/:versionId/edit"
+            path={QUOTATION_BUILDER_EDIT_PATTERN}
             element={
               <PermissionRoute permission={PERMISSIONS.QUOTATIONS_UPDATE}>
                 <QuotationBuilderPage />

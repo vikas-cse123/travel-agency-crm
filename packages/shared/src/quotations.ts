@@ -1366,6 +1366,11 @@ export const quotationVersionInputSchema = z
     // Custom package heading for the third line of the public weblink hero.
     // Null/empty falls back to "Custom Package for [Lead]".
     packageHeading: optionalText(200),
+    // Per-quotation weblink display overrides (Weblink Display Settings).
+    // Null/empty falls back to the automatically generated text; never
+    // affects masters, itinerary, dates, pricing, or PDFs.
+    weblinkDurationText: optionalText(200),
+    weblinkProfileDestination: optionalText(500),
     destinationSummary: z.string().trim().min(2).max(500),
     travelStartDate: optionalDate,
     travelEndDate: optionalDate,

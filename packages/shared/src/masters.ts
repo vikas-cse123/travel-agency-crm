@@ -439,8 +439,12 @@ const sightseeingBaseSchema = z.object({
   cityId: z.string().uuid('Select a city.'),
   title: z.string().trim().min(2, 'Title is required.').max(250),
   // Restarts per city in the reference and tolerates gaps, so it is a plain
-  // positive integer rather than a unique ordinal.
-  sequence: z.coerce.number().int().min(1, 'Sequence must be 1 or more.').max(100_000).default(1),
+  // positive integer rather than a unique ordinal. Deliberately optional
+  // (no default): an explicitly entered value — including 1 — must survive
+  // untouched, while a genuinely omitted value lets the backend auto-assign
+  // MAX(sequence)+1. A `.default(1)` here would make "omitted" and "entered
+  // 1" indistinguishable and force explicit 1s through auto-assignment.
+  sequence: z.coerce.number().int().min(1, 'Sequence must be 1 or more.').max(100_000).optional(),
   estimatedHours: z.coerce
     .number()
     .min(0, 'Duration cannot be negative.')

@@ -294,16 +294,19 @@ export const sightseeingService = {
           }
         : {}),
     };
-    const [totalAttractions, destinations, cities, withImages] = await Promise.all([
+    const [totalAttractions, destinationGroups, cityGroups, withImages] = await Promise.all([
       prisma.sightseeing.count({ where }),
-      prisma.sightseeing.findMany({ where, distinct: ['destinationId'], select: { id: true } }),
-      prisma.sightseeing.findMany({ where, distinct: ['cityId'], select: { id: true } }),
+      // Count unique parents via groupBy: `distinct` combined with a
+      // narrower `select` does not reliably count distinct destination/city
+      // ids, so group explicitly and count the groups.
+      prisma.sightseeing.groupBy({ by: ['destinationId'], where }),
+      prisma.sightseeing.groupBy({ by: ['cityId'], where }),
       prisma.sightseeing.count({ where: { ...where, imageConfirmedAt: { not: null } } }),
     ]);
     return {
       totalAttractions,
-      destinations: destinations.length,
-      citiesCovered: cities.length,
+      destinations: destinationGroups.length,
+      citiesCovered: cityGroups.length,
       withImages,
     };
   },
@@ -356,8 +359,12 @@ export const sightseeingService = {
     const normalizedTitle = normalizeCustomerName(input.title);
     try {
       const row = await prisma.$transaction(async (tx) => {
-        let sequence = input.sequence ?? 1;
-        if (sequence === 1) {
+        // An explicitly entered sequence — including 1 — is always respected.
+        // MAX(sequence)+1 auto-assignment applies only when the caller
+        // genuinely omits the value (null/undefined). Never use a truthiness
+        // or `=== 1` check here: 1 is a valid explicit sequence.
+        let sequence = input.sequence;
+        if (sequence == null) {
           const max = await tx.sightseeing.aggregate({
             where: {
               companyId: auth.companyId,

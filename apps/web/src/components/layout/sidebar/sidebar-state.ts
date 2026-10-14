@@ -42,5 +42,5 @@ export function useSidebarCollapse() {
     setCollapsed((value) => !value);
   }, []);
 
-  return { collapsed, toggleCollapsed };
+  return { collapsed, setCollapsed, toggleCollapsed };
 }

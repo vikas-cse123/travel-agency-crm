@@ -156,10 +156,120 @@ export interface MasterLookups {
 
 const MASTER_DEFAULT_PAGE_SIZE = '10';
 
+/**
+ * Per-request page size used when a UI needs the *complete* filtered result
+ * set (e.g. the grouped Sightseeing Master list). This is the server's
+ * maximum page size — it bounds a single response, never the total number of
+ * records retrieved. Callers must page through to `total`, not stop here.
+ */
+const MASTER_FULL_PAGE_SIZE = 100;
+
+/** How many list pages may be in flight at once during a full fetch. */
+const MASTER_FULL_FETCH_CONCURRENCY = 5;
+
 function masterListQuery(params = new URLSearchParams()) {
   const next = new URLSearchParams(params);
   if (!next.has('pageSize')) next.set('pageSize', MASTER_DEFAULT_PAGE_SIZE);
   return next.toString();
+}
+
+/** Filter-only query string: paging params stripped so the key is page-stable. */
+function masterFilterKey(params: URLSearchParams): string {
+  const next = new URLSearchParams(params);
+  next.delete('page');
+  next.delete('pageSize');
+  return next.toString();
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+}
+
+/**
+ * Fetch every page of a paginated master list endpoint for one fixed filter
+ * set. There is deliberately NO total-record cap: pages are followed until
+ * the server-reported `total` unique records have been retrieved (plus a
+ * data-driven tail when the set grows mid-fetch), using the same
+ * search/filter/tenant-scoped params on every request.
+ *
+ * - Page order is preserved (server sort is authoritative; no client re-sort).
+ * - Rows are deduplicated by stable `id` so overlapping pages/retries never
+ *   duplicate a record, while distinct records with identical names are kept.
+ * - Any page failure rejects the whole fetch so callers never mistake a
+ *   partial result for the complete dataset.
+ *
+ * Exported for deterministic unit tests (mocked transport, no live API).
+ */
+export async function fetchAllMasterPages<T extends { id: string }>(
+  path: string,
+  filters: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<Page<T>> {
+  const base = new URLSearchParams(filters);
+  base.delete('page');
+  base.delete('pageSize');
+
+  const pageUrl = (page: number) => {
+    const query = new URLSearchParams(base);
+    query.set('page', String(page));
+    query.set('pageSize', String(MASTER_FULL_PAGE_SIZE));
+    const suffix = query.toString();
+    return suffix ? `${path}?${suffix}` : path;
+  };
+
+  const first = await apiClient.get<Page<T>>(pageUrl(1), signal);
+  const seen = new Map<string, T>();
+  for (const row of first.data ?? []) {
+    if (!seen.has(row.id)) seen.set(row.id, row);
+  }
+  let total = first.pagination?.total ?? first.data?.length ?? 0;
+  let totalPages = first.pagination?.totalPages ?? 1;
+
+  // Pages are 1-based; page 1 is already loaded.
+  let nextPage = 2;
+  const fetchPage = async (page: number): Promise<Page<T>> => {
+    throwIfAborted(signal);
+    return apiClient.get<Page<T>>(pageUrl(page), signal);
+  };
+  const absorb = (page: Page<T>) => {
+    for (const row of page.data ?? []) {
+      if (!seen.has(row.id)) seen.set(row.id, row);
+    }
+    if (typeof page.pagination?.total === 'number') total = page.pagination.total;
+    if (typeof page.pagination?.totalPages === 'number') totalPages = page.pagination.totalPages;
+  };
+
+  // Planned pages from the server-reported totalPages …
+  while (nextPage <= totalPages) {
+    throwIfAborted(signal);
+    const batch: number[] = [];
+    while (batch.length < MASTER_FULL_FETCH_CONCURRENCY && nextPage <= totalPages) {
+      batch.push(nextPage);
+      nextPage += 1;
+    }
+    const pages = await Promise.all(batch.map((page) => fetchPage(page)));
+    for (const page of pages) absorb(page);
+  }
+  // … plus a data-driven tail if the set grew while paging. The loop only
+  // stops on observed data (a short/empty page, or consecutive pages adding
+  // no new unique ids) — there is no fixed page/record ceiling.
+  let stagnant = 0;
+  while (seen.size < total) {
+    throwIfAborted(signal);
+    const page = await fetchPage(nextPage);
+    const before = seen.size;
+    absorb(page);
+    nextPage += 1;
+    const received = page.data ?? [];
+    if (received.length === 0 || received.length < MASTER_FULL_PAGE_SIZE) break;
+    stagnant = seen.size === before ? stagnant + 1 : 0;
+    if (stagnant >= 2) break;
+  }
+
+  return {
+    data: [...seen.values()],
+    pagination: { page: 1, pageSize: seen.size, total, totalPages },
+  };
 }
 
 const keys = {
@@ -186,6 +296,20 @@ export function useCities(params = new URLSearchParams()) {
     queryKey: [...keys.cities, query],
     queryFn: ({ signal }) =>
       apiClient.get<Page<City>>(`/masters/cities${query ? `?${query}` : ''}`, signal),
+  });
+}
+/**
+ * Complete city option set for filter dropdowns: pages through the whole
+ * filtered result instead of stopping at the first page. Same filters,
+ * permissions and tenant scoping as {@link useCities} — only the page loop
+ * differs, so an eligible city beyond the first response stays selectable.
+ */
+export function useAllCities(params = new URLSearchParams()) {
+  const filterKey = masterFilterKey(params);
+  return useQuery({
+    queryKey: [...keys.cities, 'all', filterKey],
+    queryFn: ({ signal }) =>
+      fetchAllMasterPages<City>('/masters/cities', new URLSearchParams(filterKey), signal),
   });
 }
 export function useCity(id?: string) {
@@ -234,6 +358,23 @@ export function useDestinations(params = new URLSearchParams()) {
     queryKey: [...keys.destinations, query],
     queryFn: ({ signal }) =>
       apiClient.get<Page<Destination>>(`/masters/destinations${query ? `?${query}` : ''}`, signal),
+  });
+}
+/**
+ * Complete destination option set for filter dropdowns — see
+ * {@link useAllCities}. Paging only; filters, visibility and status semantics
+ * are unchanged.
+ */
+export function useAllDestinations(params = new URLSearchParams()) {
+  const filterKey = masterFilterKey(params);
+  return useQuery({
+    queryKey: [...keys.destinations, 'all', filterKey],
+    queryFn: ({ signal }) =>
+      fetchAllMasterPages<Destination>(
+        '/masters/destinations',
+        new URLSearchParams(filterKey),
+        signal,
+      ),
   });
 }
 export function useDestination(id?: string) {
@@ -1276,6 +1417,25 @@ export function useSightseeingList(params = new URLSearchParams()) {
     queryKey: [...sightseeingKeys.all, query],
     queryFn: ({ signal }) =>
       apiClient.get<Page<Sightseeing>>(`/masters/sightseeing${query ? `?${query}` : ''}`, signal),
+  });
+}
+/**
+ * Complete sightseeing result set for the grouped master list. Follows the
+ * server's pagination metadata until every eligible record for the current
+ * search/destination/city/status filters is loaded — no total-record cap.
+ * Failed pages reject (never silent partial data); rows dedup by master id;
+ * rapid filter changes get distinct query keys and abort superseded fetches.
+ */
+export function useSightseeingListAll(params = new URLSearchParams()) {
+  const filterKey = masterFilterKey(params);
+  return useQuery({
+    queryKey: [...sightseeingKeys.all, 'all', filterKey],
+    queryFn: ({ signal }) =>
+      fetchAllMasterPages<Sightseeing>(
+        '/masters/sightseeing',
+        new URLSearchParams(filterKey),
+        signal,
+      ),
   });
 }
 /** Counts for the reference's Summary Statistics strip. */

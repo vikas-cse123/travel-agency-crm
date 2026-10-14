@@ -26,11 +26,11 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import {
   useDeleteSightseeing,
   masterImageFingerprint,
-  useCities,
-  useDestinations,
+  useAllCities,
+  useAllDestinations,
   useHideGlobalMaster,
   useReorderSightseeing,
-  useSightseeingList,
+  useSightseeingListAll,
   useSightseeingSummary,
   sightseeingImageUrl,
   type Sightseeing,
@@ -43,7 +43,7 @@ import {
   StatusBadge,
 } from './MasterUi';
 
-const LARGE = new URLSearchParams('pageSize=100&status=ACTIVE');
+const ACTIVE_OPTIONS = 'status=ACTIVE';
 
 function SightseeingThumbnail({ row }: { row: Sightseeing }) {
   const image = useQuery({
@@ -66,20 +66,24 @@ function SightseeingThumbnail({ row }: { row: Sightseeing }) {
  *
  * The reference groups rows by Destination and then by City, which is what
  * makes the sequence column meaningful, so the same grouping is rebuilt here
- * from the flat paginated response.
+ * from the complete multi-page result set (every eligible page is fetched —
+ * there is no total-record cap).
  */
 export function SightseeingPage() {
   const [params, setParams] = useSearchParams();
   const listParams = useMemo(() => {
+    // Paging is owned by the all-pages fetch below; only filters travel here.
     const next = new URLSearchParams(params);
-    next.set('pageSize', '100');
     next.delete('page');
+    next.delete('pageSize');
     return next;
   }, [params]);
-  const rows = useSightseeingList(listParams);
+  const destinationOptions = useMemo(() => new URLSearchParams(ACTIVE_OPTIONS), []);
+  const cityOptions = useMemo(() => new URLSearchParams(ACTIVE_OPTIONS), []);
+  const rows = useSightseeingListAll(listParams);
   const summary = useSightseeingSummary(params);
-  const destinations = useDestinations(LARGE);
-  const cities = useCities(LARGE);
+  const destinations = useAllDestinations(destinationOptions);
+  const cities = useAllCities(cityOptions);
   const remove = useDeleteSightseeing();
   const reorder = useReorderSightseeing();
   const hideMaster = useHideGlobalMaster();
@@ -220,8 +224,14 @@ export function SightseeingPage() {
         {rows.isPending ? (
           <div className="h-72 animate-pulse bg-slate-100" />
         ) : rows.isError ? (
-          <div role="alert" className="p-8 text-center text-red-700">
-            Sightseeing could not be loaded.
+          <div role="alert" className="p-8 text-center">
+            <p className="text-red-700">
+              Sightseeing could not be loaded. The list may be incomplete — no records are
+              shown until every page loads successfully.
+            </p>
+            <Button size="sm" variant="secondary" className="mt-3" onClick={() => rows.refetch()}>
+              Retry
+            </Button>
           </div>
         ) : !rows.data?.data.length ? (
           <div className="p-12 text-center">

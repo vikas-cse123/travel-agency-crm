@@ -94,7 +94,10 @@ async function createSightseeing(
     destinationId: geo.destinationId,
     cityId: geo.cityId,
     title: 'Gobustan Rock Art Tour',
-    sequence: 1,
+    // No sequence default: callers that omit it exercise genuine
+    // auto-assignment (MAX+1); callers that pass `sequence` explicitly assert
+    // the exact saved value. A `sequence: 1` default here would now mean an
+    // explicit 1 rather than "auto-assign".
     estimatedHours: 5,
     suggestedStartTime: '10:00',
     description: '<p>Begin your exploration of Qobustan.</p>',
@@ -301,7 +304,7 @@ describe('Sightseeing master', () => {
   it('lists sightseeing ascending by sequence within each city', async () => {
     const client = await owner();
     const geo = await createGeo(client); // Baku / Azerbaijan
-    // All created with the default sequence: auto-assigned 1, 2, 3.
+    // All created with the sequence omitted: auto-assigned 1, 2, 3.
     await createSightseeing(client, geo, { title: 'Garden' });
     await createSightseeing(client, geo, { title: 'Zoo' });
     await createSightseeing(client, geo, { title: 'Museum' });

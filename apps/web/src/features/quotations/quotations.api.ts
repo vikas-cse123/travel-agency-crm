@@ -254,6 +254,8 @@ export interface QuotationVersion {
   introduction: string | null;
   weblinkHeading: string | null;
   packageHeading: string | null;
+  weblinkDurationText: string | null;
+  weblinkProfileDestination: string | null;
   destinationSummary: string;
   travelStartDate: string | null;
   travelEndDate: string | null;

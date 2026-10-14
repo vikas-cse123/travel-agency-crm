@@ -3770,6 +3770,14 @@ model QuotationVersion {
   /// (destination / duration / package heading). Null for legacy versions,
   /// which fall back to "Custom Package for [Lead]".
   packageHeading               String?                @db.VarChar(200)
+  /// Custom duration text for the public weblink hero + profile card,
+  /// overriding the generated "N Nights / N+1 Days". Null for legacy
+  /// versions, which keep the generated text. Display-only.
+  weblinkDurationText          String?                @db.VarChar(200)
+  /// Custom destination text for the public weblink profile card,
+  /// overriding the generated destinations. Null for legacy versions, which
+  /// keep the generated text. Display-only.
+  weblinkProfileDestination    String?                @db.VarChar(500)
   destinationSummary           String                 @db.VarChar(500)
   travelStartDate              DateTime?              @db.Date
   travelEndDate                DateTime?              @db.Date

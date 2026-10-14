@@ -304,6 +304,84 @@ export const publicSightseeingSectionTitle = (value: string | null | undefined) 
   return !title || title === 'Sightseeing & Experiences' ? 'Your Itinerary' : title;
 };
 
+/**
+ * Customer-facing display texts for the weblink hero + profile card.
+ *
+ * Single resolution logic shared by the real public weblink and the
+ * builder's live preview (which renders this same component): an absent
+ * override means the existing automatically generated value; a custom value
+ * overrides only that specific text. Overrides never touch masters,
+ * itinerary, dates, pricing, or PDFs.
+ */
+export interface WeblinkDisplaySource {
+  destinations?: string | null | undefined;
+  destinationSummary?: string | null | undefined;
+  durationNights?: number | null | undefined;
+  travelStartDate?: string | null | undefined;
+  travelEndDate?: string | null | undefined;
+  customerName?: string | null | undefined;
+}
+
+export interface WeblinkDisplayOverrides {
+  weblinkHeading?: string | null | undefined;
+  packageHeading?: string | null | undefined;
+  weblinkDurationText?: string | null | undefined;
+  weblinkProfileDestination?: string | null | undefined;
+}
+
+export interface WeblinkDisplayValues {
+  /** Hero line 1: override or Master Destination name. */
+  mainHeading: string;
+  /** Hero line 2 + profile Duration: override or `N Nights / N+1 Days`. */
+  durationText: string | null;
+  /** Hero line 3: override or `Custom Package for [Lead]`. */
+  subtitle: string;
+  /** Profile Destinations card value. */
+  profileDestination: string;
+}
+
+export function resolveWeblinkDisplay(
+  quotation: WeblinkDisplaySource | null | undefined,
+  version: WeblinkDisplayOverrides | null | undefined,
+): WeblinkDisplayValues {
+  const q = quotation ?? {};
+  const v = version ?? {};
+  const nights =
+    q.durationNights && q.durationNights > 0
+      ? q.durationNights
+      : q.travelStartDate && q.travelEndDate
+        ? Math.max(
+            0,
+            Math.round(
+              (new Date(q.travelEndDate).getTime() - new Date(q.travelStartDate).getTime()) /
+                86_400_000,
+            ),
+          )
+        : 0;
+  const autoDuration = nights > 0 ? `${nights} Nights / ${nights + 1} Days` : null;
+  // Weblink hero, exactly three lines: Master Destination name, duration, then
+  // the saved package heading. Line 1 comes from the lead itinerary's Master
+  // Destination names (`destinations`) — never an itinerary city. Only legacy
+  // payloads without destinations fall back to the destination summary.
+  // Private names never reach this payload (destination names only).
+  const heroDestination =
+    q.destinations?.split(/[•→>,/]/)[0]?.trim() ||
+    (q.destinationSummary ?? '').split(/[•→>,/]/)[0]?.trim() ||
+    (q.destinationSummary ?? '');
+  // Legacy versions without a saved heading fall back to the lead-based
+  // default (no destination derived here).
+  const customerName = (q.customerName ?? '').trim();
+  return {
+    mainHeading: v.weblinkHeading?.trim() || heroDestination,
+    durationText: v.weblinkDurationText?.trim() || autoDuration,
+    subtitle: v.packageHeading?.trim() || `Custom Package for ${customerName}`,
+    profileDestination:
+      v.weblinkProfileDestination?.trim() ||
+      q.destinations ||
+      (q.destinationSummary ?? '').replace(/•/g, '→'),
+  };
+}
+
 const publicHeroIntroduction = (value: string | null | undefined) =>
   (value ?? '').replace(/A travel proposal prepared for [^.]*\./g, '').trim();
 
@@ -1822,32 +1900,24 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
   const visibleHotels = selectedHotels.length > 0 ? selectedHotels : namedHotels;
   // Hotels only appear when included in the quotation (hotelDetails.include).
   const hotelIncluded = v.hotelDetails?.include !== false && visibleHotels.length > 0;
-  const nights =
-    q.durationNights && q.durationNights > 0
-      ? q.durationNights
-      : q.travelStartDate && q.travelEndDate
-        ? Math.max(
-            0,
-            Math.round(
-              (new Date(q.travelEndDate).getTime() - new Date(q.travelStartDate).getTime()) /
-                86_400_000,
-            ),
-          )
-        : 0;
-  const duration = nights > 0 ? `${nights} Nights / ${nights + 1} Days` : null;
-  // Weblink hero, exactly three lines: Master Destination name, duration, then
-  // the saved package heading. Line 1 comes from the lead itinerary's Master
-  // Destination names (`destinations`) — never an itinerary city. Only legacy
-  // payloads without destinations fall back to the destination summary.
-  // Private names never reach this payload (destination names only).
-  const heroDestination =
-    q.destinations?.split(/[•→>,/]/)[0]?.trim() ||
-    q.destinationSummary.split(/[•→>,/]/)[0]?.trim() ||
-    q.destinationSummary;
-  // Legacy versions without a saved heading fall back to the lead-based
-  // default (no destination derived here).
-  const packageHeading =
-    v.packageHeading?.trim() || `Custom Package for ${q.customerName.trim()}`;
+  // Hero + profile display texts (overrides or generated defaults) via the
+  // single shared resolver — identical for the live preview and the weblink.
+  const display = resolveWeblinkDisplay(
+    {
+      destinations: q.destinations,
+      destinationSummary: q.destinationSummary,
+      durationNights: q.durationNights,
+      travelStartDate: q.travelStartDate,
+      travelEndDate: q.travelEndDate,
+      customerName: q.customerName,
+    },
+    {
+      weblinkHeading: v.weblinkHeading,
+      packageHeading: v.packageHeading,
+      weblinkDurationText: v.weblinkDurationText,
+      weblinkProfileDestination: v.weblinkProfileDestination,
+    },
+  );
 
   const travelers = [
     q.adults && `${q.adults} Adult${q.adults > 1 ? 's' : ''}`,
@@ -1981,15 +2051,15 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
           )}
           <div className="relative z-10 mx-auto w-full max-w-5xl px-5 text-left md:px-4">
             <h1 className="text-[32px] font-extrabold leading-[1.1] text-white sm:text-[40px] lg:text-[48px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
-              {v.weblinkHeading?.trim() || heroDestination}
+              {display.mainHeading}
             </h1>
-            {duration && (
+            {display.durationText && (
               <p className="mt-2 text-[15px] font-medium text-white/85 sm:text-[17px] lg:text-[19px] [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
-                {duration}
+                {display.durationText}
               </p>
             )}
             <p className="mt-2 max-w-2xl text-[16px] font-bold leading-snug text-white [text-shadow:0_2px_8px_rgba(0,0,0,0.35)]">
-              {packageHeading}
+              {display.subtitle}
             </p>
             {heroIntroduction && (
               <p
@@ -2010,7 +2080,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
               <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 md:grid-cols-4">
                 <Info label="Traveler Name" value={q.customerName} />
                 <Info label="Travel Date" value={dateShort(q.travelStartDate) ?? 'Flexible'} />
-                <Info label="Duration" value={duration ?? 'As advised'} />
+                <Info label="Duration" value={display.durationText ?? 'As advised'} />
                 <Info label="Travelers" value={travelers} />
                 {cwbAgesText && <Info label="CWB Ages" value={cwbAgesText} />}
                 {cwobAgesText && <Info label="CWOB Ages" value={cwobAgesText} />}
@@ -2018,7 +2088,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 <Info label="Quotation ID" value={formatPublicQuotationNumber(q.quotationNumber)} />
                 <Info
                   label="Destinations"
-                  value={q.destinations || q.destinationSummary.replace(/•/g, '→')}
+                  value={display.profileDestination}
                   full
                 />
                 {preparedBy && (

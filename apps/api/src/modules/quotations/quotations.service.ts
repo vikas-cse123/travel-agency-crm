@@ -1140,6 +1140,8 @@ function versionCreateData(
       introduction: normalized.introduction ?? null,
       weblinkHeading: normalized.weblinkHeading ?? null,
       packageHeading: normalized.packageHeading ?? null,
+      weblinkDurationText: normalized.weblinkDurationText ?? null,
+      weblinkProfileDestination: normalized.weblinkProfileDestination ?? null,
       destinationSummary: normalized.destinationSummary,
       travelStartDate: normalized.travelStartDate ?? null,
       travelEndDate: normalized.travelEndDate ?? null,
@@ -1282,6 +1284,8 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
     title: source.title,
     weblinkHeading: source.weblinkHeading,
     packageHeading: source.packageHeading,
+    weblinkDurationText: source.weblinkDurationText,
+    weblinkProfileDestination: source.weblinkProfileDestination,
     introduction: source.introduction,
     destinationSummary: source.destinationSummary,
     travelStartDate: source.travelStartDate,
@@ -2538,6 +2542,10 @@ export const quotationsService = {
       title: input.version?.title ?? source?.title ?? defaultTitle,
       packageHeading:
         input.version?.packageHeading ?? source?.packageHeading ?? defaultPackageHeading,
+      weblinkDurationText:
+        input.version?.weblinkDurationText ?? source?.weblinkDurationText ?? null,
+      weblinkProfileDestination:
+        input.version?.weblinkProfileDestination ?? source?.weblinkProfileDestination ?? null,
       introduction: input.version?.introduction ?? source?.introduction ?? '',
       destinationSummary: input.version?.destinationSummary ?? destination,
       travelStartDate:

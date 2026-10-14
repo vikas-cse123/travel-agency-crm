@@ -450,7 +450,7 @@ export function previewSectionForBuilderTab(tab: string | null | undefined): str
  * itinerary's country values in first-seen order, de-duplicated; the
  * destination summary only when no country value exists.
  */
-function previewDestinations(
+export function previewDestinations(
   itinerary: Array<{ country?: string | null }> | null | undefined,
   destinationSummary: string | null | undefined,
 ): string {
@@ -467,7 +467,7 @@ function previewDestinations(
 }
 
 /** Total package nights from the lead itinerary rows, like the server. */
-function previewDurationNights(
+export function previewDurationNights(
   itinerary: Array<{ nights?: number | null }> | null | undefined,
 ): number | null {
   const total = (itinerary ?? []).reduce(

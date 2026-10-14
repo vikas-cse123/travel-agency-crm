@@ -86,6 +86,10 @@ export function SightseeingFormPage() {
   const canManageMedia = hasPermission(PERMISSIONS.MASTER_SIGHTSEEING_MANAGE_MEDIA);
 
   const [formError, setFormError] = useState('');
+  // Id of the record whose values currently fill the form. Guards the
+  // navigation case A-edit → B-edit (same mounted form): while B loads, the
+  // form still shows A's data and must not submit it against B's id.
+  const [hydratedId, setHydratedId] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     defaultValues: {
@@ -109,6 +113,7 @@ export function SightseeingFormPage() {
   // "Cities will be loaded based on selected destination" hint. The backend
   // re-checks the pair, so this is convenience rather than the real control.
   const destinationId = form.watch('destinationId');
+  const cityIdValue = form.watch('cityId');
   const destination = useDestination(destinationId || undefined);
   // Root cause fix: both selects are uncontrolled (register) with async options.
   // `form.reset` runs when the sightseeing detail loads, but at that moment
@@ -135,6 +140,27 @@ export function SightseeingFormPage() {
     savedCity && isSavedDestinationSelected && !detailCities.some((city) => city.id === savedCity.id)
       ? [...detailCities, { id: savedCity.id, name: savedCity.name }]
       : detailCities;
+  /**
+   * Inconsistent-record correction path. When the loaded record's own
+   * destination/city pairing has no link (the saved city is absent from the
+   * freshly loaded destination detail), say so explicitly next to the City
+   * field instead of letting the save fail with only the backend message.
+   * Nothing is rewritten: the user picks a valid city deliberately. The
+   * backend still rejects an uncorrected pairing (defence in depth).
+   * The detail response is matched by id so a slow/stale fetch can never
+   * mislabel a valid pairing, and the warning clears once the user picks a
+   * different city.
+   */
+  const savedPairUnlinked =
+    Boolean(sightseeingId) &&
+    Boolean(savedDestination) &&
+    Boolean(savedCity) &&
+    destinationId === savedDestination!.id &&
+    Boolean(destination.data) &&
+    destination.data!.id === savedDestination!.id &&
+    !detailCities.some((city) => city.id === savedCity!.id);
+  const showUnlinkedWarning =
+    savedPairUnlinked && (!cityIdValue || cityIdValue === savedCity!.id);
   const refreshImageQueries = useRefreshMasterImageQueries('sightseeing');
   const imageGallery = useMasterImageGallery({
     masterId: sightseeingId,
@@ -203,6 +229,7 @@ export function SightseeingFormPage() {
       },
       status: value.status as FormValues['status'],
     });
+    setHydratedId(value.id);
   }, [record.data, form]);
 
   if (sightseeingId && record.isError) return <Navigate to="/masters/sightseeing" replace />;
@@ -214,19 +241,39 @@ export function SightseeingFormPage() {
 
   const submit = form.handleSubmit(async (values) => {
     setFormError('');
+    // STALE-RECORD GUARD: when navigating between edit pages the previous
+    // record's values can still fill the form while the new record loads.
+    // Submitting then would PATCH the new id with another record's data.
+    // Block until the form holds the route's own record.
+    if (sightseeingId && hydratedId !== sightseeingId) {
+      setFormError('This record is still loading. Please wait and try again.');
+      return;
+    }
     // RULE: a saved destination/city must never be replaced with null/"".
     // If the selects momentarily hold "" (e.g. options still loading), fall
     // back to the loaded record in edit mode so the update preserves them.
     // An explicit change to a different valid id still flows through.
-    const effectiveDestinationId =
-      values.destinationId || (sightseeingId ? (record.data?.destination.id ?? '') : '');
-    const effectiveCityId = values.cityId || (sightseeingId ? (record.data?.city.id ?? '') : '');
+    // SAFETY: when the destination was explicitly changed, the record's saved
+    // city is NOT a valid fallback — it belongs to the previous destination.
+    // Falling back would submit a pairing the user never selected, which the
+    // backend rejects ("must be linked"). Require an explicit city instead.
+    const savedDestinationId = sightseeingId ? (record.data?.destination.id ?? '') : '';
+    const savedCityId = sightseeingId ? (record.data?.city.id ?? '') : '';
+    const effectiveDestinationId = values.destinationId || savedDestinationId;
+    const destinationChanged =
+      Boolean(sightseeingId) &&
+      Boolean(values.destinationId) &&
+      Boolean(savedDestinationId) &&
+      values.destinationId !== savedDestinationId;
+    const effectiveCityId = values.cityId || (!destinationChanged ? savedCityId : '');
     if (!effectiveDestinationId) {
       form.setError('destinationId', { message: 'Select a destination.' });
       return;
     }
     if (!effectiveCityId) {
-      form.setError('cityId', { message: 'Select a city.' });
+      form.setError('cityId', {
+        message: destinationChanged ? 'Select a city for the new destination.' : 'Select a city.',
+      });
       return;
     }
     const pricing = (values.pricing ?? [])
@@ -365,6 +412,13 @@ export function SightseeingFormPage() {
                 <p className="mt-1 text-xs text-slate-500">
                   Cities will be loaded based on selected destination
                 </p>
+                {showUnlinkedWarning && (
+                  <p role="alert" className="mt-1 text-xs font-medium text-amber-700">
+                    The saved city {savedCity!.name} is not linked to destination{' '}
+                    {savedDestination!.name}. Select a valid city from the list to correct this
+                    record — saving with the current pairing will be rejected.
+                  </p>
+                )}
                 {form.formState.errors.cityId && (
                   <p role="alert" className="mt-1 text-xs font-medium text-red-600">
                     {form.formState.errors.cityId.message}

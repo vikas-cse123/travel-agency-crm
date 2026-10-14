@@ -119,7 +119,8 @@ import {
 } from '@/features/quotations/BookmarkImport';
 import { FlightRecordCard } from './FlightRecordCard';
 import { HotelCheckoutDatePicker, HotelDatePicker } from './HotelDatePicker';
-import { PinnedLiveQuotationPreview, previewSectionForBuilderTab } from './FullQuotationPreview';
+import { PinnedLiveQuotationPreview, previewDestinations, previewDurationNights, previewSectionForBuilderTab } from './FullQuotationPreview';
+import { resolveWeblinkDisplay } from './PublicQuotationPage';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -556,6 +557,10 @@ export function normalizeQuotationVersionForBuilder(version: QuotationVersion): 
     introduction: typeof raw.introduction === 'string' ? raw.introduction : null,
     weblinkHeading: typeof raw.weblinkHeading === 'string' ? raw.weblinkHeading : null,
     packageHeading: typeof raw.packageHeading === 'string' ? raw.packageHeading : null,
+    weblinkDurationText:
+      typeof raw.weblinkDurationText === 'string' ? raw.weblinkDurationText : null,
+    weblinkProfileDestination:
+      typeof raw.weblinkProfileDestination === 'string' ? raw.weblinkProfileDestination : null,
     notes: typeof raw.notes === 'string' ? raw.notes : null,
     internalNotes: typeof raw.internalNotes === 'string' ? raw.internalNotes : null,
     inclusionsHtml: typeof raw.inclusionsHtml === 'string' ? raw.inclusionsHtml : null,
@@ -2638,6 +2643,27 @@ export function QuotationBuilderPage() {
   );
   const expertUsersQuery = useUsers(useMemo(() => new URLSearchParams({ pageSize: '100' }), []));
   const settingsQuery = useSettings();
+  // Automatic weblink display texts (hero + profile) for the Settings tab
+  // placeholders: resolved exactly like the public rendering, with no
+  // overrides, from the quotation's own data. Static per quotation load —
+  // the auto values themselves depend only on non-editable lead data here.
+  const weblinkAutoDisplay = useMemo(() => {
+    const itinerary = (quotation.data?.query?.itinerary ?? []) as Array<{
+      country?: string | null;
+      nights?: number | null;
+    }>;
+    return resolveWeblinkDisplay(
+      {
+        destinations: previewDestinations(itinerary, quotation.data?.destinationSummary ?? ''),
+        destinationSummary: quotation.data?.destinationSummary ?? '',
+        durationNights: previewDurationNights(itinerary),
+        travelStartDate: quotation.data?.travelStartDate ?? null,
+        travelEndDate: quotation.data?.travelEndDate ?? null,
+        customerName: quotation.data?.customerName ?? '',
+      },
+      { weblinkHeading: null, packageHeading: null, weblinkDurationText: null, weblinkProfileDestination: null },
+    );
+  }, [quotation.data]);
   const destinationExpertPresetsQuery = useDestinationExpertPresets();
   const [selectedPresetId, setSelectedPresetId] = useState<string>('');
   const [expertImportLoading, setExpertImportLoading] = useState(false);
@@ -3249,6 +3275,8 @@ export function QuotationBuilderPage() {
       introduction: version.introduction,
       weblinkHeading: version.weblinkHeading ?? null,
       packageHeading: version.packageHeading ?? null,
+      weblinkDurationText: version.weblinkDurationText ?? null,
+      weblinkProfileDestination: version.weblinkProfileDestination ?? null,
       destinationSummary: version.destinationSummary,
       travelStartDate: version.travelStartDate ? new Date(version.travelStartDate) : null,
       travelEndDate: version.travelEndDate ? new Date(version.travelEndDate) : null,
@@ -8497,6 +8525,91 @@ export function QuotationBuilderPage() {
                         {weblinkNameError}
                       </p>
                     )}
+                  </div>
+                </div>
+
+                {/* Weblink Display Settings — per-version hero/profile overrides. */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <h3 className="text-sm font-semibold text-slate-900">Weblink Display Settings</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Customize the customer-facing weblink hero and profile card for this
+                    version. Blank fields use the automatic values.
+                  </p>
+                  <div className="mt-4 space-y-4">
+                    {(
+                      [
+                        {
+                          path: 'weblinkHeading',
+                          label: 'Main Heading',
+                          helper: 'Large hero title at the top of the weblink.',
+                          auto: weblinkAutoDisplay.mainHeading,
+                          maxLength: 200,
+                        },
+                        {
+                          path: 'weblinkDurationText',
+                          label: 'Duration Text',
+                          helper: 'Trip length under the hero title and in the profile card.',
+                          auto: weblinkAutoDisplay.durationText ?? 'As advised',
+                          maxLength: 200,
+                        },
+                        {
+                          path: 'packageHeading',
+                          label: 'Subtitle',
+                          helper: 'Supporting line under the duration.',
+                          auto: weblinkAutoDisplay.subtitle,
+                          maxLength: 200,
+                        },
+                        {
+                          path: 'weblinkProfileDestination',
+                          label: 'Profile Destination',
+                          helper: 'Destinations row in the profile information card.',
+                          auto: weblinkAutoDisplay.profileDestination,
+                          maxLength: 500,
+                        },
+                      ] as const
+                    ).map((item) => {
+                      const current = (form.watch(item.path) ?? '') as string;
+                      const inputId = `weblink-display-${item.path}`;
+                      return (
+                        <div key={item.path}>
+                          <div className="flex items-center justify-between gap-2">
+                            <label
+                              htmlFor={inputId}
+                              className="text-sm font-semibold text-slate-800"
+                            >
+                              {item.label}
+                            </label>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={!current.trim()}
+                              aria-label={`Reset ${item.label} to default`}
+                              onClick={() =>
+                                form.setValue(item.path, null, { shouldDirty: true })
+                              }
+                            >
+                              Reset to Default
+                            </Button>
+                          </div>
+                          <p className="mt-0.5 text-xs text-slate-500">{item.helper}</p>
+                          <input
+                            id={inputId}
+                            type="text"
+                            maxLength={item.maxLength}
+                            placeholder={item.auto}
+                            value={current}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              form.setValue(item.path, raw === '' ? null : raw, {
+                                shouldDirty: true,
+                              });
+                            }}
+                            className={`${field} mt-1 w-full`}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
