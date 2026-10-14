@@ -41,6 +41,7 @@ interface FormValues {
       lunch: 'NO_TRANSFER' | 'INCLUDE_AT_HOTEL' | 'WITH_TRANSFER' | '';
       dinner: 'NO_TRANSFER' | 'INCLUDE_AT_HOTEL' | 'WITH_TRANSFER' | '';
     };
+    mealTransferDetails: { breakfast: string; lunch: string; dinner: string };
     transfer: '' | 'PRIVATE' | 'SHARED' | 'NO_TRANSFER';
   };
   status: 'ACTIVE' | 'INACTIVE';
@@ -49,6 +50,7 @@ interface FormValues {
 const EMPTY_MEAL_DEFAULTS: FormValues['mealDefaults'] = {
   meals: { breakfast: false, lunch: false, dinner: false },
   mealModes: { breakfast: '', lunch: '', dinner: '' },
+  mealTransferDetails: { breakfast: '', lunch: '', dinner: '' },
   transfer: '',
 };
 
@@ -155,6 +157,7 @@ export function SightseeingFormPage() {
     const savedMeals = value.mealDefaults as {
       meals?: { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | null;
       mealModes?: { breakfast?: string | null; lunch?: string | null; dinner?: string | null } | null;
+      mealTransferDetails?: { breakfast?: string | null; lunch?: string | null; dinner?: string | null } | null;
       transfer?: string | null;
     } | null;
     type MealMode = FormValues['mealDefaults']['mealModes']['breakfast'];
@@ -190,6 +193,11 @@ export function SightseeingFormPage() {
           breakfast: mealModeOf(savedMeals?.mealModes?.breakfast),
           lunch: mealModeOf(savedMeals?.mealModes?.lunch),
           dinner: mealModeOf(savedMeals?.mealModes?.dinner),
+        },
+        mealTransferDetails: {
+          breakfast: savedMeals?.mealTransferDetails?.breakfast ?? '',
+          lunch: savedMeals?.mealTransferDetails?.lunch ?? '',
+          dinner: savedMeals?.mealTransferDetails?.dinner ?? '',
         },
         transfer: transferOf(savedMeals?.transfer),
       },
@@ -235,11 +243,19 @@ export function SightseeingFormPage() {
       lunch: values.mealDefaults.mealModes.lunch || null,
       dinner: values.mealDefaults.mealModes.dinner || null,
     };
+    const mealTransferDetails = {
+      breakfast: values.mealDefaults.mealTransferDetails.breakfast.trim() || null,
+      lunch: values.mealDefaults.mealTransferDetails.lunch.trim() || null,
+      dinner: values.mealDefaults.mealTransferDetails.dinner.trim() || null,
+    };
     const mealsOn =
       values.mealDefaults.meals.breakfast ||
       values.mealDefaults.meals.lunch ||
       values.mealDefaults.meals.dinner;
     const transfer = values.mealDefaults.transfer || null;
+    // Details ride along with their meal mode (a details value can only be
+    // entered while its mode is WITH_TRANSFER, which already counts below),
+    // so an uncheck-everything + clear-transfer reset still sends null.
     const hasMealDefaults =
       mealsOn || transfer !== null || mealModes.breakfast !== null || mealModes.lunch !== null || mealModes.dinner !== null;
     const hadMealDefaults =
@@ -258,6 +274,7 @@ export function SightseeingFormPage() {
         ? {
             meals: { ...values.mealDefaults.meals },
             mealModes,
+            mealTransferDetails,
             transfer,
           }
         : hadMealDefaults
@@ -550,6 +567,24 @@ export function SightseeingFormPage() {
                     </label>
                   ))}
                 </div>
+                {form.watch(`mealDefaults.mealModes.${meal}`) === 'WITH_TRANSFER' && (
+                  <label className="mt-3 block text-sm font-medium text-slate-700">
+                    Transfer Details
+                    <input
+                      aria-label={`${meal} transfer details`}
+                      placeholder="Enter transfer or meal-location details"
+                      value={form.watch(`mealDefaults.mealTransferDetails.${meal}`) ?? ''}
+                      onChange={(event) =>
+                        form.setValue(
+                          `mealDefaults.mealTransferDetails.${meal}`,
+                          event.target.value,
+                          { shouldDirty: true },
+                        )
+                      }
+                      className={`${fieldClass} mt-1`}
+                    />
+                  </label>
+                )}
               </div>
             ))}
           </div>

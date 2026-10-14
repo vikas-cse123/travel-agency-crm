@@ -118,6 +118,7 @@ import {
   resolveFlightSegmentAirlines,
 } from '@/features/quotations/BookmarkImport';
 import { FlightRecordCard } from './FlightRecordCard';
+import { HotelCheckoutDatePicker, HotelDatePicker } from './HotelDatePicker';
 import { PinnedLiveQuotationPreview, previewSectionForBuilderTab } from './FullQuotationPreview';
 
 const field =
@@ -368,6 +369,16 @@ const hotelSectionTitle = (value: string | null | undefined) => {
   return !title || title === 'Accommodation Details' ? 'Your Hotels' : title;
 };
 
+/**
+ * Builder-side sightseeing section title. Mirrors the hotel rule: blank
+ * values and the previous default (`Sightseeing & Experiences`) become
+ * `Your Itinerary`; explicitly configured custom titles pass through.
+ */
+const sightseeingSectionTitle = (value: string | null | undefined) => {
+  const title = value?.trim();
+  return !title || title === 'Sightseeing & Experiences' ? 'Your Itinerary' : title;
+};
+
 const TABS: TabDef[] = [
   { key: 'pricingMethod', label: 'Pricing Method' },
   { key: 'flight', label: 'Flight' },
@@ -501,7 +512,7 @@ const defaults: QuotationVersionInput = {
   addOnDetails: { include: true, sectionTitle: 'Additional Services' },
   sightseeingDetails: {
     include: true,
-    sectionTitle: 'Sightseeing & Experiences',
+    sectionTitle: 'Your Itinerary',
     amount: 0,
     description: null,
     days: [emptySightseeingDay(1)],
@@ -671,23 +682,6 @@ const parseCheckInToDate = (value: string | Date | null | undefined): Date | nul
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
-const toDate = (value: string | Date | null | undefined) => {
-  const date = parseCheckInToDate(value);
-  if (!date) return '';
-  // Normalize to YYYY-MM-DD via UTC to avoid timezone shift
-  const yyyy = date.getUTCFullYear();
-  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(date.getUTCDate()).padStart(2, '0');
-  // If input was already YYYY-MM-DD we still return same; for Date we use UTC date
-  // For legacy local handling, use UTC date components for consistency with pricing
-  if (value instanceof Date) {
-    // Use local date components for Date inputs that were constructed as local dates (from <input type=date>)
-    // but parseCheckInToDate already treated YYYY-MM-DD as UTC, Date objects as UTC already.
-    // Return YYYY-MM-DD
-    return `${yyyy}-${mm}-${dd}`;
-  }
-  return `${yyyy}-${mm}-${dd}`;
-};
 const nullable = (value: string) => (value === '' ? null : Number(value));
 
 /** A hotel's price for a travel date: the matching season rate, else the base price. */
@@ -897,9 +891,12 @@ const mealLineHasData = (line: HotelMealPlanLineInput): boolean =>
  * A legacy quotation row stores its single room/meal on the row-level scalar
  * columns with NULL lines. resolveHotelRoomLines / resolveHotelMealPlanLines
  * synthesize one line from those scalars, so the same repeatable editor can
- * load and extend old quotations without migration.
+ * load and extend old quotations without migration. Rows with no allocations
+ * at all (newly added stays, or saves with empty lines) keep an empty list:
+ * Total Rooms stays empty until the user adds a room allocation — a default
+ * line here would silently invent a total of 1.
  */
-const withSynthesizedLines = (row: HotelInputRow): HotelInputRow => {
+export const withSynthesizedLines = (row: HotelInputRow): HotelInputRow => {
   const roomLines = row.roomLines?.length
     ? row.roomLines
     : resolveHotelRoomLines(row).map((line) => emptyRoomLine(line));
@@ -908,10 +905,10 @@ const withSynthesizedLines = (row: HotelInputRow): HotelInputRow => {
     : resolveHotelMealPlanLines(row).map((line) => emptyMealLine(line));
   return {
     ...row,
-    // Every hotel option edits at least one (possibly empty) room allocation
-    // and one meal-plan selection, so "+ Add Room" / "+ Add Meal Plan" always
-    // extend an existing list.
-    roomLines: roomLines.length ? roomLines : [emptyRoomLine()],
+    // Meal-plan editing always has at least one (possibly empty) selection so
+    // "+ Add Meal Plan" extends an existing list. Room allocations deliberately
+    // have no such fallback: an unassigned stay must not count as one room.
+    roomLines,
     mealPlanLines: mealPlanLines.length ? mealPlanLines : [emptyMealLine()],
   };
 };
@@ -1122,7 +1119,7 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
                 <Trash2 className="h-4 w-4 text-red-600" /> Remove
               </Button>
             </div>
-            <div className="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <label className="text-sm font-semibold text-slate-800 md:col-span-2 xl:col-span-2">
                 Room Type <span className="text-red-500">*</span>
                 <span className="mt-1 block">
@@ -1191,20 +1188,6 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
                   className={`${field} mt-1`}
                 />
               </label>
-              <label className="text-sm font-semibold text-slate-800">
-                Child Without Bed Quantity
-                <input
-                  aria-label={`Room ${lineIndex + 1} child without bed quantity`}
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  {...form.register(`hotels.${hotelIndex}.roomLines.${lineIndex}.childWithoutBedQuantity`, {
-                    setValueAs: (value) => (value === '' ? null : Number(value)),
-                  })}
-                  className={`${field} mt-1`}
-                />
-              </label>
             </div>
             {isSectionWise && (() => {
               return (
@@ -1235,15 +1218,6 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
               </div>
               );
             })()}
-            <label className="mt-3 block text-sm font-semibold text-slate-800">
-              Room Remark
-              <input
-                aria-label={`Room ${lineIndex + 1} remark`}
-                placeholder="e.g. high floor, twin beds"
-                {...form.register(`hotels.${hotelIndex}.roomLines.${lineIndex}.notes`)}
-                className={`${field} mt-1`}
-              />
-            </label>
           </div>
         );
       })}
@@ -1593,7 +1567,10 @@ const emptyHotel = (
   sequence,
   images: [],
   imageSnapshotPresent: false,
-  roomLines: [emptyRoomLine()],
+  // A newly added stay starts with NO room allocation: Total Rooms stays
+  // empty until the user explicitly adds room lines (via Add Room). A default
+  // line here would silently count as one room and invent a total of 1.
+  roomLines: [],
   mealPlanLines: [emptyMealLine()],
   ...seed,
 });
@@ -1601,7 +1578,7 @@ const emptyHotel = (
 /**
  * A brand-new, fully independent blank Hotel Stay. Never clones the current or
  * previous stay — no hotel, no city, no dates, no rooms, no master links and no
- * image references. Used by "Add Stay Before" / "Add Stay After".
+ * image references. Used by "Add Hotel Before" / "Add Hotel After".
  */
 const createEmptyHotelStay = (sequence: number, selected = true): HotelInputRow =>
   emptyHotel(sequence, selected);
@@ -2439,6 +2416,31 @@ export function QuotationBuilderPage() {
   // Local-only expand/collapse for Hotel Stay cards. UI state only — never
   // persisted. Every stay starts collapsed whenever the builder is opened.
   const [expandedHotels, setExpandedHotels] = useState<Record<string, boolean>>({});
+  // Most recently expanded hotel stay (field id): the live preview follows
+  // this card. Cleared when that stay collapses; removal falls back
+  // gracefully to the section (see the preview target below).
+  const [lastExpandedHotelRowId, setLastExpandedHotelRowId] = useState<string | null>(null);
+  // Selected sightseeing day position (reported by SightseeingSection): the
+  // live preview follows this day. Position-based, so reorder/add/remove stay
+  // exact via the matching source index stamped on each rendered day.
+  const [activeSightseeingDay, setActiveSightseeingDay] = useState(0);
+  // Expanded flight record position (reported by FlightRecordCard): the live
+  // preview follows this flight's journey legs. Null until the user expands
+  // a flight; collapsing the active one falls back to the section.
+  const [activeFlightIndex, setActiveFlightIndex] = useState<number | null>(null);
+  // Local-only expand/collapse for the Room Configuration and Meal Plan
+  // sections inside each hotel stay. UI state only — never persisted and never
+  // clearing form values. Both start collapsed for every stay (including stays
+  // added later); the user opens each section explicitly and it stays open
+  // until the user closes it.
+  const [expandedHotelSections, setExpandedHotelSections] = useState<
+    Record<string, { rooms?: boolean; meals?: boolean }>
+  >({});
+  const toggleHotelSection = (rowId: string, section: 'rooms' | 'meals') =>
+    setExpandedHotelSections((current) => ({
+      ...current,
+      [rowId]: { ...current[rowId], [section]: !(current[rowId]?.[section] ?? false) },
+    }));
   // Local-only expand/collapse for the Weblink Section Order accordion. UI
   // state only — never persisted. Always starts collapsed on every load.
   const [sectionOrderOpen, setSectionOrderOpen] = useState(false);
@@ -2508,10 +2510,10 @@ export function QuotationBuilderPage() {
   }, []);
   // Persistent side-by-side live preview: the editor narrows and the complete
   // customer quotation stays mounted beside it until the user exits the mode.
-  // This is the single quotation preview feature.
-  const [livePreviewPinned, setLivePreviewPinned] = useState(false);
-  // Narrow-screen pane switch for persistent mode (desktop shows both panes).
-  const [pinnedPane, setPinnedPane] = useState<'editor' | 'preview'>('editor');
+  // This is the single quotation preview feature. Open by default on desktop
+  // and mobile; a single `livePreviewPinned` boolean is the only open/close
+  // state (no separate pane switch).
+  const [livePreviewPinned, setLivePreviewPinned] = useState(true);
   // "Tax Note on Total Price" is a control dropdown: it defaults to the sentinel
   // (keep the saved note) and only writes `taxNote` when a real option is picked.
   const [taxNoteChoice, setTaxNoteChoice] = useState<string>(QUOTATION_TAX_NOTE_SENTINEL);
@@ -2580,6 +2582,38 @@ export function QuotationBuilderPage() {
   const services = useFieldArray({ control: form.control, name: 'services' });
   const faqs = useFieldArray({ control: form.control, name: 'faqs' });
   const flightRecords = useFieldArray({ control: form.control, name: 'flightDetails.flights' });
+  // Live preview item target: the active item within the active tab's public
+  // section, derived ONLY from selection state (tab, selected day, expanded
+  // hotel/flight) — never from field text — so typing can never retrigger
+  // navigation. Positions map exactly because the public quotation renders the
+  // same arrays in the same order (each rendered item carries its source
+  // position as `data-preview-item`). Tabs without a per-item selection
+  // affordance (cruise, vehicle, add-ons, FAQs, inclusions, pricing, settings)
+  // resolve to section-level navigation via an empty item list.
+  const previewTargetItems = useMemo((): string[] => {
+    if (activeTab === 'sightseeing') return [`day:${Math.max(0, activeSightseeingDay)}`];
+    if (activeTab === 'hotel' && lastExpandedHotelRowId) {
+      if (!(expandedHotels[lastExpandedHotelRowId] ?? false)) return [];
+      const position = hotels.fields.findIndex((field) => field.id === lastExpandedHotelRowId);
+      return position >= 0 ? [`hotel:${position}`] : [];
+    }
+    if (activeTab === 'flight' && activeFlightIndex != null) {
+      if (activeFlightIndex < 0 || activeFlightIndex >= flightRecords.fields.length) return [];
+      return [
+        `flight:flight-${activeFlightIndex}-outbound`,
+        `flight:flight-${activeFlightIndex}-return`,
+      ];
+    }
+    return [];
+  }, [
+    activeTab,
+    activeSightseeingDay,
+    lastExpandedHotelRowId,
+    expandedHotels,
+    hotels.fields,
+    activeFlightIndex,
+    flightRecords.fields,
+  ]);
   const airlines = useAirlines(
     useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
   );
@@ -3034,7 +3068,7 @@ export function QuotationBuilderPage() {
     };
     const prefilledSightseeing = {
       include: true,
-      sectionTitle: 'Sightseeing & Experiences',
+      sectionTitle: 'Your Itinerary',
       amount: 0,
       description: null,
       days: dayCities.map((city, i) => {
@@ -3092,7 +3126,7 @@ export function QuotationBuilderPage() {
       return [
         emptyHotel(index + 1, true, {
           city: stay.destination,
-          rooms: Math.max(1, quotation.data?.rooms ?? 1),
+          // No rooms seeding (see createHotelRow): unassigned stays stay empty.
           nights: nightsForStay,
           checkInDate: checkIn ? new Date(checkIn) : null,
           checkOutDate: checkOut,
@@ -3114,7 +3148,7 @@ export function QuotationBuilderPage() {
         ? [
             emptyHotel(1, true, {
               city: fallbackCity,
-              rooms: Math.max(1, quotation.data?.rooms ?? 1),
+              // No rooms seeding (see createHotelRow): unassigned stays stay empty.
               nights: fallbackNights,
               checkInDate: startStr ? new Date(startStr) : null,
               checkOutDate: returnStr ? new Date(returnStr) : endStr ? new Date(endStr) : null,
@@ -3347,7 +3381,11 @@ export function QuotationBuilderPage() {
         : { include: true, sectionTitle: 'Additional Services' },
       sightseeingDetails:
         version.sightseeingDetails && version.sightseeingDetails.days?.length
-          ? withSightseeingPricingRows(version.sightseeingDetails)
+          ? withSightseeingPricingRows({
+              ...version.sightseeingDetails,
+              // Migrate the previous default without touching custom titles.
+              sectionTitle: sightseeingSectionTitle(version.sightseeingDetails.sectionTitle),
+            })
           : prefilledSightseeing,
       notes: version.notes,
       internalNotes: version.internalNotes ?? null,
@@ -3998,7 +4036,8 @@ export function QuotationBuilderPage() {
         : null;
     return emptyHotel(sequence, selected, {
       city: (quotation.data?.destinationSummary ?? '').split(/[•(→>,]/)[0]?.trim() ?? '',
-      rooms: Math.max(1, quotation.data?.rooms ?? 1),
+      // No rooms seeding: a newly added stay must not count as one room.
+      // Total Rooms stays empty until the user adds room allocations.
       nights: stayNights,
       checkInDate: start ? new Date(start) : null,
       checkOutDate: end ? new Date(end) : null,
@@ -4404,7 +4443,7 @@ export function QuotationBuilderPage() {
                   : {}),
               };
             })
-            // Draft Hotel Stays added via "Add Stay Before/After" but never
+            // Draft Hotel Stays added via "Add Hotel Before/After" but never
             // named have no hotel name — they must not be persisted (the API
             // also rejects empty hotel rows).
             .filter((hotel) => (hotel.hotelName ?? '').trim().length > 0),
@@ -5124,12 +5163,13 @@ export function QuotationBuilderPage() {
               aria-expanded={(expandedHotels[rowId] ?? false) ? 'true' : 'false'}
               aria-label={`${expandedHotels[rowId] ? 'Collapse' : 'Expand'} hotel stay ${index + 1}`}
               title={`${expandedHotels[rowId] ? 'Collapse' : 'Expand'} hotel stay ${index + 1}`}
-              onClick={() =>
-                setExpandedHotels((current) => ({
-                  ...current,
-                  [rowId]: !(current[rowId] ?? false),
-                }))
-              }
+              onClick={() => {
+                const next = !(expandedHotels[rowId] ?? false);
+                setExpandedHotels((current) => ({ ...current, [rowId]: next }));
+                // The live preview follows the most recently expanded stay;
+                // collapsing it releases the follow (section fallback).
+                setLastExpandedHotelRowId((prev) => (next ? rowId : prev === rowId ? null : prev));
+              }}
               className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
             >
               <ChevronDown
@@ -5156,41 +5196,43 @@ export function QuotationBuilderPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {allowInsertBefore && (
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={`Add hotel before stay ${index + 1}`}
+                onClick={() => insertHotelBefore(index)}
+              >
+                <Plus className="h-4 w-4" /> Add Hotel Before
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label={`Add hotel after stay ${index + 1}`}
+              onClick={() => insertHotelAfter(index)}
+            >
+              <Plus className="h-4 w-4" /> Add Hotel After
+            </Button>
             <Button
               size="sm"
               variant="secondary"
               disabled={index === 0}
               aria-label={`Move hotel stay ${index + 1} up`}
+              title={`Move hotel stay ${index + 1} up`}
               onClick={() => hotels.move(index, index - 1)}
             >
-              <ArrowUp className="h-4 w-4" /> Up
+              <ArrowUp className="h-4 w-4" />
             </Button>
             <Button
               size="sm"
               variant="secondary"
               disabled={index === hotels.fields.length - 1}
               aria-label={`Move hotel stay ${index + 1} down`}
+              title={`Move hotel stay ${index + 1} down`}
               onClick={() => hotels.move(index, index + 1)}
             >
-              Down <ArrowDown className="h-4 w-4" />
-            </Button>
-            {allowInsertBefore && (
-              <Button
-                size="sm"
-                variant="secondary"
-                aria-label={`Add hotel stay before stay ${index + 1}`}
-                onClick={() => insertHotelBefore(index)}
-              >
-                <Plus className="h-4 w-4" /> Add Stay Before
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-label={`Add hotel stay after stay ${index + 1}`}
-              onClick={() => insertHotelAfter(index)}
-            >
-              <Plus className="h-4 w-4" /> Add Stay After
+              <ArrowDown className="h-4 w-4" />
             </Button>
             <Button size="sm" variant="ghost" onClick={() => hotels.remove(index)}>
               <Trash2 className="h-4 w-4 text-red-600" /> Remove
@@ -5203,7 +5245,6 @@ export function QuotationBuilderPage() {
             <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_220px]">
               <div className="space-y-5">
                 <div>
-                  <p className={`${subsectionHeading} mb-3 border-b border-border/50 pb-1`}>Hotel Details</p>
                   <div className="grid gap-3 md:grid-cols-2">
                     <HotelMasterFields
                     canCost={canCost}
@@ -5265,14 +5306,44 @@ export function QuotationBuilderPage() {
                           });
                       }
                       applyHotel(index, patch);
+                      // Resolve every gallery image URL immediately so the live
+                      // weblink preview shows the full multi-image gallery
+                      // without saving. Merges into the current order so a
+                      // delayed response never restores removed images.
+                      // (Same pattern as cruise/vehicle/add-on selects; the
+                      // background hydration effect remains as a safety net.)
+                      if (snapshot.length > 0 && _hotelId) {
+                        const selectedId = _hotelId;
+                        void importMasterGalleryPreviews(selectedId, snapshot, hotelImageUrl).then(
+                          (images) => {
+                            if (form.getValues(`hotels.${index}.hotelId`) !== selectedId)
+                              return;
+                            form.setValue(
+                              `hotels.${index}.images`,
+                              mergeMasterGalleryPreviews(
+                                form.getValues(`hotels.${index}.images`),
+                                images,
+                              ) as never,
+                              { shouldDirty: false },
+                            );
+                          },
+                        );
+                      }
                     }}
                   />
                   </div>
                 </div>
 
                 <p className={`${subsectionHeadingMuted} border-b border-border/50 pb-1`}>Stay Dates</p>
-                <div className="grid gap-3 md:grid-cols-5">
-                  <label className="text-sm font-semibold text-slate-800">
+                {/*
+                  Stay Dates layout: Check-in and Check-out each occupy their
+                  own row so the date inputs stay readable. City spans both
+                  date rows (rendered once); Nights and Total Rooms sit
+                  underneath in a third row. On narrow screens everything
+                  stacks in the same order.
+                */}
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,1fr)]">
+                  <label className="text-sm font-semibold text-slate-800 md:row-span-2">
                     City <span className="text-xs font-normal text-muted-foreground">· from master</span>
                     <input
                       aria-label="Hotel city"
@@ -5282,68 +5353,89 @@ export function QuotationBuilderPage() {
                     />
                   </label>
                   <label className="text-sm font-semibold text-slate-800">
-                    Check-In
-                    <input
-                      aria-label="Hotel check-in"
-                      type="date"
-                      value={toDate(hotel?.checkInDate)}
-                      onChange={(event) =>
-                        setStayDate(
-                          'checkInDate',
-                          event.target.value ? new Date(event.target.value) : null,
-                        )
-                      }
-                      className={`${field} mt-1`}
-                    />
-                    <input
-                      {...form.register(`hotels.${index}.checkInTime`)}
-                      aria-label="Hotel check-in time"
-                      type="time"
-                      value={hotel?.checkInTime ?? ''}
-                      onChange={(event) => {
-                        const time = event.target.value || null;
-                        form.setValue(`hotels.${index}.checkInTime`, time, {
-                          shouldDirty: true,
-                        });
-                        form.setValue(`hotels.${index}.showCheckInTime`, Boolean(time), {
-                          shouldDirty: true,
-                        });
+                    Check-in date
+                    <HotelDatePicker
+                      value={hotel?.checkInDate ?? null}
+                      onSelect={(date) => setStayDate('checkInDate', date)}
+                      labels={{
+                        input: 'Hotel check-in',
+                        toggle: 'Open check-in calendar',
+                        dialog: 'Choose check-in date',
+                        clear: 'Clear check-in date',
                       }}
-                      className={`${field} mt-1`}
+                      inputClassName={field}
                     />
                   </label>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-800">
+                      Check-in time
+                      <input
+                        {...form.register(`hotels.${index}.checkInTime`)}
+                        aria-label="Hotel check-in time"
+                        type="time"
+                        value={hotel?.checkInTime ?? ''}
+                        onChange={(event) => {
+                          const time = event.target.value || null;
+                          form.setValue(`hotels.${index}.checkInTime`, time, {
+                            shouldDirty: true,
+                          });
+                          form.setValue(`hotels.${index}.showCheckInTime`, Boolean(time), {
+                            shouldDirty: true,
+                          });
+                        }}
+                        className={`${field} mt-1`}
+                      />
+                    </label>
+                    {hotel?.checkInTime ? (
+                      <button
+                        type="button"
+                        aria-label="Clear check-in time"
+                        title="Clear check-in time"
+                        onClick={() => {
+                          form.setValue(`hotels.${index}.checkInTime`, null, {
+                            shouldDirty: true,
+                          });
+                          form.setValue(`hotels.${index}.showCheckInTime`, false, {
+                            shouldDirty: true,
+                          });
+                        }}
+                        className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
+                      >
+                        <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear
+                      </button>
+                    ) : null}
+                  </div>
                   <label className="text-sm font-semibold text-slate-800">
-                    Check-Out
-                    <input
-                      aria-label="Hotel check-out"
-                      type="date"
-                      value={toDate(hotel?.checkOutDate)}
-                      onChange={(event) =>
-                        setStayDate(
-                          'checkOutDate',
-                          event.target.value ? new Date(event.target.value) : null,
-                        )
-                      }
-                      className={`${field} mt-1`}
-                    />
-                    <input
-                      {...form.register(`hotels.${index}.checkOutTime`)}
-                      aria-label="Hotel check-out time"
-                      type="time"
-                      value={hotel?.checkOutTime ?? ''}
-                      onChange={(event) => {
-                        const time = event.target.value || null;
-                        form.setValue(`hotels.${index}.checkOutTime`, time, {
-                          shouldDirty: true,
-                        });
-                        form.setValue(`hotels.${index}.showCheckOutTime`, Boolean(time), {
-                          shouldDirty: true,
-                        });
-                      }}
-                      className={`${field} mt-1`}
+                    Check-out date
+                    <HotelCheckoutDatePicker
+                      checkInDate={hotel?.checkInDate ?? null}
+                      checkOutDate={hotel?.checkOutDate ?? null}
+                      onSelect={(date) => setStayDate('checkOutDate', date)}
+                      inputClassName={field}
                     />
                   </label>
-                  <label className="text-sm font-semibold text-slate-800">
+                  <div>
+                    <label className="text-sm font-semibold text-slate-800">
+                      Check-out time
+                      <input
+                        {...form.register(`hotels.${index}.checkOutTime`)}
+                        aria-label="Hotel check-out time"
+                        type="time"
+                        value={hotel?.checkOutTime ?? ''}
+                        onChange={(event) => {
+                          const time = event.target.value || null;
+                          form.setValue(`hotels.${index}.checkOutTime`, time, {
+                            shouldDirty: true,
+                          });
+                          form.setValue(`hotels.${index}.showCheckOutTime`, Boolean(time), {
+                            shouldDirty: true,
+                          });
+                        }}
+                        className={`${field} mt-1`}
+                      />
+                    </label>
+                  </div>
+                  <label className="text-sm font-semibold text-slate-800 md:col-start-2">
                     <span className={calculatedLabel}>Nights</span>
                     <input
                       aria-label="Hotel nights"
@@ -5422,7 +5514,22 @@ export function QuotationBuilderPage() {
                 </div>
 
                 <div>
-                  <p className={`${subsectionHeading} mb-3 border-b border-border/50 pb-1`}>Room Configuration</p>
+                  <div className="mb-3 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      aria-expanded={(expandedHotelSections[rowId]?.rooms ?? false) ? 'true' : 'false'}
+                      aria-label={`${expandedHotelSections[rowId]?.rooms ? 'Collapse' : 'Expand'} room configuration for hotel stay ${index + 1}`}
+                      title={`${expandedHotelSections[rowId]?.rooms ? 'Collapse' : 'Expand'} room configuration for hotel stay ${index + 1}`}
+                      onClick={() => toggleHotelSection(rowId, 'rooms')}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={`h-4 w-4 transition-transform ${expandedHotelSections[rowId]?.rooms ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                  </div>
+                  {(expandedHotelSections[rowId]?.rooms ?? false) && (
                   <HotelRoomLinesEditor
                     form={form}
                     hotelIndex={index}
@@ -5430,10 +5537,27 @@ export function QuotationBuilderPage() {
                     canCost={canCost}
                     recalculateTotals={() => recalculateHotelTotals(index)}
                   />
+                  )}
                 </div>
 
                 <div>
-                  <p className={`${subsectionHeadingMuted} mb-3 border-b border-border/50 pb-1`}>Meal Plan</p>
+                  <div className="mb-3 flex items-center justify-between gap-2 border-b border-border/50 pb-1">
+                    <p className={subsectionHeadingMuted}>Meal Plan</p>
+                    <button
+                      type="button"
+                      aria-expanded={(expandedHotelSections[rowId]?.meals ?? false) ? 'true' : 'false'}
+                      aria-label={`${expandedHotelSections[rowId]?.meals ? 'Collapse' : 'Expand'} meal plan for hotel stay ${index + 1}`}
+                      title={`${expandedHotelSections[rowId]?.meals ? 'Collapse' : 'Expand'} meal plan for hotel stay ${index + 1}`}
+                      onClick={() => toggleHotelSection(rowId, 'meals')}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={`h-4 w-4 transition-transform ${expandedHotelSections[rowId]?.meals ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                  </div>
+                  {(expandedHotelSections[rowId]?.meals ?? false) && (
                   <HotelMealPlanLinesEditor
                     form={form}
                   hotelIndex={index}
@@ -5441,6 +5565,7 @@ export function QuotationBuilderPage() {
                   canCost={canCost}
                   recalculateTotals={() => recalculateHotelTotals(index)}
                   />
+                  )}
                 </div>
 
                 {hotel &&
@@ -5477,17 +5602,6 @@ export function QuotationBuilderPage() {
                   </div>
                 )}
 
-                <div>
-                  <label className="text-sm font-semibold text-slate-800">
-                    Remark
-                    <input
-                      aria-label="Hotel remark"
-                      placeholder="e.g. additional bed, flower arrangement"
-                      {...form.register(`hotels.${index}.notes`)}
-                      className={`${field} mt-1`}
-                    />
-                  </label>
-                </div>
               </div>
 
               <HotelPreview
@@ -6144,7 +6258,23 @@ export function QuotationBuilderPage() {
                         form={form}
                         airlineList={airlineList}
                         onLoadBookmarks={importFlightBookmarks}
-                        onRemoveFlight={(removeIndex) => flightRecords.remove(removeIndex)}
+                        onRemoveFlight={(removeIndex) => {
+                          // Keep the followed flight pointing at the same
+                          // record (or release it when removed).
+                          setActiveFlightIndex((prev) =>
+                            prev == null || prev === removeIndex
+                              ? null
+                              : prev > removeIndex
+                                ? prev - 1
+                                : prev,
+                          );
+                          flightRecords.remove(removeIndex);
+                        }}
+                        onExpandChange={(expandedIndex, expanded) =>
+                          setActiveFlightIndex((prev) =>
+                            expanded ? expandedIndex : prev === expandedIndex ? null : prev,
+                          )
+                        }
                       />
                     ))}
                     <div>
@@ -6572,43 +6702,15 @@ export function QuotationBuilderPage() {
     // render with no desktop page scroll: 56px app topbar + 24px main top
     // padding + 24px main bottom padding = 6.5rem of surrounding chrome.
     // The editor form scrolls internally (see below); the preview panel
-    // fills the row height. Mobile (<lg) keeps the stacked Editor/Preview
-    // switch with its own max-height behavior.
+    // fills the row height. On mobile (<lg) a single state drives an
+    // exclusive view: preview open shows only the preview (with its X close),
+    // preview closed shows only the editor (with its Open action).
     <div className={livePreviewPinned ? 'flex flex-col gap-4 lg:h-[calc(100vh-6.5rem)] lg:flex-row lg:items-stretch lg:supports-[height:100dvh]:h-[calc(100dvh-6.5rem)]' : undefined}>
-      {livePreviewPinned && (
-        <div
-          role="group"
-          aria-label="Builder view"
-          className="flex gap-1 rounded-xl border border-border bg-card p-1 lg:hidden"
-        >
-          {(
-            [
-              ['editor', 'Editor'],
-              ['preview', 'Preview'],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={pinnedPane === value}
-              onClick={() => setPinnedPane(value)}
-              className={cn(
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-                pinnedPane === value
-                  ? 'bg-brand-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
       <form
         onSubmit={submit}
         className={
           livePreviewPinned
-            ? cn('min-w-0 space-y-5 lg:h-full lg:min-h-0 lg:w-[57%] lg:shrink-0 lg:overflow-y-auto', pinnedPane === 'preview' && 'hidden lg:block')
+            ? cn('min-w-0 space-y-5 lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-1 lg:overflow-y-auto', 'hidden lg:block')
             : 'space-y-5'
         }
       >
@@ -6648,16 +6750,17 @@ export function QuotationBuilderPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            aria-pressed={livePreviewPinned}
-            onClick={() => setLivePreviewPinned((open) => !open)}
-            disabled={!quotation.data}
-          >
-            <Eye className="h-4 w-4" />
-            {livePreviewPinned ? 'Close Live Preview' : 'Keep Live Preview Open'}
-          </Button>
+          {!livePreviewPinned && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setLivePreviewPinned(true)}
+              disabled={!quotation.data}
+            >
+              <Eye className="h-4 w-4" />
+              Open Live Preview
+            </Button>
+          )}
           <Button type="submit" isLoading={save.isPending}>
             <Save className="h-4 w-4" />
             Save quotation
@@ -6895,6 +6998,7 @@ export function QuotationBuilderPage() {
             quotationVersionId={versionId}
             destination={sightseeingDestinationName}
             onDocumentPreviewUrl={handleSightseeingPreviewUrl}
+            onSelectedDayChange={setActiveSightseeingDay}
             pax={{
               adults: pax.adults,
               childrenWithBed: pax.cwb,
@@ -6958,19 +7062,6 @@ export function QuotationBuilderPage() {
                 })()}
                 <HotelBookmarkListField onLoaded={importHotelBookmark} />
 
-                <div>
-                  <h3 className="mb-1 text-sm font-semibold text-slate-800">Description</h3>
-                  <RichTextEditor
-                    ariaLabel="Hotel description"
-                    value={form.watch('hotelDetails.description') ?? ''}
-                    onChange={(html) =>
-                      form.setValue('hotelDetails.description', html || null, {
-                        shouldDirty: true,
-                      })
-                    }
-                  />
-                </div>
-
                 {hotels.fields.length === 0 && (
                   <p className="rounded-lg border border-dashed p-6 text-center text-sm text-slate-500">
                     No hotel stays were found on this lead. Add the first stay below.
@@ -6978,9 +7069,6 @@ export function QuotationBuilderPage() {
                 )}
 
                 <section className="space-y-3">
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Hotel Options</h3>
-                  </div>
                   {defaultHotelRows.length === 0 && (
                     <div className="flex justify-center">
                       <Button
@@ -8876,12 +8964,17 @@ export function QuotationBuilderPage() {
           data-testid="live-preview-panel"
           aria-label="Live weblink preview"
           className={cn(
-            'min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card',
-            pinnedPane === 'preview' ? 'flex' : 'hidden',
-            // Fills the viewport-bounded row (no sticky needed: the desktop
-            // page no longer scrolls in pinned mode, so the panel is at its
-            // final position from the initial render).
-            'lg:flex lg:h-full lg:min-h-0 lg:w-[43%] lg:shrink-0',
+            'flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card',
+            // Mounted only when pinned, so always visible: exclusive preview
+            // on mobile (<lg), side-by-side on desktop. Unmounting on close
+            // returns the editor to full width with form values intact.
+            // Fixed to the rendered phone width (PHONE_BODY_WIDTH 417px) plus
+            // the 16px grey padding on each side (px-4) inside the phone
+            // frame plus the 1px panel border per side (451 = 417 + 32 + 2),
+            // so the grey gap is 16px per side instead of the large
+            // margins a 43% share produced. The phone itself is never
+            // stretched: usePhoneFitScale() only scales it down to fit.
+            'lg:h-full lg:min-h-0 lg:w-[451px] lg:shrink-0',
           )}
         >
           <PinnedLiveQuotationPreview
@@ -8895,6 +8988,7 @@ export function QuotationBuilderPage() {
             sightseeingPreviewUrls={sightseeingPreviewUrls}
             expertUsers={expertUsersQuery.data?.data ?? []}
             activeSection={previewSectionForBuilderTab(activeTab)}
+            activeItems={previewTargetItems}
           />
         </aside>
       )}

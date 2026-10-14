@@ -491,12 +491,12 @@ describe('Phase 16 dashboard page', () => {
     const text = document.body.textContent ?? '';
     const order = [
       'Total Leads',
-      'Converted Leads',
-      'Agency Revenue',
-      'Hot Leads',
-      'Conversion Rate',
       'Quotations',
+      'Converted Leads',
+      'Conversion Rate',
+      'Agency Revenue',
       'Net Profit',
+      'Hot Leads',
       'Booking Confirmed Amount (Destination Wise)',
       'Upcoming Travel',
       'Other Upcoming Travel',

@@ -1908,3 +1908,67 @@ describe('WACRM itinerary compatibility with private-named destinations (Phase 2
     expect(JSON.stringify(rows)).not.toContain('Compat Private');
   });
 });
+
+describe('WACRM lead-existence probe (stale-link recovery)', () => {
+  async function setup() {
+    const admin = await owner('owner@alpha.test', 'Alpha Travel');
+    await employeeEmail(admin, 'sales@alpha.test');
+    const token = await mintToken(admin, 'owner@alpha.test');
+    return { admin, token };
+  }
+
+  async function createLead(token: string, overrides: Record<string, unknown> = {}) {
+    const res = await bearer(token)
+      .post('/api/integrations/wacrm/leads')
+      .send(payload(overrides));
+    expect(res.status).toBe(201);
+    return res.body.data.leadId as string;
+  }
+
+  it('reports exists:true for a live lead in the scoped company', async () => {
+    const { token } = await setup();
+    const leadId = await createLead(token);
+    const res = await bearer(token).get(
+      `/api/integrations/wacrm/leads/${leadId}?ownerEmail=${encodeURIComponent('sales@alpha.test')}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, data: { exists: true, leadId } });
+  });
+
+  it('reports exists:false after the lead is deleted', async () => {
+    const { admin, token } = await setup();
+    const leadId = await createLead(token);
+    const del = await admin.delete(`/api/queries/${leadId}`);
+    expect(del.status).toBe(200);
+    const res = await bearer(token).get(
+      `/api/integrations/wacrm/leads/${leadId}?ownerEmail=${encodeURIComponent('sales@alpha.test')}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, data: { exists: false, leadId } });
+  });
+
+  it('reports exists:false for a foreign-tenant lead without leaking it', async () => {
+    const { token } = await setup();
+    const leadId = await createLead(token);
+    const beta = await owner('owner@beta.test', 'Beta Travel');
+    await employeeEmail(beta, 'sales@beta.test');
+    const tokenB = await mintToken(beta, 'owner@beta.test');
+    const res = await bearer(tokenB).get(
+      `/api/integrations/wacrm/leads/${leadId}?ownerEmail=${encodeURIComponent('sales@beta.test')}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, data: { exists: false, leadId } });
+    expect(JSON.stringify(res.body)).not.toContain('Aarav Mehta');
+  });
+
+  it('rejects unauthenticated and malformed-id probes', async () => {
+    const { token } = await setup();
+    const leadId = await createLead(token);
+    expect(
+      (await request(app).get(`/api/integrations/wacrm/leads/${leadId}`)).status,
+    ).toBe(401);
+    expect(
+      (await bearer(token).get('/api/integrations/wacrm/leads/not-a-uuid')).status,
+    ).toBe(400);
+  });
+});

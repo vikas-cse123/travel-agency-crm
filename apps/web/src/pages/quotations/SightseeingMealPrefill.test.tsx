@@ -55,10 +55,66 @@ const activityLegacy = {
   images: [],
 };
 
+const activityDinner = {
+  id: 'dinner-d',
+  title: 'Seafood dinner',
+  sequence: 4,
+  estimatedHours: 2,
+  suggestedStartTime: '19:00',
+  description: null,
+  pricing: [],
+  mealDefaults: {
+    meals: { breakfast: false, lunch: false, dinner: true },
+    mealModes: { dinner: 'WITH_TRANSFER' },
+    mealTransferDetails: { dinner: 'Hotel lobby pickup at 7 PM' },
+    transfer: 'SHARED',
+  },
+  destination: { id: 'dest-1', name: 'Singapore' },
+  city: { id: 'city-1', name: 'Singapore' },
+  images: [],
+};
+
+const activityBogus = {
+  id: 'bogus-e',
+  title: 'Mystery ride',
+  sequence: 5,
+  estimatedHours: null,
+  suggestedStartTime: null,
+  description: null,
+  pricing: [],
+  mealDefaults: {
+    meals: { breakfast: true, lunch: false, dinner: false },
+    mealModes: { breakfast: 'FLYING_CARPET' },
+    transfer: 'HYPERLOOP',
+  },
+  destination: { id: 'dest-1', name: 'Singapore' },
+  city: { id: 'city-1', name: 'Singapore' },
+  images: [],
+};
+
+const activityRooftop = {
+  id: 'rooftop-f',
+  title: 'Rooftop dinner',
+  sequence: 6,
+  estimatedHours: 2,
+  suggestedStartTime: '20:00',
+  description: null,
+  pricing: [],
+  // Legacy shape: no mealTransferDetails key at all.
+  mealDefaults: {
+    meals: { breakfast: false, lunch: false, dinner: true },
+    mealModes: { dinner: 'WITH_TRANSFER' },
+    transfer: 'SHARED',
+  },
+  destination: { id: 'dest-1', name: 'Singapore' },
+  city: { id: 'city-1', name: 'Singapore' },
+  images: [],
+};
+
 vi.mock('@/features/masters/masters.api', () => ({
   useSightseeingActivities: () => ({
     data: {
-      activities: [activityA, activityB, activityLegacy],
+      activities: [activityA, activityB, activityLegacy, activityDinner, activityBogus, activityRooftop],
       destination: { id: 'dest-1', name: 'Singapore' },
       city: { id: 'city-1', name: 'Singapore' },
     },
@@ -217,6 +273,76 @@ describe('Sightseeing master meal and transfer prefill', () => {
     expect(within(day).getByLabelText('dinner')).toBeChecked();
     expect(
       within(day).getByLabelText('Day 1 activity 1 daily transfer Private Transfer'),
+    ).toBeChecked();
+  });
+
+  it('prefills With Transfer mode, details, and transfer together', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
+    render(<Harness />);
+    await pickActivity(0, 'Seafood dinner');
+    const day = dayArticle(0);
+    await waitFor(() => expect(within(day).getByLabelText('dinner')).toBeChecked());
+    expect(within(day).getByLabelText('breakfast')).not.toBeChecked();
+    expect(within(day).getByLabelText('lunch')).not.toBeChecked();
+    expect(
+      within(within(day).getByRole('group', { name: 'dinner meal options' })).getByLabelText(
+        'With Transfer',
+      ),
+    ).toBeChecked();
+    expect(within(day).getByLabelText('dinner transfer details')).toHaveValue(
+      'Hotel lobby pickup at 7 PM',
+    );
+    expect(
+      within(day).getByLabelText('Day 1 activity 1 daily transfer Shared Transfer'),
+    ).toBeChecked();
+  });
+
+  it('replaces details when another master is selected, keeps manual details otherwise', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
+    render(<Harness />);
+    await pickActivity(0, 'Seafood dinner');
+    const day = dayArticle(0);
+    await waitFor(() =>
+      expect(within(day).getByLabelText('dinner transfer details')).toHaveValue(
+        'Hotel lobby pickup at 7 PM',
+      ),
+    );
+
+    // Manual edit sticks until the next explicit selection.
+    await userEvent.clear(within(day).getByLabelText('dinner transfer details'));
+    await userEvent.type(within(day).getByLabelText('dinner transfer details'), 'Pool deck');
+    expect(within(day).getByLabelText('dinner transfer details')).toHaveValue('Pool deck');
+
+    // A master without details (legacy shape) leaves the manual value alone.
+    await repickActivity(0, 'Rooftop dinner');
+    await waitFor(() =>
+      expect(within(day).getByLabelText('dinner transfer details')).toHaveValue('Pool deck'),
+    );
+
+    // Picking the detailed master again refreshes from the new selection.
+    await repickActivity(0, 'Seafood dinner');
+    await waitFor(() =>
+      expect(within(day).getByLabelText('dinner transfer details')).toHaveValue(
+        'Hotel lobby pickup at 7 PM',
+      ),
+    );
+  });
+
+  it('ignores malformed master enum values instead of writing them through', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
+    render(<Harness />);
+    await pickActivity(0, 'Mystery ride');
+    const day = dayArticle(0);
+    await waitFor(() => expect(within(day).getByLabelText('breakfast')).toBeChecked());
+    // Invalid mode falls back to the default instead of persisting garbage.
+    expect(
+      within(within(day).getByRole('group', { name: 'breakfast meal options' })).getByLabelText(
+        'No Transfer',
+      ),
+    ).toBeChecked();
+    // Invalid transfer leaves the activity default alone.
+    expect(
+      within(day).getByLabelText('Day 1 activity 1 daily transfer No Transfer'),
     ).toBeChecked();
   });
 });

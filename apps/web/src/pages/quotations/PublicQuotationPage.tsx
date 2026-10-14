@@ -49,6 +49,7 @@ import {
 import { useFavicon } from '@/hooks/useFavicon';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { formatTime12Hour } from '@/utils/dateTime';
+import { decodeHtmlEntities } from '@/utils/richTextPaste';
 import { buildQuotationDescription, normalizeWhatsAppPhone } from './quotationContact';
 import type {
   QuotationVersion,
@@ -291,6 +292,16 @@ const buildPolicySections = (version: QuotationVersion): PolicySection[] => {
 const publicHotelSectionTitle = (value: string | null | undefined) => {
   const title = value?.trim();
   return !title || title === 'Accommodation Details' ? 'Your Hotels' : title;
+};
+/**
+ * Customer-facing sightseeing section title. Mirrors the hotel rule: blank
+ * values and the previous builder default (`Sightseeing & Experiences`)
+ * render as `Your Itinerary`; explicitly configured custom titles are
+ * preserved verbatim — no data migration, applies to saved weblinks too.
+ */
+export const publicSightseeingSectionTitle = (value: string | null | undefined) => {
+  const title = value?.trim();
+  return !title || title === 'Sightseeing & Experiences' ? 'Your Itinerary' : title;
 };
 
 const publicHeroIntroduction = (value: string | null | undefined) =>
@@ -1001,7 +1012,11 @@ function itineraryDayHasMeaning(day: ReturnType<typeof normalizeItineraryDay>): 
 
 /** Render a rich-text (HTML) or plain-text description without leaking markup. */
 function ItineraryRichText({ html }: { html: string | null }) {
-  const text = (html ?? '').trim();
+  // Decode entities FIRST (browser-serialized `&nbsp;`, accidentally
+  // double-escaped `&amp;nbsp;`, numeric `&#160;`/`&#xA0;`): entity text must
+  // never leak literally. Plain text then renders React-escaped (XSS-safe);
+  // real markup goes through the sanitizer as before, preserving formatting.
+  const text = decodeHtmlEntities(html ?? '').trim();
   if (!text) return null;
   if (!/<[a-z][\s\S]*>/i.test(text))
     return <p className="whitespace-pre-line text-sm leading-relaxed text-[#000000]">{text}</p>;
@@ -1061,6 +1076,7 @@ function SightseeingItineraryView({
   destinationImage,
   fmt,
   pricingMode,
+  sectionTitle,
 }: {
   days: SightseeingDay[];
   color: string;
@@ -1071,12 +1087,19 @@ function SightseeingItineraryView({
   /** The quotation's own currency formatter, reused for activity pricing. */
   fmt: (value: number) => string;
   pricingMode?: string;
+  /** Builder-configured section title; falls back to `Your Itinerary`. */
+  sectionTitle?: string | null;
 }) {
   const normalized = useMemo(
     () => days.map((day, index) => normalizeItineraryDay(day, index + 1)),
     [days],
   );
-  const shown = normalized.filter(itineraryDayHasMeaning);
+  // Source positions survive the validity filter below: the builder targets a
+  // day by its form position (`day:<n>`), and each rendered day carries that
+  // same source index — so reorder/add/remove/filtering can never mis-target.
+  const shown = normalized
+    .map((day, sourceIndex) => ({ day, sourceIndex }))
+    .filter(({ day }) => itineraryDayHasMeaning(day));
   if (!shown.length) return null;
   const sectionIntro = (description ?? '')
     .replace(/<[^>]*>/g, ' ')
@@ -1084,7 +1107,7 @@ function SightseeingItineraryView({
     .trim();
   return (
     <section>
-      <SectionTitle>Your Itinerary</SectionTitle>
+      <SectionTitle>{publicSightseeingSectionTitle(sectionTitle)}</SectionTitle>
       {sectionIntro && (
         <div className="mb-5 rounded-md border border-sky-200 border-l-4 border-l-cyan-500 bg-sky-50 p-4">
           <p className="flex items-center gap-2 text-sm font-semibold text-cyan-900">
@@ -1103,7 +1126,7 @@ function SightseeingItineraryView({
           style={{ backgroundColor: color }}
         />
         <div className="space-y-5">
-          {shown.map((day) => {
+          {shown.map(({ day, sourceIndex }) => {
             const title = itineraryDayLabel(day);
             const dateLabel = itineraryDateLabel(day.date);
             const mealsLabel = itineraryMealsLabel(day);
@@ -1139,7 +1162,10 @@ function SightseeingItineraryView({
                 ? [{ url: dayFallbackImage, alt: title }]
                 : [];
             return (
-              <div key={`${day.dayNumber}`} className="relative pl-10 md:pl-12">
+              // Stable internal anchor for live-preview deep-linking (the
+              // builder targets a day by form position; `sourceIndex` is that
+              // same position, unaffected by filtering). Never user-visible.
+              <div key={`${day.dayNumber}`} data-preview-item={`day:${sourceIndex}`} className="relative pl-10 md:pl-12">
                 <span
                   aria-hidden="true"
                   className="absolute left-[10px] top-6 h-3.5 w-3.5 rounded-full border-2 bg-white"
@@ -1785,8 +1811,14 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
 
   // Draft Hotel Stays added but never named have no valid hotel name — a stay
   // without a name must never render as a hotel card on the weblink.
-  const namedHotels = v.hotels.filter((hotel) => (hotel.hotelName ?? '').trim().length > 0);
-  const selectedHotels = namedHotels.filter((hotel) => hotel.selected);
+  // `sourceIndex` is the stay's position in the full hotels array (kept
+  // through the named/selected filters below): the builder targets a hotel by
+  // that same form position (`hotel:<n>`), so filtering, reorder, add/remove
+  // and duplicate names can never mis-target. Never user-visible.
+  const namedHotels = v.hotels
+    .map((hotel, sourceIndex) => ({ hotel, sourceIndex }))
+    .filter(({ hotel }) => (hotel.hotelName ?? '').trim().length > 0);
+  const selectedHotels = namedHotels.filter(({ hotel }) => hotel.selected);
   const visibleHotels = selectedHotels.length > 0 ? selectedHotels : namedHotels;
   // Hotels only appear when included in the quotation (hotelDetails.include).
   const hotelIncluded = v.hotelDetails?.include !== false && visibleHotels.length > 0;
@@ -2210,13 +2242,14 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                   destinationImage={data.heroImageUrl ?? null}
                   fmt={fmt}
                   pricingMode={pricing.pricingMode}
+                  sectionTitle={v.sightseeingDetails?.sectionTitle ?? null}
                 />
               ) : null;
             nodes['hotels'] = hotelIncluded ? (
               <section>
                 <SectionTitle>{publicHotelSectionTitle(v.hotelDetails?.sectionTitle)}</SectionTitle>
                 <div className="grid gap-5">
-                  {visibleHotels.map((hotel, hotelIndex) => {
+                  {visibleHotels.map(({ hotel, sourceIndex }, hotelIndex) => {
                     const presentation = data.hotelPresentations?.[hotel.id];
                     const perStayImages = quotationGalleryImages(hotel.images);
                     const sectionImages = quotationGalleryImages(v.hotelDetails?.images);
@@ -2237,8 +2270,11 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                     const nights =
                       hotelStayNights(hotel.checkInDate, hotel.checkOutDate) ?? hotel.nights;
                     return (
+                      // Stable internal anchor for live-preview deep-linking
+                      // (see `namedHotels` above). Never user-visible.
                       <article
                         key={hotel.id}
+                        data-preview-item={`hotel:${sourceIndex}`}
                         className="overflow-hidden rounded-xl border bg-card shadow-sm sm:grid sm:grid-cols-[42%_1fr]"
                       >
                         <QuotationMediaFrame
@@ -2448,13 +2484,17 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 ) : (
                   <div className="space-y-4">
                     {flightJourneys.map((leg) => (
-                      <FlightJourneyView
-                        key={leg.key}
-                        title={leg.title}
-                        journey={leg.journey}
-                        color={leg.color}
-                        airlinePresentations={data.airlinePresentations}
-                      />
+                      // Stable internal anchor for live-preview deep-linking
+                      // (leg keys embed the record position). Layout-neutral
+                      // wrapper under the space-y parent. Never user-visible.
+                      <div key={leg.key} data-preview-item={`flight:${leg.key}`}>
+                        <FlightJourneyView
+                          title={leg.title}
+                          journey={leg.journey}
+                          color={leg.color}
+                          airlinePresentations={data.airlinePresentations}
+                        />
+                      </div>
                     ))}
                   </div>
                 )}

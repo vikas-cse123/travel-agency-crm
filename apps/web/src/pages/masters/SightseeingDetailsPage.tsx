@@ -17,6 +17,20 @@ function money(amount: number | null | undefined, currency: string): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount);
 }
 
+const MEAL_MODE_LABELS: Record<string, string> = {
+  NO_TRANSFER: 'No Transfer',
+  INCLUDE_AT_HOTEL: 'Include At Hotel',
+  WITH_TRANSFER: 'With Transfer',
+};
+
+const TRANSFER_LABELS: Record<string, string> = {
+  PRIVATE: 'Private Transfer',
+  SHARED: 'Shared Transfer',
+  NO_TRANSFER: 'No Transfer',
+};
+
+const capitalizeMeal = (meal: string) => meal.charAt(0).toUpperCase() + meal.slice(1);
+
 export function SightseeingDetailsPage() {
   const { sightseeingId = '' } = useParams<{ sightseeingId: string }>();
   const navigate = useNavigate();
@@ -35,6 +49,18 @@ export function SightseeingDetailsPage() {
     );
 
   const value = record.data;
+  const mealDefaults = (value.mealDefaults ?? null) as {
+    meals?: { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | null;
+    mealModes?: { breakfast?: string | null; lunch?: string | null; dinner?: string | null } | null;
+    mealTransferDetails?: { breakfast?: string | null; lunch?: string | null; dinner?: string | null } | null;
+    transfer?: string | null;
+  } | null;
+  const includedMeals = (['breakfast', 'lunch', 'dinner'] as const).filter(
+    (meal) => mealDefaults?.meals?.[meal] === true,
+  );
+  const transferLabel =
+    (mealDefaults?.transfer ? TRANSFER_LABELS[mealDefaults.transfer] : undefined) ??
+    'Not configured';
   const rows: Array<{ label: string; value: string }> = [
     { label: 'Destination', value: value.destination.name },
     { label: 'City', value: value.city.name },
@@ -136,6 +162,38 @@ export function SightseeingDetailsPage() {
           <div>
             <h3 className="mb-2 text-sm font-semibold text-slate-800">Remarks</h3>
             <SafeRichText html={value.remarks} empty="No remarks added." />
+          </div>
+        </div>
+        <div className="grid gap-4 border-t p-4 md:grid-cols-2">
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-slate-800">Meals Included</h3>
+            {includedMeals.length === 0 ? (
+              <p className="text-sm text-slate-500">No meals included</p>
+            ) : (
+              <ul className="space-y-2">
+                {includedMeals.map((meal) => {
+                  const mode = mealDefaults?.mealModes?.[meal] ?? null;
+                  const details = mealDefaults?.mealTransferDetails?.[meal]?.trim() || null;
+                  return (
+                    <li key={meal} className="text-sm">
+                      <span className="font-medium text-slate-800">
+                        {capitalizeMeal(meal)}
+                        {mode && MEAL_MODE_LABELS[mode] ? ` — ${MEAL_MODE_LABELS[mode]}` : ''}
+                      </span>
+                      {mode === 'WITH_TRANSFER' && details ? (
+                        <span className="mt-0.5 block text-slate-600">
+                          {capitalizeMeal(meal)} Transfer Details: {details}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-slate-800">Transfer</h3>
+            <p className="text-sm text-slate-800">{transferLabel}</p>
           </div>
         </div>
         {Array.isArray(value.pricing) && value.pricing.length > 0 && (

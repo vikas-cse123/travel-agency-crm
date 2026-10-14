@@ -885,6 +885,55 @@ function isBlankBlockNode(node: Node | null): boolean {
   return (el.textContent ?? '').replace(/[\s\u00a0]+/g, '') === '';
 }
 
+/**
+ * Decode HTML entities to their characters, repeatedly (up to 10 passes) so
+ * accidentally double-escaped sequences (`&amp;nbsp;`, `&amp;amp;`) resolve
+ * fully. Named (`&nbsp;`, `&amp;`), decimal (`&#160;`) and hexadecimal
+ * (`&#xA0;`) entities are all handled. Used wherever stored rich text is
+ * prepared for display or editing so entity text never leaks literally.
+ */
+export function decodeHtmlEntities(value: string): string {
+  if (typeof document !== 'undefined') {
+    let prev = '';
+    let cur = value;
+    let iterations = 0;
+    while (cur !== prev && iterations < 10) {
+      prev = cur;
+      const txt = document.createElement('textarea');
+      txt.innerHTML = cur;
+      cur = txt.value;
+      iterations++;
+      if (!cur.includes('&')) break;
+    }
+    return cur;
+  }
+  let cur = value;
+  let prev = '';
+  let iterations = 0;
+  while (cur !== prev && iterations < 10) {
+    prev = cur;
+    cur = cur
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&nbsp;/g, '\u00A0')
+      .replace(/&#39;/g, "'")
+      .replace(/&#x27;/g, "'")
+      .replace(/&#x2F;/g, '/')
+      .replace(/&#(\d+);/g, (_, code) => {
+        const c = Number(code);
+        return Number.isFinite(c) ? String.fromCharCode(c) : _;
+      })
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => {
+        const c = parseInt(code, 16);
+        return Number.isFinite(c) ? String.fromCharCode(c) : _;
+      });
+    iterations++;
+  }
+  return cur;
+}
+
 export function ensureBlankParagraphs(
   html: string,
   { trimEdges = false }: BlankParagraphOptions = {},

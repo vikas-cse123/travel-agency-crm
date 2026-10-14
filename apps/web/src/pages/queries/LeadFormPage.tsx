@@ -1,15 +1,27 @@
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMemo } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import type { QueryInput } from '@interscale/shared';
-import { LeadForm } from '@/features/queries/LeadForm';
+import { LeadForm, type DuplicateLeadLocationState } from '@/features/queries/LeadForm';
 import { useLead, useSaveLead } from '@/features/queries/queries.api';
 import { ApiError } from '@/api/client';
 
 export function LeadFormPage() {
   const { queryId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const lead = useLead(queryId);
   const save = useSaveLead(queryId);
+  // Duplicate Lead draft carried via navigation state (never URL params, so
+  // no personal data leaks into shareable links). Only honored on the Create
+  // route; the Edit route always uses its own record. Memoized so the form's
+  // reset-on-lead-change effect cannot loop on re-renders.
+  const duplicateDraft = useMemo(() => {
+    if (queryId) return null;
+    const state = (location.state ?? null) as DuplicateLeadLocationState | null;
+    const draft = state?.duplicateLead ?? null;
+    return draft && typeof draft === 'object' ? draft : null;
+  }, [queryId, location.state]);
   if (queryId && lead.isLoading) return <div className="h-96 animate-pulse rounded-xl bg-card" />;
   if (queryId && lead.isError)
     return (
@@ -47,6 +59,7 @@ export function LeadFormPage() {
       </div>
       <LeadForm
         {...(lead.data ? { lead: lead.data } : {})}
+        {...(duplicateDraft ? { lead: duplicateDraft } : {})}
         onSave={submit}
         saving={save.isPending}
         {...(error ? { error } : {})}

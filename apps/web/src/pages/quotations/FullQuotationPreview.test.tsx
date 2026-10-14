@@ -12,7 +12,7 @@ import {
   PHONE_BODY_WIDTH,
   PHONE_SCREEN_ASPECT_RATIO,
 } from './FullQuotationPreview';
-import { previewSectionForBuilderTab, scrollPreviewToSection } from './FullQuotationPreview';
+import { previewSectionForBuilderTab, previewTargetKey, scrollPreviewToSection, scrollPreviewToTarget } from './FullQuotationPreview';
 
 const auth = vi.hoisted(() => ({ permissions: new Set<string>() }));
 vi.mock('@/features/auth/AuthProvider', () => ({
@@ -447,7 +447,7 @@ describe('Pinned preview tab navigation', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const body = doc.body as HTMLElement;
@@ -468,7 +468,7 @@ describe('Pinned preview tab navigation', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: tab }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     expect(doc.querySelector(`[data-preview-section="${section}"]`)).not.toBeNull();
@@ -479,7 +479,7 @@ describe('Pinned preview tab navigation', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const { readSaved, anchor } = observeScroller(doc, 500, 100);
@@ -503,7 +503,7 @@ describe('Pinned preview tab navigation', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const { readSaved, anchor } = observeScroller(doc, 500, 100);
@@ -535,7 +535,7 @@ describe('Pinned preview tab navigation', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: /^Flight/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     expect(doc.querySelector('[data-preview-section="flights"]')).toBeNull();
@@ -551,7 +551,7 @@ describe('Pinned preview tab navigation', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const scroller = frameScroller(doc);
@@ -566,10 +566,10 @@ describe('Pinned preview tab navigation', () => {
     ).toBeInTheDocument();
 
     // Closing and reopening from another tab targets that tab's section.
-    await userEvent.click(screen.getByRole('button', { name: 'Close Live Preview' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
     expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
     await userEvent.click(await screen.findByRole('button', { name: 'FAQs' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open Live Preview' }));
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const reopened = await pinnedReady();
     expect(reopened.querySelector('[data-preview-section="faqs"]')).not.toBeNull();
@@ -792,7 +792,7 @@ describe('Destination expert preview parity', () => {
     );
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     expect(doc.querySelector('[data-preview-section="destinationExpert"]')).not.toBeNull();
@@ -814,7 +814,7 @@ describe('Live preview in the builder', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     // Available before visiting any tab.
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const body = doc.body as HTMLElement;
@@ -855,7 +855,7 @@ describe('Live preview in the builder', () => {
     const flightArticle = within(screen.getByRole('article', { name: 'Flight 1' }));
     expect(flightArticle.getAllByLabelText(/^From/)[0]).toHaveValue('Mumbai');
     // The pinned phone shows the edited route with no save.
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     expect(
       within(doc.body as HTMLElement).getByText('Mumbai → Goa'),
@@ -872,7 +872,7 @@ describe('Live preview in the builder', () => {
     await screen.findByRole('heading', { name: 'Quotation builder' });
     // Edit the hotel name on the Hotel tab while the preview stays open.
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const body = doc.body as HTMLElement;
@@ -897,7 +897,7 @@ describe('Live preview in the builder', () => {
     const original = titleInput.value;
     expect(original).not.toBe('');
     expect(original).not.toBe('Flight Data');
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     const frame = screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement;
     const phoneNav = () =>
@@ -932,9 +932,9 @@ describe('Live preview in the builder', () => {
     expect(screen.queryByRole('button', { name: 'Preview Full Quotation' })).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     // The single remaining preview still opens and closes.
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Close Live Preview' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
     expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
   });
 
@@ -943,12 +943,12 @@ describe('Live preview in the builder', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Close Live Preview' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
     expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
     // The version being edited (v1) is what the preview showed.
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open Live Preview' }));
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     expect(
@@ -999,7 +999,7 @@ describe('Preview presentations (master-sourced data)', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     const body = doc.body as HTMLElement;
     // Star rating from the master (not hardcoded, not from the row).
@@ -1033,7 +1033,7 @@ describe('Preview presentations (master-sourced data)', () => {
     );
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     const body = doc.body as HTMLElement;
     expect(within(body).getByLabelText('5 star hotel')).toBeInTheDocument();
@@ -1056,7 +1056,7 @@ describe('Preview presentations (master-sourced data)', () => {
     );
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const hero = doc.querySelector('img[data-testid="public-hero-image"]') as HTMLImageElement | null;
@@ -1075,7 +1075,7 @@ describe('Preview presentations (master-sourced data)', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     const itinerary = doc.querySelector('[data-preview-section="itinerary"]') as HTMLElement;
     const img = within(itinerary).getByAltText('Beach evening') as HTMLImageElement;
@@ -1096,7 +1096,7 @@ describe('Persistent live weblink preview', () => {
   });
 
   const enablePinned = async () => {
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     return screen.getByTestId('pinned-preview-frame');
   };
 
@@ -1177,35 +1177,34 @@ describe('Persistent live weblink preview', () => {
     const nameInput = await screen.findByLabelText('Hotel section title');
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, 'Updated Stays');
-    await userEvent.click(screen.getByRole('button', { name: 'Close Live Preview' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
     expect(screen.queryByTestId('pinned-preview-frame')).not.toBeInTheDocument();
     expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
     // The normal full-width editor is back with values intact.
     expect(screen.getByRole('heading', { name: 'Quotation builder' })).toBeInTheDocument();
     expect(screen.getByLabelText('Hotel section title')).toHaveValue('Updated Stays');
     // Re-enabling shows the edited value in the preview again.
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open Live Preview' }));
     const reopened = await pinnedReady();
     expect(
       await within(reopened.body as HTMLElement).findByRole('heading', { name: 'Updated Stays' }),
     ).toBeInTheDocument();
   });
 
-  it('offers an Editor/Preview switch on narrow screens', async () => {
+  it('offers no redundant Editor/Preview switch — single open/close state', async () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
+    // Preview is open by default; no separate pane switch exists.
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Builder view' })).not.toBeInTheDocument();
-    await enablePinned();
-    const group = screen.getByRole('group', { name: 'Builder view' });
-    const previewButton = within(group).getByRole('button', { name: 'Preview' });
-    const editorButton = within(group).getByRole('button', { name: 'Editor' });
-    expect(editorButton).toHaveAttribute('aria-pressed', 'true');
-    await userEvent.click(previewButton);
-    expect(previewButton).toHaveAttribute('aria-pressed', 'true');
-    expect(editorButton).toHaveAttribute('aria-pressed', 'false');
-    await userEvent.click(editorButton);
-    expect(editorButton).toHaveAttribute('aria-pressed', 'true');
+    // Closing hides the panel completely via the single state.
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
+    expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Builder view' })).not.toBeInTheDocument();
+    // Reopening restores the preview.
+    await userEvent.click(screen.getByRole('button', { name: 'Open Live Preview' }));
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
   });
 });
 
@@ -1242,12 +1241,13 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
 
-    // Realistic, restrained device frame with an unobtrusive label.
+    // Realistic, restrained device frame with no redundant caption.
     const frame = screen.getByTestId('mobile-phone-frame');
-    expect(within(frame).getByText('Mobile preview')).toBeInTheDocument();
+    expect(within(frame).queryByText('Mobile preview')).not.toBeInTheDocument();
+    expect(within(frame).queryByText(/MOBILE PREVIEW/i)).not.toBeInTheDocument();
     const iframe = screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement;
     expect(iframe.tagName).toBe('IFRAME');
     // Fixed internal layout viewport — never the panel width.
@@ -1285,9 +1285,10 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const frame = screen.getByTestId('mobile-phone-frame');
-    expect(within(frame).getByText('Mobile preview')).toBeInTheDocument();
+    expect(within(frame).queryByText('Mobile preview')).not.toBeInTheDocument();
+    expect(within(frame).queryByText(/MOBILE PREVIEW/i)).not.toBeInTheDocument();
     const iframe = screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement;
     expect(iframe.style.width).toBe(`${MOBILE_PREVIEW_WIDTH}px`);
     expect(iframe.style.height).toBe(`${MOBILE_PREVIEW_HEIGHT}px`);
@@ -1307,7 +1308,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     // SectionNav collects from its own (frame) document, so the mobile
@@ -1332,7 +1333,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(withCruise()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const root = doc.getElementById('mobile-preview-root');
@@ -1361,7 +1362,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     await pinnedReady();
     const body = screen.getByTestId('mobile-phone-body');
@@ -1378,7 +1379,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     await pinnedReady();
     const fit = screen.getByTestId('mobile-phone-fit');
@@ -1408,7 +1409,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     // Scrollbar chrome is removed inside the phone screen only.
@@ -1431,7 +1432,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const fit = screen.getByTestId('mobile-phone-fit');
@@ -1470,7 +1471,7 @@ describe('Mobile phone preview viewport', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     expect(doc.getElementById('mobile-preview-scrollbar')?.textContent).toContain(
       'scrollbar-width:none',
@@ -1498,7 +1499,7 @@ describe('Mobile phone preview viewport', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     const body = doc.body as HTMLElement;
 
@@ -1569,7 +1570,7 @@ describe('Custom Name live sync (stale-preview regression)', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
     const frame = screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement;
     frameScroller(doc).scrollTop = 200;
@@ -1613,7 +1614,7 @@ describe('Custom Name live sync (stale-preview regression)', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     await pinnedReady();
 
     const input = (await screen.findByLabelText('Day 1 activity 1 name')) as HTMLInputElement;
@@ -1649,7 +1650,7 @@ describe('Custom Name live sync (stale-preview regression)', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     const doc = await pinnedReady();
 
     const input = await screen.findByLabelText('Day 1 activity 1 name');
@@ -1682,7 +1683,7 @@ describe('Custom Name live sync (stale-preview regression)', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Keep Live Preview Open' }));
+    // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     const frame = screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement;
@@ -1707,5 +1708,581 @@ describe('Custom Name live sync (stale-preview regression)', () => {
     expect(pinnedDoc()).toBe(doc);
     expect(screen.getByTestId('pinned-preview-frame')).toBe(frame);
     expectNoPreviewRequests(fetchMock);
+  });
+});
+
+describe('Live preview UI improvements (default-open, labels, open/close)', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  it('does not render the subtitle or the mobile caption', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
+    expect(screen.queryByText('Updates automatically as you edit.')).not.toBeInTheDocument();
+    const frame = screen.getByTestId('mobile-phone-frame');
+    expect(within(frame).queryByText('Mobile preview')).not.toBeInTheDocument();
+    expect(within(frame).queryByText(/MOBILE PREVIEW/i)).not.toBeInTheDocument();
+    // Heading and close control remain.
+    expect(screen.getByText('Live Weblink Preview')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close live preview' })).toBeInTheDocument();
+  });
+
+  it('is open by default with live content on initial load', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close Live Preview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close live preview' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Live Preview' })).not.toBeInTheDocument();
+    const doc = await pinnedReady();
+    expect(
+      within(doc.body as HTMLElement).getByText('Custom Package for Aarav Mehta'),
+    ).toBeInTheDocument();
+  });
+
+  it('X close genuinely closes the panel and returns to the editor', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
+    expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pinned-preview-frame')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Builder view' })).not.toBeInTheDocument();
+    // Editor is back with an obvious reopen action.
+    expect(screen.getByRole('heading', { name: 'Quotation builder' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Live Preview' })).toBeInTheDocument();
+  });
+
+  it('reopens with latest unsaved edits and preserves form values', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    const nameInput = await screen.findByLabelText('Hotel section title');
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'Updated Stays');
+    expect(
+      await within(pinnedDoc().body as HTMLElement).findByRole('heading', { name: 'Updated Stays' }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
+    expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
+    // Form values intact while closed.
+    expect(screen.getByLabelText('Hotel section title')).toHaveValue('Updated Stays');
+    await userEvent.click(screen.getByRole('button', { name: 'Open Live Preview' }));
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
+    const reopened = await pinnedReady();
+    expect(
+      await within(reopened.body as HTMLElement).findByRole('heading', { name: 'Updated Stays' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Hotel section title')).toHaveValue('Updated Stays');
+  });
+
+  it('keeps the desktop split-view classes and expands the editor when closed', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const panel = screen.getByTestId('live-preview-panel');
+    // Narrow preview hugging the phone (417px body + 16px grey per side +
+    // 1px border per side) instead of a 43% share; editor takes the rest.
+    expect(panel.className).toMatch(/lg:w-\[451px\]/);
+    expect(panel.className).not.toMatch(/lg:w-\[43%\]/);
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
+    expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Quotation builder' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Open Live Preview' }));
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
+  });
+
+  it('has no header Close button — X is the single close control', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    // Redundant header CTA is gone in both states; Open appears only when closed.
+    expect(screen.queryByRole('button', { name: 'Close Live Preview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close live preview' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Save quotation' }).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Close live preview' }));
+    expect(screen.queryByRole('button', { name: 'Close Live Preview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Live Preview' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Save quotation' }).length).toBeGreaterThan(0);
+  });
+
+  it('keeps ~16px grey per side with an unstretched phone', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await pinnedReady();
+    // Grey area supplies 16px horizontal padding per side (px-4).
+    const frame = screen.getByTestId('mobile-phone-frame');
+    expect(frame.className).toMatch(/px-4/);
+    // Phone keeps its exact device geometry and scales uniformly (never stretched).
+    const body = screen.getByTestId('mobile-phone-body');
+    expect(body.style.width).toBe(`${PHONE_BODY_WIDTH}px`);
+    expect(body.style.aspectRatio).toBe(PHONE_BODY_ASPECT_RATIO);
+    expect(body.style.transform).toMatch(/^scale\(/);
+    const phoneScreen = screen.getByTestId('mobile-phone-screen');
+    expect(phoneScreen.style.aspectRatio).toBe(PHONE_SCREEN_ASPECT_RATIO);
+    expect(phoneScreen.style.width).toBe(`${MOBILE_PREVIEW_WIDTH}px`);
+    expect(phoneScreen.style.height).toBe(`${MOBILE_PREVIEW_HEIGHT}px`);
+    const iframe = screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement;
+    expect(iframe.style.width).toBe(`${MOBILE_PREVIEW_WIDTH}px`);
+    expect(iframe.style.height).toBe(`${MOBILE_PREVIEW_HEIGHT}px`);
+  });
+
+  it('Escape closes the preview to the same consistent closed state', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('live-preview-panel')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Live Preview' })).toBeInTheDocument();
+  });
+});
+
+describe('scrollPreviewToTarget helper', () => {
+  const rect = (top: number) =>
+    ({ top, left: 0, bottom: top, right: 0, width: 0, height: 0, x: 0, y: 0 }) as DOMRect;
+
+  const rig = () => {
+    const container = document.createElement('div');
+    container.getBoundingClientRect = () => rect(100);
+    const section = document.createElement('div');
+    section.setAttribute('data-preview-section', 'hotels');
+    section.getBoundingClientRect = () => rect(500);
+    const item = document.createElement('div');
+    item.setAttribute('data-preview-item', 'hotel:1');
+    item.getBoundingClientRect = () => rect(700);
+    container.append(section, item);
+    document.body.appendChild(container);
+    return { container, section, item };
+  };
+
+  it('builds a stable key that ignores keystrokes (section + items only)', () => {
+    expect(previewTargetKey({ section: 'hotels', items: ['hotel:1'] })).toBe('hotels\nhotel:1');
+    expect(previewTargetKey({ section: 'hotels', items: [] })).toBe('hotels\n');
+    expect(previewTargetKey(null)).toBe('');
+    expect(previewTargetKey(undefined)).toBe('');
+  });
+
+  it('prefers the item over the section and the first matching candidate', () => {
+    const { container } = rig();
+    try {
+      // 700 (item) - 100 (container) - 16.
+      scrollPreviewToTarget(container, { section: 'hotels', items: ['hotel:1'] });
+      expect(container.scrollTop).toBe(584);
+      // First matching candidate wins.
+      container.scrollTop = 0;
+      scrollPreviewToTarget(container, { section: 'hotels', items: ['hotel:9', 'hotel:1'] });
+      expect(container.scrollTop).toBe(584);
+    } finally {
+      container.remove();
+    }
+  });
+
+  it('falls back to the section, then the top', () => {
+    const { container } = rig();
+    try {
+      // Missing item → section anchor: 500 - 100 - 16.
+      scrollPreviewToTarget(container, { section: 'hotels', items: ['hotel:9'] });
+      expect(container.scrollTop).toBe(384);
+      // Missing everything → top.
+      container.scrollTop = 123;
+      scrollPreviewToTarget(container, { section: 'nope', items: ['missing'] });
+      expect(container.scrollTop).toBe(0);
+      container.scrollTop = 123;
+      scrollPreviewToTarget(container, null);
+      expect(container.scrollTop).toBe(0);
+      expect(() => scrollPreviewToTarget(null, { section: 'hotels', items: [] })).not.toThrow();
+    } finally {
+      container.remove();
+    }
+  });
+
+  it('matches scrollPreviewToSection for section-only targets', () => {
+    const { container } = rig();
+    try {
+      scrollPreviewToSection(container, 'hotels');
+      const viaSection = container.scrollTop;
+      container.scrollTop = 0;
+      scrollPreviewToTarget(container, { section: 'hotels', items: [] });
+      expect(container.scrollTop).toBe(viaSection);
+    } finally {
+      container.remove();
+    }
+  });
+});
+
+describe('Preview item-level navigation', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  const sevenDays = () =>
+    Array.from({ length: 7 }, (_, i) => ({
+      dayNumber: i + 1,
+      title: `Day ${i + 1} plan`,
+      city: 'Calangute',
+      date: null,
+      meals: { breakfast: false, lunch: false, dinner: false },
+      mealMode: 'NO_TRANSFER',
+      dailyTransfer: 'NO_TRANSFER',
+      activities: [{ name: `Activity ${i + 1}`, description: `Details ${i + 1}.` }],
+    }));
+
+  const hotelNamed = (name: string, sequence: number) => ({
+    id: `hotel-${sequence}`,
+    city: 'Calangute',
+    hotelName: name,
+    category: '4 Star',
+    roomType: 'Deluxe Room',
+    mealPlan: 'Breakfast',
+    rooms: 1,
+    nights: 4,
+    checkInDate: '2026-09-10T00:00:00.000Z',
+    checkOutDate: '2026-09-14T00:00:00.000Z',
+    checkInTime: null,
+    checkOutTime: null,
+    internalCost: '0',
+    sellingPrice: '20000',
+    selected: true,
+    sequence,
+    images: [],
+  });
+
+  /**
+   * Make the frame's scroller observable and give every anchor a position
+   * derived from live DOM order (reorder-safe): sections at 100, items from
+   * 300 in steps of 100. Item stubs evaluate order at call time, so moved
+   * DOM nodes report their new position without re-stubbing. Returns scroll
+   * readers plus an expected-top helper computed from the element itself, so
+   * assertions never depend on a fixed section order or hardcoded day numbers.
+   */
+  const stubPositions = (doc: Document) => {
+    const scroller = frameScroller(doc) as HTMLElement;
+    let saved = 0;
+    Object.defineProperty(scroller, 'scrollTop', {
+      get: () => saved,
+      set: (value: number) => {
+        saved = value;
+      },
+      configurable: true,
+    });
+    const rect = (top: number) =>
+      ({ top, left: 0, bottom: top, right: 0, width: 0, height: 0, x: 0, y: 0 }) as DOMRect;
+    const restub = () => {
+      saved = 0;
+      doc
+        .querySelectorAll<HTMLElement>('[data-preview-section]')
+        .forEach((el) => {
+          el.getBoundingClientRect = () => rect(100);
+        });
+      doc.querySelectorAll<HTMLElement>('[data-preview-item]').forEach((el) => {
+        // Live order lookup: correct even after React moves DOM nodes.
+        el.getBoundingClientRect = () =>
+          rect(300 + Array.from(doc.querySelectorAll('[data-preview-item]')).indexOf(el) * 100);
+      });
+    };
+    restub();
+    const topOf = (selector: string) => {
+      const items = Array.from(doc.querySelectorAll<HTMLElement>('[data-preview-item]'));
+      const el = doc.querySelector<HTMLElement>(selector);
+      if (!el) throw new Error(`missing anchor ${selector}`);
+      return 300 + items.indexOf(el) * 100 - 16;
+    };
+    return { readScroll: () => saved, restub, topOf };
+  };
+
+  it('stamps every itinerary day with its source index', async () => {
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(detail({ sightseeingDetails: { ...flightVersion().sightseeingDetails, days: sevenDays() } })),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const days = Array.from(doc.querySelectorAll('[data-preview-item^="day:"]'));
+    expect(days).toHaveLength(7);
+    expect(days.map((el) => el.getAttribute('data-preview-item'))).toEqual([
+      'day:0',
+      'day:1',
+      'day:2',
+      'day:3',
+      'day:4',
+      'day:5',
+      'day:6',
+    ]);
+  });
+
+  it('selecting Day 6 navigates to Day 6, then Day 3 follows', async () => {
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(detail({ sightseeingDetails: { ...flightVersion().sightseeingDetails, days: sevenDays() } })),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    // Opening the tab navigates to the itinerary at the current day (Day 1).
+    await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:0"]')));
+    // Day 6 (not Day 1) becomes visible.
+    pos.restub();
+    await userEvent.click(await screen.findByRole('button', { name: 'Select sightseeing day 6' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:5"]')));
+    expect(pos.readScroll()).not.toBe(pos.topOf('[data-preview-item="day:0"]'));
+    expect(
+      doc.querySelector('[data-preview-item="day:5"]')?.textContent ?? '',
+    ).toContain('Activity 6');
+    // Switching days updates the target.
+    pos.restub();
+    await userEvent.click(await screen.findByRole('button', { name: 'Select sightseeing day 3' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:2"]')));
+    expect(
+      doc.querySelector('[data-preview-item="day:2"]')?.textContent ?? '',
+    ).toContain('Activity 3');
+  });
+
+  it('editing Day 6 keeps the preview on Day 6 without resetting scroll', async () => {
+    const fetchMock = builderFetch(
+      detail({ sightseeingDetails: { ...flightVersion().sightseeingDetails, days: sevenDays() } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:0"]')));
+    pos.restub();
+    await userEvent.click(await screen.findByRole('button', { name: 'Select sightseeing day 6' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:5"]')));
+    const frame = screen.getByTestId('pinned-preview-frame');
+    // Typing into Day 6 updates its preview in place: no jump to Day 1,
+    // no scroll reset, no remount, no save.
+    const scroller = frameScroller(pinnedDoc()) as HTMLElement;
+    (scroller as unknown as { scrollTop: number }).scrollTop = 200;
+    const input = (await screen.findByLabelText('Day 6 activity 1 name')) as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Sunset catamaran cruise');
+    expect(frameScroller(pinnedDoc()).scrollTop).toBe(200);
+    expect(
+      within(pinnedDoc().body as HTMLElement).getByRole('heading', {
+        name: 'DAY 6 | Sunset catamaran cruise',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('pinned-preview-frame')).toBe(frame);
+    expect(pinnedDoc()).toBe(doc);
+    expect(
+      fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH' || options?.method === 'POST'),
+    ).toBe(false);
+  });
+
+  it('reordering days keeps the target on the moved day', async () => {
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(detail({ sightseeingDetails: { ...flightVersion().sightseeingDetails, days: sevenDays() } })),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
+    pos.restub();
+    await userEvent.click(await screen.findByRole('button', { name: 'Select sightseeing day 3' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:2"]')));
+    // Move the selected day up: selection follows it to position 2.
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Move Day 3 up' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="day:1"]')));
+    // The targeted card is the moved day's content (Activity 3), not Day 1's.
+    expect(doc.querySelector('[data-preview-item="day:1"]')?.textContent ?? '').toContain(
+      'Activity 3',
+    );
+  });
+
+  it('expanding a hotel navigates to that exact card (duplicate names safe)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(
+        detail({
+          hotels: [hotelNamed('Hotel Alpha', 1), hotelNamed('Twin Hotel', 2), hotelNamed('Twin Hotel', 3)],
+        }),
+      ),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    expect(doc.querySelectorAll('[data-preview-item^="hotel:"]')).toHaveLength(3);
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    // Expand the second "Twin Hotel" (stay 3): the third card — not the first Twin.
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 3' }));
+    const cards = Array.from(doc.querySelectorAll('[data-preview-item^="hotel:"]'));
+    expect(cards.map((el) => el.getAttribute('data-preview-item'))).toEqual([
+      'hotel:0',
+      'hotel:1',
+      'hotel:2',
+    ]);
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="hotel:2"]')));
+    expect(pos.readScroll()).not.toBe(pos.topOf('[data-preview-item="hotel:1"]'));
+    // And stay 1 targets the first card.
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="hotel:0"]')));
+  });
+
+  it('hotel typing never re-scrolls; removing the active stay falls back to the section', async () => {
+    const fetchMock = builderFetch(detail());
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="hotel:0"]')));
+    // Typing the section title keeps the scroll position (same target).
+    const scroller = frameScroller(pinnedDoc()) as HTMLElement;
+    (scroller as unknown as { scrollTop: number }).scrollTop = 200;
+    await userEvent.clear(await screen.findByLabelText('Hotel section title'));
+    await userEvent.type(await screen.findByLabelText('Hotel section title'), 'Updated Stays');
+    expect(frameScroller(pinnedDoc()).scrollTop).toBe(200);
+    expect(
+      fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH' || options?.method === 'POST'),
+    ).toBe(false);
+  });
+
+  it('reordering hotels keeps the target on the moved stay', async () => {
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(
+        detail({ hotels: [hotelNamed('Hotel Alpha', 1), hotelNamed('Twin Hotel', 2)] }),
+      ),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 2' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="hotel:1"]')));
+    // Move stay 2 up: the same (expanded) row is now first.
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Move hotel stay 2 up' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="hotel:0"]')));
+    expect(doc.querySelector('[data-preview-item="hotel:0"]')?.textContent ?? '').toContain(
+      'Twin Hotel',
+    );
+  });
+
+  it('expanding a flight navigates to its journey legs', async () => {
+    const secondFlight = {
+      bookmarkCode: null,
+      journeyType: 'ONEWAY_OUTBOUND',
+      outbound: {
+        fromCity: 'Delhi',
+        toCity: 'Jaipur',
+        segments: [segment({ airlineName: 'IndiGo', flightNumber: '6E11', from: 'DEL', to: 'JAI' })],
+      },
+      returnJourney: { fromCity: null, toCity: null, segments: [] },
+    };
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(
+        detail({
+          flightDetails: { ...flightVersion().flightDetails, flights: [...flightVersion().flightDetails.flights, secondFlight] },
+        }),
+      ),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    expect(doc.querySelector('[data-preview-item="flight:flight-1-outbound"]')).not.toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: /^Flight/ }));
+    // Cards start expanded with no active flight: section-level only.
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse flight 2' }));
+    expect(pos.readScroll()).toBe(0);
+    // Expanding flight 2 targets its outbound leg (not flight 1).
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand flight 2' }));
+    await vi.waitFor(() =>
+      expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="flight:flight-1-outbound"]')),
+    );
+    expect(pos.readScroll()).not.toBe(pos.topOf('[data-preview-item="flight:flight-0-outbound"]'));
+  });
+
+  it('removed active hotel falls back to the hotels section', async () => {
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(
+        detail({ hotels: [hotelNamed('Hotel Alpha', 1), hotelNamed('Hotel Bravo', 2)] }),
+      ),
+    );
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    pos.restub();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(pos.topOf('[data-preview-item="hotel:0"]')));
+    // Removing the followed stay releases the item target; the hotels
+    // section (still rendered for the remaining stay) is the fallback.
+    const stayOne = screen
+      .getByRole('button', { name: 'Collapse hotel stay 1' })
+      .closest('article') as HTMLElement;
+    pos.restub();
+    await userEvent.click(within(stayOne).getByRole('button', { name: 'Remove' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(84));
+    expect(screen.getByTestId('pinned-preview-frame')).toBeInTheDocument();
+  });
+
+  it('missing section falls back to the top', async () => {
+    // No FAQs saved: the FAQs tab has no public section to show.
+    vi.stubGlobal('fetch', builderFetch(detail({ faqs: [] })));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    expect(doc.querySelector('[data-preview-section="faqs"]')).toBeNull();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'FAQs' }));
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(0));
+    expect(screen.getByTestId('pinned-preview-frame')).toBeInTheDocument();
+  });
+
+  it('iframe stays mounted across item navigation with no saves', async () => {
+    const fetchMock = builderFetch(
+      detail({ sightseeingDetails: { ...flightVersion().sightseeingDetails, days: sevenDays() } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await pinnedReady();
+    const frame = screen.getByTestId('pinned-preview-frame');
+    const doc = pinnedDoc();
+    await userEvent.click(await screen.findByRole('button', { name: 'Sightseeing' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Select sightseeing day 6' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Select sightseeing day 2' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    expect(screen.getByTestId('pinned-preview-frame')).toBe(frame);
+    expect(pinnedDoc()).toBe(doc);
+    expect(
+      fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH' || options?.method === 'POST'),
+    ).toBe(false);
   });
 });

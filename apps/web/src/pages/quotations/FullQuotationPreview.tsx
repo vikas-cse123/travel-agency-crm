@@ -34,10 +34,64 @@ export function scrollPreviewToSection(
   container: HTMLElement | null,
   sectionId: string | null,
 ): void {
+  scrollPreviewToTarget(container, { section: sectionId, items: [] });
+}
+
+/**
+ * Item-level preview target: the public section plus ordered item candidates
+ * within it. Item values match `data-preview-item` attributes stamped on the
+ * public quotation elements (never user-visible):
+ * - `day:<n>` — sightseeing day at form position n (days have no stable ids;
+ *   the public itinerary renders the same array order, so positions map
+ *   exactly across reorder/add/remove; invalid days are skipped by matching
+ *   the stamped source index, not the rendered position).
+ * - `hotel:<n>` — hotel stay at form position n (form values carry no stable
+ *   row ids; same-order arrays on both sides keep positions exact).
+ * - `flight:<leg key>` — flight journey leg (`flight-<record>-outbound` /
+ *   `-return`), stable per record position like the others.
+ *
+ * Sections without a per-item selection affordance in the builder (cruise,
+ * vehicle, add-ons, FAQs, inclusions) use an empty item list: section-level
+ * navigation only.
+ */
+export interface PreviewTarget {
+  section: string | null;
+  items: string[];
+}
+
+/** Stable string key for a target: effect deps on this never fire on keystrokes. */
+export function previewTargetKey(target: PreviewTarget | null | undefined): string {
+  if (!target) return '';
+  return `${target.section ?? ''}\n${(target.items ?? []).join(',')}`;
+}
+
+/**
+ * Position a scroll container at a preview target once: the first matching
+ * item candidate wins, else the section anchor, else the top (existing
+ * fallback behavior). Scrolls only the given container (never the page or
+ * window); a small offset keeps the heading clear of the container top.
+ * Pure DOM helper, exported for focused tests. See `scrollPreviewToSection`
+ * for the root-scroller math notes (shared below).
+ */
+export function scrollPreviewToTarget(
+  container: HTMLElement | null,
+  target: PreviewTarget | null | undefined,
+): void {
   if (!container) return;
-  const anchor = sectionId
-    ? container.querySelector<HTMLElement>(`[data-preview-section="${sectionId}"]`)
-    : null;
+  // NOTE: lookup runs through the container itself, which lives inside the
+  // preview iframe's document when portalled — never the parent application
+  // document. Item values are builder-generated (`day:<n>` etc.).
+  const items = target?.items ?? [];
+  let anchor: HTMLElement | null = null;
+  for (const item of items) {
+    if (!item) continue;
+    anchor = container.querySelector<HTMLElement>(`[data-preview-item="${item}"]`);
+    if (anchor) break;
+  }
+  if (!anchor && target?.section) {
+    anchor =
+      container.querySelector<HTMLElement>(`[data-preview-section="${target.section}"]`);
+  }
   if (!anchor) {
     container.scrollTop = 0;
     return;
@@ -229,6 +283,7 @@ function usePhoneFitScale() {
 export function MobilePhonePreview({
   data,
   activeSection,
+  activeItems,
   frameTestId,
 }: {
   data: PublicQuotation;
@@ -238,19 +293,33 @@ export function MobilePhonePreview({
    * (used for builder tabs with no corresponding public section).
    */
   activeSection?: string | null;
+  /**
+   * Item candidates within the section (`data-preview-item` values, tried in
+   * order before falling back to the section). Navigates whenever the
+   * section/item combination changes; live edits that keep the same target
+   * never move it, so typing cannot reset the reader's scroll position.
+   */
+  activeItems?: string[] | null;
   /** Test id for the iframe element itself. */
   frameTestId: string;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const mountNode = usePreviewFrameDocument(iframeRef);
   const { areaRef, scale, measured } = usePhoneFitScale();
+  // String key: the effect below must fire only when the intended target
+  // changes — never on keystrokes (which re-render with new form objects but
+  // an identical section/item combination).
+  const targetKey = `${activeSection ?? ''}\n${(activeItems ?? []).join(',')}`;
 
-  // Navigate inside the phone viewport when the requested section changes.
-  // Scrolls only the frame (never the builder page or window); a missing or
-  // not-yet-rendered section retries briefly, then falls back to the top.
-  // The iframe element itself is never recreated and form data is untouched.
+  // Navigate inside the phone viewport when the requested target changes.
+  // One coordinated lookup (first matching item, else section, else top) and
+  // a single scroll: no section-then-item double jump. Scrolls only the frame
+  // (never the builder page or window); a missing or not-yet-rendered target
+  // retries briefly, then falls back gracefully. The iframe element itself is
+  // never recreated and form data is untouched.
   useEffect(() => {
-    if (!mountNode || activeSection == null) return;
+    if (!mountNode || (activeSection == null && !(activeItems ?? []).length)) return;
+    const target: PreviewTarget = { section: activeSection ?? null, items: activeItems ?? [] };
     let cancelled = false;
     let attempts = 0;
     const timers: Array<ReturnType<typeof setTimeout>> = [];
@@ -261,14 +330,19 @@ export function MobilePhonePreview({
         | HTMLElement
         | null;
       if (!scroller) return false;
-      const anchor =
-        doc?.querySelector<HTMLElement>(`[data-preview-section="${activeSection}"]`) ?? null;
-      if (!anchor && attempts < 5) {
+      const hasTarget =
+        (target.items ?? []).some(
+          (item) => item && !!doc?.querySelector<HTMLElement>(`[data-preview-item="${item}"]`),
+        ) ||
+        (target.section
+          ? !!doc?.querySelector<HTMLElement>(`[data-preview-section="${target.section}"]`)
+          : false);
+      if (!hasTarget && attempts < 5) {
         attempts += 1;
         timers.push(setTimeout(tryScroll, 120));
         return false;
       }
-      scrollPreviewToSection(scroller, activeSection);
+      scrollPreviewToTarget(scroller, target);
       return true;
     };
     tryScroll();
@@ -276,16 +350,14 @@ export function MobilePhonePreview({
       cancelled = true;
       timers.forEach((timer) => clearTimeout(timer));
     };
-  }, [mountNode, activeSection]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mountNode, targetKey]);
 
   return (
     <div
       data-testid="mobile-phone-frame"
-      className="flex min-h-0 w-full flex-1 flex-col items-center gap-2 overflow-hidden bg-slate-200 px-4 py-4"
+      className="flex min-h-0 w-full flex-1 flex-col items-center overflow-hidden bg-slate-200 px-4 py-4"
     >
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-        Mobile preview
-      </p>
       <div
         ref={areaRef}
         className="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden"
@@ -567,13 +639,15 @@ export function buildFullPreviewData(input: {
   const profile = settings?.profile;
   const branding = settings?.branding;
   const tax = settings?.tax;
-  const query = quotation.query as Quotation['query'] & {
+  const query = ((quotation as { query?: unknown }).query ?? {}) as Quotation['query'] & {
     itinerary?: Array<{
       country: string;
       destination: string;
       nights: number;
     }> | null;
   };
+  const quotationSummary =
+    (quotation as { destinationSummary?: string | null }).destinationSummary ?? '';
   const extra = quotation as Quotation & {
     childrenWithBedAges?: number[] | null;
     childrenWithoutBedAges?: number[] | null;
@@ -610,22 +684,22 @@ export function buildFullPreviewData(input: {
       logoUrl: branding?.logoUrl ?? null,
     },
     quotation: {
-      quotationNumber: quotation.quotationNumber,
-      customerName: quotation.customerName,
-      destinationSummary: quotation.destinationSummary,
-      destinations: previewDestinations(query.itinerary, quotation.destinationSummary),
-      durationNights: previewDurationNights(query.itinerary),
-      travelStartDate: quotation.travelStartDate,
-      travelEndDate: quotation.travelEndDate,
-      adults: quotation.adults,
-      childrenWithBed: quotation.childrenWithBed,
-      childrenWithoutBed: quotation.childrenWithoutBed,
-      infants: quotation.infants,
-      rooms: quotation.rooms,
+      quotationNumber: (quotation as { quotationNumber?: string }).quotationNumber ?? '',
+      customerName: (quotation as { customerName?: string }).customerName ?? '',
+      destinationSummary: quotationSummary,
+      destinations: previewDestinations(query?.itinerary ?? null, quotationSummary),
+      durationNights: previewDurationNights(query?.itinerary ?? null),
+      travelStartDate: (quotation as { travelStartDate?: string | null }).travelStartDate ?? null,
+      travelEndDate: (quotation as { travelEndDate?: string | null }).travelEndDate ?? null,
+      adults: (quotation as { adults?: number }).adults ?? 0,
+      childrenWithBed: (quotation as { childrenWithBed?: number }).childrenWithBed ?? 0,
+      childrenWithoutBed: (quotation as { childrenWithoutBed?: number }).childrenWithoutBed ?? 0,
+      infants: (quotation as { infants?: number }).infants ?? 0,
+      rooms: (quotation as { rooms?: number }).rooms ?? 0,
       childrenWithBedAges: extra.childrenWithBedAges ?? null,
       childrenWithoutBedAges: extra.childrenWithoutBedAges ?? null,
       infantAges: extra.infantAges ?? null,
-      createdAt: quotation.createdAt,
+      createdAt: (quotation as { createdAt?: string }).createdAt ?? new Date(0).toISOString(),
     },
     // Live form values win over the saved row everywhere the builder edits;
     // identity, lifecycle, and attribution stay with the saved version.
@@ -684,7 +758,7 @@ function useFullPreviewData(input: {
     expertUsers,
   } = input;
   const live = useWatch({ control }) as unknown as QuotationVersionInput;
-  const query = quotation.query as Quotation['query'] & {
+  const query = ((quotation as { query?: unknown }).query ?? {}) as Quotation['query'] & {
     itinerary?: Array<{
       country?: string | null;
       destination?: string | null;
@@ -694,8 +768,8 @@ function useFullPreviewData(input: {
   const presentations = usePreviewPresentations(
     live,
     masters,
-    quotation.destinationSummary,
-    query.itinerary,
+    (quotation as { destinationSummary?: string | null }).destinationSummary ?? null,
+    query?.itinerary ?? null,
   );
   return useMemo(() => {
     // React Hook Form updates nested field objects/arrays in place, so the
@@ -751,6 +825,7 @@ export function PinnedLiveQuotationPreview({
   sightseeingPreviewUrls,
   expertUsers,
   activeSection,
+  activeItems,
 }: {
   quotation: Quotation;
   savedVersion: QuotationVersion;
@@ -769,6 +844,13 @@ export function PinnedLiveQuotationPreview({
    * the builder's active sub-tab); null leaves the scroll position alone.
    */
   activeSection?: string | null;
+  /**
+   * Item candidates within the section (`data-preview-item` values). The
+   * phone navigates to the first match whenever the section/item combination
+   * changes; unchanged targets never re-scroll, so typing cannot disturb the
+   * reader's scroll position.
+   */
+  activeItems?: string[] | null;
 }) {
   const data = useFullPreviewData({
     quotation,
@@ -794,7 +876,6 @@ export function PinnedLiveQuotationPreview({
       <div className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">Live Weblink Preview</p>
-          <p className="text-xs text-slate-500">Updates automatically as you edit.</p>
         </div>
         <button
           type="button"
@@ -809,6 +890,7 @@ export function PinnedLiveQuotationPreview({
         <MobilePhonePreview
           data={data}
           activeSection={activeSection ?? null}
+          activeItems={activeItems ?? null}
           frameTestId="pinned-preview-frame"
         />
       </div>

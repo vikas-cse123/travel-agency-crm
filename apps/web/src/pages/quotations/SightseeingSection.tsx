@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useFieldArray, useWatch, type FieldPath, type UseFormReturn } from 'react-hook-form';
 import {
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   Image as ImageIcon,
   Plus,
   Trash2,
@@ -604,8 +606,6 @@ function DayCard({
   destinationLabel,
   attractionsStatus,
   pax,
-  onInsertBefore,
-  onInsertAfter,
   onRemove,
   onDocumentPreviewUrl,
 }: {
@@ -619,8 +619,6 @@ function DayCard({
   destinationLabel: string;
   attractionsStatus: { loading: boolean; error: boolean };
   pax: { adults: number; childrenWithBed: number; childrenWithoutBed: number; infants: number };
-  onInsertBefore?: (() => void) | undefined;
-  onInsertAfter: () => void;
   onRemove: () => void;
   /** Receives freshly uploaded activity-image URLs (for the live preview). */
   onDocumentPreviewUrl?: ((documentId: string, url: string) => void) | undefined;
@@ -839,11 +837,22 @@ function DayCard({
       // Prefill day meals + this activity's transfer from the master defaults.
       // Runs only on explicit activity selection, so unrelated edits and
       // re-renders never overwrite manual changes; picking another activity
-      // refreshes the defaults from the newly selected master.
+      // refreshes the defaults from the newly selected master. Enum values
+      // are validated explicitly so a malformed master can never write an
+      // invalid mode into the quotation; per-meal Transfer Details copy over
+      // only when the master actually provides them (manual details are kept
+      // otherwise, mirroring the mode behavior below).
+      const MEAL_MODES = ['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER'] as const;
+      const TRANSFERS = ['PRIVATE', 'SHARED', 'NO_TRANSFER'] as const;
       const mealDefaults = (picked as unknown as {
         mealDefaults?: {
           meals?: { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | null;
           mealModes?: {
+            breakfast?: string | null;
+            lunch?: string | null;
+            dinner?: string | null;
+          } | null;
+          mealTransferDetails?: {
             breakfast?: string | null;
             lunch?: string | null;
             dinner?: string | null;
@@ -857,15 +866,30 @@ function DayCard({
           form.setValue(fp(`${base}.meals.${meal}`), enabled, {
             shouldDirty: true,
           });
-          const mode = enabled ? mealDefaults.mealModes?.[meal] : null;
+          const rawMode = enabled ? mealDefaults.mealModes?.[meal] : null;
+          const mode = (
+            typeof rawMode === 'string' && (MEAL_MODES as readonly string[]).includes(rawMode)
+              ? rawMode
+              : null
+          ) as (typeof MEAL_MODES)[number] | null;
           if (mode) {
             form.setValue(fp(`${base}.mealPreferences.${meal}.mode`), mode as never, {
               shouldDirty: true,
             });
           }
+          const details = mealDefaults.mealTransferDetails?.[meal]?.trim() || null;
+          if (details) {
+            form.setValue(fp(`${base}.mealPreferences.${meal}.transferDetails`), details as never, {
+              shouldDirty: true,
+            });
+          }
         }
-        if (mealDefaults.transfer) {
-          form.setValue(fp(`${abase}.dailyTransfer`), mealDefaults.transfer as never, {
+        const rawTransfer = mealDefaults.transfer;
+        if (
+          typeof rawTransfer === 'string' &&
+          (TRANSFERS as readonly string[]).includes(rawTransfer)
+        ) {
+          form.setValue(fp(`${abase}.dailyTransfer`), rawTransfer as never, {
             shouldDirty: true,
           });
         }
@@ -989,22 +1013,6 @@ function DayCard({
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {onInsertBefore && (
-            <Button
-              variant="secondary"
-              aria-label={`Insert sightseeing day before day ${dayIndex + 1}`}
-              onClick={onInsertBefore}
-            >
-              <Plus className="h-4 w-4" /> Add Day Before
-            </Button>
-          )}
-          <Button
-            variant="secondary"
-            aria-label={`Insert sightseeing day after day ${dayIndex + 1}`}
-            onClick={onInsertAfter}
-          >
-            <Plus className="h-4 w-4" /> Add Day After
-          </Button>
           <Button variant="ghost" className="text-red-600 hover:bg-red-50" onClick={onRemove}>
             <Trash2 className="h-4 w-4" /> Remove Day
           </Button>
@@ -1458,6 +1466,7 @@ export function SightseeingSection({
   destination,
   pax,
   onDocumentPreviewUrl,
+  onSelectedDayChange,
 }: {
   form: Form;
   quotationId?: string;
@@ -1467,6 +1476,8 @@ export function SightseeingSection({
   pax?: { adults: number; childrenWithBed: number; childrenWithoutBed: number; infants: number };
   /** Receives freshly uploaded activity-image URLs (for the live preview). */
   onDocumentPreviewUrl?: ((documentId: string, url: string) => void) | undefined;
+  /** Reports the selected day position (for the live preview to follow). */
+  onSelectedDayChange?: ((index: number) => void) | undefined;
 }) {
   const effectivePax = pax ?? { adults: 2, childrenWithBed: 0, childrenWithoutBed: 0, infants: 0 };
   const destinationSummary = (form.watch('destinationSummary') as string) ?? '';
@@ -1495,6 +1506,20 @@ export function SightseeingSection({
   }, [resolvedDestination, destinationToken]);
   const days = useFieldArray({ control: form.control, name: 'sightseeingDetails.days' });
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  // Move the day at `index` one slot, keeping the selection attached to the
+  // same content: the moved day carries the selection with it, and a neighbor
+  // displaced by the swap keeps pointing at its own (moved) row.
+  const moveDay = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (index < 0 || target < 0 || index >= days.fields.length || target >= days.fields.length)
+      return;
+    days.move(index, target);
+    setSelectedDayIndex((prev) => {
+      if (prev === index) return target;
+      if (prev === target) return index;
+      return prev;
+    });
+  };
   useEffect(() => {
     days.fields.forEach((_, index) => {
       const path = `sightseeingDetails.days.${index}.title` as FieldPath<QuotationVersionInput>;
@@ -1508,8 +1533,13 @@ export function SightseeingSection({
     if (selectedDayIndex >= days.fields.length) setSelectedDayIndex(days.fields.length - 1);
     if (selectedDayIndex < 0) setSelectedDayIndex(0);
   }, [days.fields.length, selectedDayIndex]);
+  // Report the selected day position so the live weblink preview can follow
+  // the edited day. Position-based: the preview stamps the same source index
+  // on each rendered day, so reorder/add/remove stay exact.
+  useEffect(() => {
+    onSelectedDayChange?.(selectedDayIndex);
+  }, [selectedDayIndex, onSelectedDayChange]);
   const include = form.watch('sightseeingDetails.include') ?? true;
-  const fp = (path: string) => path as FieldPath<QuotationVersionInput>;
   // Resolve every selected master's current display URL in one batched request
   // (unique ids only), so the builder never issues N per-activity requests.
   const watchedDays = useWatch({
@@ -1540,7 +1570,7 @@ export function SightseeingSection({
               Section Title
               <input
                 aria-label="Sightseeing section title"
-                placeholder="Sightseeing & Experiences"
+                placeholder="Your Itinerary"
                 className={`${field} mt-1`}
                 {...form.register('sightseeingDetails.sectionTitle')}
               />
@@ -1555,18 +1585,6 @@ export function SightseeingSection({
                 </div>
               );
             })()}
-          </div>
-          <div>
-            <span className="text-sm font-semibold text-slate-800">Description</span>
-            <div className="mt-1">
-              <RichTextEditor
-                ariaLabel="Sightseeing description"
-                value={(form.watch(fp('sightseeingDetails.description')) as string) ?? ''}
-                onChange={(html) =>
-                  form.setValue('sightseeingDetails.description', html, { shouldDirty: true })
-                }
-              />
-            </div>
           </div>
 
           {days.fields.length === 0 ? (
@@ -1610,25 +1628,63 @@ export function SightseeingSection({
                       const raw = (form.watch(`sightseeingDetails.days.${idx}.title` as FieldPath<QuotationVersionInput>) as string | null) ?? '';
                       const label = raw?.trim() ? raw.trim() : `Day ${idx + 1}`;
                       const isActive = idx === selectedDayIndex;
+                      const isFirst = idx === 0;
+                      const isLast = idx === days.fields.length - 1;
                       return (
-                        <button
+                        <div
                           key={field.id}
-                          type="button"
-                          aria-label={`Select sightseeing day ${idx + 1}`}
-                          aria-selected={isActive}
-                          onClick={() => setSelectedDayIndex(idx)}
                           className={cn(
-                            'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition',
+                            'flex items-center gap-1 rounded-lg border px-1.5 py-1.5 transition',
                             isActive
-                              ? 'border-brand-600 bg-brand-50 text-brand-700 shadow-sm'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+                              ? 'border-brand-600 bg-brand-50 shadow-sm'
+                              : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
                           )}
                         >
-                          <span className="truncate font-medium">{label}</span>
-                          <span className={cn('ml-2 shrink-0 rounded px-1.5 py-0.5 text-xs', isActive ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500')}>
-                            {idx + 1}
-                          </span>
-                        </button>
+                          <button
+                            type="button"
+                            aria-label={`Select sightseeing day ${idx + 1}`}
+                            aria-selected={isActive}
+                            onClick={() => setSelectedDayIndex(idx)}
+                            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+                          >
+                            <span
+                              className={cn(
+                                'flex h-6 w-6 shrink-0 items-center justify-center rounded px-1 text-xs font-semibold tabular-nums',
+                                isActive ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500',
+                              )}
+                            >
+                              {idx + 1}
+                            </span>
+                            <span
+                              className={cn(
+                                'truncate font-medium',
+                                isActive ? 'text-brand-700' : 'text-slate-700',
+                              )}
+                            >
+                              {label}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move Day ${idx + 1} up`}
+                            title={`Move Day ${idx + 1} up`}
+                            disabled={isFirst}
+                            onClick={() => moveDay(idx, -1)}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+                          >
+                            <ArrowUp className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move Day ${idx + 1} down`}
+                            title={`Move Day ${idx + 1} down`}
+                            disabled={isLast}
+                            onClick={() => moveDay(idx, 1)}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+                          >
+                            <ArrowDown className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -1636,37 +1692,9 @@ export function SightseeingSection({
                     <Button
                       size="sm"
                       variant="secondary"
-                      aria-label="Move selected day up"
-                      disabled={selectedDayIndex === 0}
-                      onClick={() => {
-                        const idx = selectedDayIndex;
-                        if (idx <= 0) return;
-                        days.move(idx, idx - 1);
-                        setSelectedDayIndex(idx - 1);
-                      }}
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" /> Up
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      aria-label="Move selected day down"
-                      disabled={selectedDayIndex === days.fields.length - 1}
-                      onClick={() => {
-                        const idx = selectedDayIndex;
-                        if (idx >= days.fields.length - 1) return;
-                        days.move(idx, idx + 1);
-                        setSelectedDayIndex(idx + 1);
-                      }}
-                    >
-                      Down <ArrowRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      aria-label="Add sightseeing day before selected"
+                      aria-label="Add Day Before"
+                      title="Add Day Before"
+                      className="whitespace-nowrap"
                       onClick={() => {
                         const idx = selectedDayIndex;
                         days.insert(idx, emptySightseeingDay(idx + 1));
@@ -1679,7 +1707,9 @@ export function SightseeingSection({
                     <Button
                       size="sm"
                       variant="secondary"
-                      aria-label="Add sightseeing day after selected"
+                      aria-label="Add Day After"
+                      title="Add Day After"
+                      className="whitespace-nowrap"
                       onClick={() => {
                         const idx = selectedDayIndex;
                         days.insert(idx + 1, emptySightseeingDay(idx + 2));
@@ -1689,17 +1719,6 @@ export function SightseeingSection({
                       <Plus className="h-3.5 w-3.5" /> After
                     </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="mt-2 w-full"
-                    onClick={() => {
-                      days.append(emptySightseeingDay(days.fields.length + 1));
-                      setSelectedDayIndex(days.fields.length);
-                    }}
-                  >
-                    <Plus className="h-4 w-4" /> Add Day
-                  </Button>
                   <p className="mt-2 text-xs text-slate-500">{days.fields.length} day{days.fields.length !== 1 ? 's' : ''} · select a day to edit on the right</p>
                 </div>
               </aside>
@@ -1716,18 +1735,6 @@ export function SightseeingSection({
                   attractionsStatus={attractionsStatus}
                   pax={effectivePax}
                   onDocumentPreviewUrl={onDocumentPreviewUrl}
-                  onInsertBefore={
-                    selectedDayIndex === 0
-                      ? () => {
-                          days.insert(0, emptySightseeingDay(1));
-                          setSelectedDayIndex(0);
-                        }
-                      : undefined
-                  }
-                  onInsertAfter={() => {
-                    days.insert(selectedDayIndex + 1, emptySightseeingDay(selectedDayIndex + 2));
-                    setSelectedDayIndex(selectedDayIndex + 1);
-                  }}
                   onRemove={() => {
                     const idx = selectedDayIndex;
                     days.remove(idx);

@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ClipboardList,
+  Copy,
   FileText,
   History,
   MapPin,
@@ -20,6 +21,7 @@ import {
 } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/features/auth/AuthProvider';
+import { DUPLICATE_LEAD_STATE_KEY, buildDuplicateLeadDraft } from '@/features/queries/LeadForm';
 import {
   useLeadWorkspace,
   useNoteAction,
@@ -229,6 +231,16 @@ export function LeadDetailsPage() {
           >
             <Pencil className="h-4 w-4" aria-hidden="true" />
             Edit
+          </Link>
+        )}
+        {hasPermission('queries.create') && (
+          <Link
+            to="/queries/new"
+            state={{ [DUPLICATE_LEAD_STATE_KEY]: buildDuplicateLeadDraft(q) }}
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground shadow-sm transition-all hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:enabled:translate-y-px"
+          >
+            <Copy className="h-4 w-4" aria-hidden="true" />
+            Duplicate Lead
           </Link>
         )}
       </div>

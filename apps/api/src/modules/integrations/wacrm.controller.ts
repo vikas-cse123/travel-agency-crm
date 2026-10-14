@@ -48,6 +48,17 @@ export const integrationsController = {
     sendSuccess(res, await wacrmService.lookups(auth(req), ownerEmail));
   },
 
+  async wacrmLeadExists(req: Request, res: Response) {
+    // Same owner-email locator convention as lookups: it re-scopes
+    // the existence check to the linked Travel CRM account so the
+    // answer is always relative to the correct tenant.
+    const rawEmail = (req.query ?? {}).ownerEmail;
+    const ownerEmail =
+      typeof rawEmail === 'string' && rawEmail.trim() ? rawEmail.trim() : null;
+    const leadId = typeof req.params.id === 'string' ? req.params.id : '';
+    sendSuccess(res, await wacrmService.leadExists(auth(req), leadId, ownerEmail));
+  },
+
   async wacrmCreateLead(req: Request, res: Response) {
     const result = await wacrmService.createLead(auth(req), req.body, context(req));
     if (result.alreadyExists) {

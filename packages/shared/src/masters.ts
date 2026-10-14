@@ -467,6 +467,11 @@ const sightseeingBaseSchema = z.object({
    * modes (see SIGHTSEEING_MEAL_MODES / SIGHTSEEING_TRANSFER_MODES in
    * quotations.ts, duplicated here to avoid a module cycle); absent/null
    * means "no default", never an error.
+   *
+   * `mealTransferDetails` holds the per-meal Transfer Details text shown for
+   * meals configured with WITH_TRANSFER (mirrors the quotation's
+   * `mealPreferences.{meal}.transferDetails`). Older records lack the key
+   * entirely and remain valid.
    */
   mealDefaults: z
     .object({
@@ -482,6 +487,13 @@ const sightseeingBaseSchema = z.object({
           breakfast: z.enum(['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER']).nullable().optional(),
           lunch: z.enum(['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER']).nullable().optional(),
           dinner: z.enum(['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER']).nullable().optional(),
+        })
+        .default({}),
+      mealTransferDetails: z
+        .object({
+          breakfast: z.string().trim().max(300).nullable().optional(),
+          lunch: z.string().trim().max(300).nullable().optional(),
+          dinner: z.string().trim().max(300).nullable().optional(),
         })
         .default({}),
       transfer: z.enum(['PRIVATE', 'SHARED', 'NO_TRANSFER']).nullable().optional(),

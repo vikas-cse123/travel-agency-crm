@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { type QueryInput } from '@interscale/shared';
+import { SERVICE_TYPES, type QueryInput } from '@interscale/shared';
 import countries from 'world-countries';
 import { Button } from '@/components/ui/Button';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
@@ -150,6 +150,106 @@ type TravelTimingMode = 'exact' | 'month';
  * conflicting values are ever submitted. */
 function travelTimingModeFor(lead?: Lead): TravelTimingMode {
   return lead?.travelMonth != null && lead?.travelYear != null ? 'month' : 'exact';
+}
+
+/** Location-state key carrying a duplicate-lead draft to the Create form. */
+export const DUPLICATE_LEAD_STATE_KEY = 'duplicateLead' as const;
+
+export interface DuplicateLeadLocationState {
+  [DUPLICATE_LEAD_STATE_KEY]?: Lead | null;
+}
+
+const KNOWN_SERVICE_TYPES = new Set<string>(SERVICE_TYPES as readonly string[]);
+
+/**
+ * Build a new-lead draft from a source lead for the Duplicate Lead flow.
+ *
+ * Explicit allowlist: only values represented by Create Lead form fields are
+ * copied (identity, travel, party, services, itinerary). Identity, timestamps,
+ * history, notes, quotations, bookings, payments, vouchers, documents,
+ * weblinks and every other association are reset — the draft can only ever
+ * create a genuinely new record. The id is intentionally blank so
+ * create-mode form behavior (e.g. assignee defaulting) applies.
+ */
+export function buildDuplicateLeadDraft(source: Lead): Lead {
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+  const numbers = (value: unknown): number[] =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is number => typeof entry === 'number' && Number.isFinite(entry))
+      : [];
+  return {
+    id: '',
+    queryNumber: '',
+    customerName: source.customerName,
+    phone: source.phone,
+    alternatePhone: null,
+    email: null,
+    dateOfBirth: null,
+    leadSource: source.leadSource,
+    leadType: source.leadType,
+    leadStage: source.leadStage,
+    priority: 'MEDIUM',
+    departureCountry: source.departureCountry,
+    departureCity: source.departureCity,
+    travelStartDate: source.travelStartDate,
+    travelEndDate: null,
+    travelMonth: source.travelMonth,
+    travelYear: source.travelYear,
+    flexibleDates: false,
+    rooms: 1,
+    adults: source.adults,
+    childrenWithBed: source.childrenWithBed,
+    childrenWithoutBed: source.childrenWithoutBed,
+    infants: source.infants,
+    extraBeds: 0,
+    childrenWithBedAges: numbers(source.childrenWithBedAges),
+    childrenWithoutBedAges: numbers(source.childrenWithoutBedAges),
+    infantAges: numbers(source.infantAges),
+    adultNames: strings(source.adultNames),
+    childWithBedNames: strings(source.childWithBedNames),
+    childWithoutBedNames: strings(source.childWithoutBedNames),
+    infantNames: strings(source.infantNames),
+    travellerSummary: '',
+    expectedAmount: null,
+    budgetMin: null,
+    budgetMax: null,
+    expectedMargin: null,
+    currency: source.currency,
+    tripType: null,
+    quotationRequired: false,
+    bookingStatusPlaceholder: null,
+    webLinkPlaceholder: null,
+    supplierCostingNotes: null,
+    assignedToId: source.assignedToId,
+    createdById: '',
+    lastContactedAt: null,
+    nextFollowUpAt: null,
+    lostReason: null,
+    convertedAt: null,
+    internalRemarks: null,
+    createdAt: '',
+    updatedAt: '',
+    assignedTo: null,
+    createdBy: source.createdBy,
+    customer: null,
+    services: (source.services ?? [])
+      .map((s) => s?.serviceType)
+      .filter((t): t is string => typeof t === 'string' && KNOWN_SERVICE_TYPES.has(t))
+      .map((serviceType) => ({ serviceType })),
+    itinerary: (source.itinerary ?? []).map((row) => ({
+      id: '',
+      country: row.country ?? '',
+      destination: row.destination ?? '',
+      nights: row.nights ?? 1,
+      sequence: row.sequence ?? 1,
+      arrivalDate: row.arrivalDate ?? null,
+      departureDate: row.departureDate ?? null,
+      notes: row.notes ?? null,
+    })),
+  };
 }
 
 /** Year options: a small past window plus a generous future planning horizon. */
@@ -335,17 +435,39 @@ export function LeadForm({
   const [searchParams] = useSearchParams();
   const requestedCustomerId = lead ? '' : (searchParams.get('customerId') ?? '');
   const requestedCustomer = useCustomer(requestedCustomerId || undefined);
-  const { data: lookups } = useLeadLookups();
+  const { data: lookups, isFetched: lookupsFetched } = useLeadLookups();
   const {
     register,
     control,
     watch,
     setValue,
+    getValues,
     reset,
     handleSubmit,
     formState: { isDirty },
   } = useForm<FormValues>({ defaultValues: defaults(lead) });
   useEffect(() => reset(defaults(lead)), [lead, reset]);
+  // Lookup-driven selects are uncontrolled: one registered before its options
+  // arrive never re-syncs its display to the form value (stale first-option
+  // display despite correct state). Once lookups land, write the current
+  // values back so create defaults, edit records, and duplicate drafts all
+  // display correctly. Values are unchanged — display only — so user edits
+  // are never overwritten; runs once.
+  const lookupsSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!lookups || lookupsSyncedRef.current) return;
+    lookupsSyncedRef.current = true;
+    for (const name of [
+      'leadSource',
+      'leadType',
+      'leadStage',
+      'assignedToId',
+      'travelMonth',
+      'travelYear',
+    ] as const) {
+      setValue(name, getValues(name), { shouldDirty: false, shouldValidate: false });
+    }
+  }, [lookups, setValue, getValues]);
   // Travel Timing mode follows the loaded record: exact date and month/year
   // are mutually exclusive, so the mode tracks whichever representation the
   // saved data carries. Keyed on the lead id so background refetches (same
@@ -475,10 +597,25 @@ export function LeadForm({
   // Default Assign To to the session user once both the session ID and its
   // valid dropdown option are available (the me-fallback above guarantees the
   // option exists whenever the session does, so an ID is never set without a
-  // matching option). Runs on Create only; never touches a manual pick or a
+  // matching option). Runs on Create only — including a duplicate draft, whose
+  // blank id keeps create-mode behavior; never touches a manual pick or a
   // cleared field again once it has defaulted for the active session.
   useEffect(() => {
-    if (lead) return;
+    if (lead?.id) return;
+    // A duplicate draft carrying an assignee outside the valid options is
+    // reset (once lookups have loaded, so a merely-not-yet-loaded option is
+    // never mistaken for invalid) so the session default below applies
+    // instead of assigning an invalid user.
+    if (
+      lead &&
+      !lead.id &&
+      assignedToId !== '' &&
+      lookupsFetched &&
+      !assigneeOptions.some((option) => option.id === assignedToId)
+    ) {
+      setValue('assignedToId', '');
+      return;
+    }
     const sessionId = user?.id;
     if (!sessionId) return;
     if (!assigneeOptions.some((option) => option.id === sessionId)) return;
@@ -486,7 +623,7 @@ export function LeadForm({
     if (assignedToId !== '' && assignedToId !== defaultedAssigneeRef.current) return;
     defaultedAssigneeRef.current = sessionId;
     if (assignedToId !== sessionId) setValue('assignedToId', sessionId);
-  }, [lead, user?.id, assigneeOptions, assignedToId, setValue]);
+  }, [lead, user?.id, assigneeOptions, lookupsFetched, assignedToId, setValue]);
   const childrenWithBedCount = Math.max(0, Math.min(100, Number(counts[2]) || 0));
   const childrenWithoutBedCount = Math.max(0, Math.min(100, Number(counts[3]) || 0));
   const infantCount = Math.max(0, Math.min(100, Number(counts[4]) || 0));
@@ -1059,7 +1196,7 @@ export function LeadForm({
       </Section>
       <div className="flex justify-start gap-2 rounded-lg border bg-card p-4 shadow-sm">
         <Button type="submit" isLoading={saving}>
-          {lead ? 'Save changes' : 'Create Lead'}
+          {lead?.id ? 'Save changes' : 'Create Lead'}
         </Button>
         <Button variant="secondary" onClick={() => history.back()}>
           Cancel

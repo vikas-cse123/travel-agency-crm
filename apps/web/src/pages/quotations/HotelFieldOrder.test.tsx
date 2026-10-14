@@ -140,12 +140,11 @@ describe('Hotel tab field order and bookmark placeholder', () => {
     expect(sectionTitle.compareDocumentPosition(bookmarkId)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    // Description still follows the bookmark field.
-    expect(
-      bookmarkId.compareDocumentPosition(
-        screen.getByRole('heading', { name: 'Description' }),
-      ),
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // The builder Description field was removed: no heading, editor, or toolbar.
+    expect(screen.queryByRole('heading', { name: 'Description' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Hotel description')).not.toBeInTheDocument();
+    // The Hotel Bookmark ID field and hotel cards remain.
+    expect(screen.getByLabelText('Hotel Bookmark ID')).toBeInTheDocument();
   });
 
   it('leaves the bookmark input empty with no placeholder but keeps Load working', async () => {

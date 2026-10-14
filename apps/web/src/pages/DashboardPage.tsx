@@ -471,25 +471,19 @@ export function DashboardPage() {
               icon={Users}
               className="bg-blue-600 text-white"
             />
+            {data?.quotations && (
+              <KpiCard
+                label="Quotations"
+                value={data.quotations.totalQuotations}
+                icon={FileText}
+                className="bg-blue-100 text-blue-800"
+              />
+            )}
             <KpiCard
               label="Converted Leads"
               value={data?.leads?.convertedLeads ?? 0}
               icon={CheckCircle}
               className="bg-emerald-600 text-white"
-            />
-            {showFinancials && (
-              <KpiCard
-                label="Agency Revenue"
-                value={money(data?.quotations?.agencyRevenue)}
-                icon={IndianRupee}
-                className="bg-teal-600 text-white"
-              />
-            )}
-            <KpiCard
-              label="Hot Leads"
-              value={data?.leads?.hotLeads ?? 0}
-              icon={Flame}
-              className="bg-orange-100 text-orange-800"
             />
             <KpiCard
               label="Conversion Rate"
@@ -502,12 +496,12 @@ export function DashboardPage() {
                 formula: '(Booking Confirmed ÷ Total Leads) × 100',
               }}
             />
-            {data?.quotations && (
+            {showFinancials && (
               <KpiCard
-                label="Quotations"
-                value={data.quotations.totalQuotations}
-                icon={FileText}
-                className="bg-blue-100 text-blue-800"
+                label="Agency Revenue"
+                value={money(data?.quotations?.agencyRevenue)}
+                icon={IndianRupee}
+                className="bg-teal-600 text-white"
               />
             )}
             {showNetProfit && (
@@ -518,6 +512,12 @@ export function DashboardPage() {
                 className="bg-amber-500 text-white"
               />
             )}
+            <KpiCard
+              label="Hot Leads"
+              value={data?.leads?.hotLeads ?? 0}
+              icon={Flame}
+              className="bg-orange-100 text-orange-800"
+            />
           </section>
 
           {caps?.canViewLeads && (

@@ -38,6 +38,8 @@ export interface FlightRecordCardProps {
   airlineList: Airline[];
   onLoadBookmarks: (flightIndex: number, bookmarks: LiveSearchBookmark[]) => void;
   onRemoveFlight: (flightIndex: number) => void;
+  /** Reports expand/collapse so the live preview can follow the edited flight. */
+  onExpandChange?: ((flightIndex: number, expanded: boolean) => void) | undefined;
 }
 
 /**
@@ -52,6 +54,7 @@ export function FlightRecordCard({
   airlineList,
   onLoadBookmarks,
   onRemoveFlight,
+  onExpandChange,
 }: FlightRecordCardProps) {
   const base = `flightDetails.flights.${flightIndex}`;
   const fp = (path: string) => path as FieldPath<QuotationVersionInput>;
@@ -511,7 +514,11 @@ export function FlightRecordCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
-          onClick={() => setExpanded((prev) => !prev)}
+          onClick={() => {
+            const next = !expanded;
+            setExpanded(next);
+            onExpandChange?.(flightIndex, next);
+          }}
           aria-expanded={expanded}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} flight ${flightIndex + 1}`}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"

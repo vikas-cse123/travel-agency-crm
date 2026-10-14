@@ -194,7 +194,7 @@ describe('Quotation Builder — optional hotel stay dates', () => {
     renderBuilderPage();
     await openHotelStay();
 
-    expect(await screen.findByLabelText('Hotel check-in')).toHaveValue('2026-09-10');
+    expect(await screen.findByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
     expect(screen.getByLabelText('Hotel check-out')).toHaveValue('');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('—');
 
@@ -216,7 +216,7 @@ describe('Quotation Builder — optional hotel stay dates', () => {
     await openHotelStay();
 
     expect(await screen.findByLabelText('Hotel check-in')).toHaveValue('');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-09-14');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('14-09-2026');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('—');
 
     await clickSave();

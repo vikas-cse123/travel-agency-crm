@@ -53,4 +53,16 @@ router.post(
   asyncHandler(integrationsController.wacrmCreateLead),
 );
 
+// Read-only existence probe for WACRM stale-link recovery: answers
+// whether a lead id exists in the locator-scoped company. Always
+// 200 with { exists } (missing reads the same as foreign-tenant,
+// so nothing leaks); auth failures stay 401 via the middleware.
+router.get(
+  '/wacrm/leads/:id',
+  authenticateIntegration,
+  requirePermission(PERMISSIONS.QUERIES_VIEW),
+  validateRequest({ params: z.object({ id: z.string().uuid() }) }),
+  asyncHandler(integrationsController.wacrmLeadExists),
+);
+
 export { router as integrationsRoutes };

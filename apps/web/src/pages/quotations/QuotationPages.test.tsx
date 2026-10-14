@@ -9534,7 +9534,7 @@ describe('Phase 8 quotation pages', () => {
         visaVfsCharge: '300',
         sightseeingDetails: {
           include: true,
-          sectionTitle: 'Sightseeing',
+          sectionTitle: 'Sightseeing & Experiences',
           amount: 0,
           description: null,
           days: [
@@ -10144,6 +10144,8 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand meal plan for hotel stay 1' }));
 
     // Legacy row: one room allocation + one meal plan, restored as line 1.
     expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Deluxe Room');
@@ -10186,6 +10188,7 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     // Initial total follows the single allocation.
     expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(2);
     expect(screen.queryByRole('button', { name: 'Reset total rooms to calculated total' })).not.toBeInTheDocument();
@@ -10220,6 +10223,7 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
     await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
@@ -10240,6 +10244,7 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     const first = renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
     await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
@@ -10306,15 +10311,16 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
     await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
     await userEvent.type(screen.getByLabelText('Room 2 number of rooms'), '3');
     expect(await screen.findByDisplayValue('5')).toBeInTheDocument();
-    // Manual override, then unrelated edits (remark text + room-type text).
+    // Manual override, then unrelated edits (section title + room-type text).
     await userEvent.clear(screen.getByLabelText('Hotel total rooms'));
     await userEvent.type(screen.getByLabelText('Hotel total rooms'), '8');
-    await userEvent.type(screen.getByLabelText('Hotel remark'), 'Sea view requested');
+    await userEvent.type(screen.getByLabelText('Hotel section title'), 'Updated Stays');
     await userEvent.clear(screen.getByLabelText('Room 1 number of rooms'));
     await userEvent.type(screen.getByLabelText('Room 1 number of rooms'), '1');
     // The custom total survives re-renders and allocation edits alike.
@@ -10350,6 +10356,8 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
       .map((button) => button.closest('article') as HTMLElement);
     expect(stays).toHaveLength(2);
     const [firstStay, secondStay] = [stays[0]!, stays[1]!];
+    await userEvent.click(within(firstStay).getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
+    await userEvent.click(within(secondStay).getByRole('button', { name: 'Expand room configuration for hotel stay 2' }));
     // Stay 2 starts automatic (4) with no reset action.
     expect(within(secondStay).getByLabelText('Hotel total rooms')).toHaveValue(4);
     expect(
@@ -10389,6 +10397,7 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.click(screen.getByRole('button', { name: 'Remove room 2' }));
     expect(screen.queryByLabelText('Room 2 type master')).toBeNull();
@@ -10955,14 +10964,14 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getByLabelText('Hotel master')).toHaveValue('The Lalit Grand Palace Srinagar');
     expect(screen.getByLabelText('Hotel city')).toHaveValue('Srinagar');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('2');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-09-10');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-09-12');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('12-09-2026');
     expect(screen.getByLabelText('Hotel check-in time')).toHaveValue('14:00');
     expect(screen.getByLabelText('Hotel check-out time')).toHaveValue('11:00');
     expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(1);
-    expect(screen.getByLabelText('Hotel remark')).toHaveValue(
-      'A heritage hotel on the banks of Dal Lake.',
-    );
+    // The stay Remark field was removed from the UI; the imported provider
+    // summary stays in saved data (verified by save-body tests elsewhere).
+    expect(screen.queryByLabelText('Hotel remark')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Hotel section title')).toHaveValue('Your Hotels');
     // The provider summary lives ONLY in the stay Remark, not the section
     // Description (which stays empty after a bookmark import).
@@ -10982,9 +10991,8 @@ describe.skip('Phase 14 master selectors', () => {
     );
     expect(screen.getByLabelText('Use hotel image 1 in PDF')).toBeChecked();
 
-    // 5. Imported fields remain editable (rooms / remark inputs are enabled).
+    // 5. Imported fields remain editable (rooms input is enabled).
     expect(screen.getByLabelText('Room 1 number of rooms')).not.toBeDisabled();
-    expect(screen.getByLabelText('Hotel remark')).not.toBeDisabled();
 
     // 6. Loading the bookmark made ZERO SearchAPI (live search) requests — the
     // import reads only the saved DB bookmark snapshot.
@@ -10994,8 +11002,8 @@ describe.skip('Phase 14 master selectors', () => {
     ).toBe(false);
 
     // 7. Manual hotel entry still works after the import.
-    expect(screen.getByRole('button', { name: 'Add hotel stay after stay 1' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Add hotel stay after stay 1' }));
+    expect(screen.getByRole('button', { name: 'Add hotel after stay 1' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Add hotel after stay 1' }));
     expect(screen.getAllByRole('button', { name: /^(Expand|Collapse) hotel stay/ })).toHaveLength(
       2,
     );
@@ -11058,13 +11066,11 @@ describe.skip('Phase 14 master selectors', () => {
     // 2. Every bookmark field populates the normal hotel stay row.
     expect(screen.getByLabelText('Hotel master')).toHaveValue('Holiday Inn Lucknow Airport by IHG');
     expect(screen.getByLabelText('Hotel city')).toHaveValue('Lucknow');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-09-10');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-09-14');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('14-09-2026');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('4');
     expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(2);
-    expect(screen.getByLabelText('Hotel remark')).toHaveValue(
-      'Modern rooms minutes from Chaudhary Charan Singh International Airport.',
-    );
+    expect(screen.queryByLabelText('Hotel remark')).not.toBeInTheDocument();
     // The provider summary stays ONLY in the Remark — the section Description
     // must remain empty after the bookmark import.
     expect(screen.getByLabelText('Hotel description')).toHaveTextContent('');
@@ -11180,16 +11186,15 @@ describe.skip('Phase 14 master selectors', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
     expect(screen.getByLabelText('Hotel master')).toHaveValue('Holiday Inn Lucknow Airport by IHG');
     expect(screen.getByLabelText('Hotel city')).toHaveValue('Lucknow');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-09-10');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-09-14');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('14-09-2026');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('4');
     expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(2);
     expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Deluxe Room');
     expect(screen.getByLabelText('Meal plan 1 master')).toHaveValue('Breakfast Included');
-    // The Remark survives save + refresh; the Description stays empty.
-    expect(screen.getByLabelText('Hotel remark')).toHaveValue(
-      'Modern rooms minutes from Chaudhary Charan Singh International Airport.',
-    );
+    // Stored remarks survive save + refresh in data (Remark UI removed);
+    // the Description stays empty.
+    expect(screen.queryByLabelText('Hotel remark')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Hotel description')).toHaveTextContent('');
     expect(screen.getAllByAltText('Holiday Inn Lucknow Airport by IHG')[0]).toHaveAttribute(
       'src',
@@ -11741,7 +11746,7 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Hotel');
 
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Add hotel stay after stay 1' }),
+      await screen.findByRole('button', { name: 'Add hotel after stay 1' }),
     );
 
     expect(
@@ -11782,7 +11787,7 @@ describe.skip('Phase 14 master selectors', () => {
 
     expect(screen.queryByRole('button', { name: 'Add Hotel' })).not.toBeInTheDocument();
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Add hotel stay before stay 1' }),
+      await screen.findByRole('button', { name: 'Add hotel before stay 1' }),
     );
 
     expect(
@@ -12033,7 +12038,7 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Sightseeing');
 
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Insert sightseeing day after day 1' }),
+      await screen.findByRole('button', { name: 'Add Day After' }),
     );
 
     await waitFor(() => {
@@ -12213,8 +12218,8 @@ describe.skip('Phase 14 master selectors', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
 
     expect(await screen.findByLabelText('Hotel city')).toHaveValue('Baku');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-09-10');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-09-13');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('13-09-2026');
     expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(2);
     // Nights is read-only and derived from the stay dates (10 Sep → 13 Sep = 3).
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('3');
@@ -12356,8 +12361,8 @@ describe.skip('Phase 14 master selectors', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
 
     expect(await screen.findByLabelText('Hotel section title')).toHaveValue('Your Hotels');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-09-10');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-09-14');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('14-09-2026');
   });
 
   it('derives hotel dates from the trip start and itinerary nights when end dates are absent', async () => {
@@ -12393,8 +12398,8 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
 
-    expect(await screen.findByLabelText('Hotel check-in')).toHaveValue('2026-08-10');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-08-16');
+    expect(await screen.findByLabelText('Hotel check-in')).toHaveValue('10-08-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('16-08-2026');
   });
 
   it('links the hotel, room type and meal plan without showing internal pricing fields', async () => {
@@ -13304,12 +13309,12 @@ describe.skip('Phase 14 master selectors', () => {
     );
   });
 
-  it('defaults the Sightseeing section title to Sightseeing & Experiences', async () => {
+  it('defaults the Sightseeing section title to Your Itinerary', async () => {
     vi.stubGlobal('fetch', masterFetch(builderQuotation()));
     renderBuilderPage();
     await openTab('Sightseeing');
     expect(await screen.findByLabelText('Sightseeing section title')).toHaveValue(
-      'Sightseeing & Experiences',
+      'Your Itinerary',
     );
   });
 
@@ -15608,8 +15613,8 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getByLabelText('Hotel city')).toHaveValue('Singapore');
     // 6 total nights (2+2+2), not merged land nights (2+2=4)
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('6');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-08-14');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-08-20');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('14-08-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('20-08-2026');
   });
 
   it('single hotel city with full nights preserves the correct hotel selection', async () => {
@@ -15645,8 +15650,8 @@ describe.skip('Phase 14 master selectors', () => {
     expect(await screen.findAllByLabelText('Hotel master')).toHaveLength(1);
     expect(screen.getByLabelText('Hotel master')).toHaveValue('Aloft Singapore Novena by Marriott');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('6');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('2026-08-14');
-    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('2026-08-20');
+    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('14-08-2026');
+    expect(screen.getByLabelText('Hotel check-out')).toHaveValue('20-08-2026');
   });
 
   it('preserves a saved hotel snapshot and a manually selected hotel', async () => {
@@ -15707,7 +15712,7 @@ describe.skip('Phase 14 master selectors', () => {
       ),
     );
     // Adding another hotel row for the same destination must not duplicate the default.
-    await userEvent.click(screen.getByRole('button', { name: 'Add hotel stay after stay 1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add hotel after stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 2' }));
     await waitFor(() => expect(screen.getAllByLabelText('Hotel master').length).toBe(2));
     expect(screen.getAllByLabelText('Hotel master')[1]).toHaveValue('');

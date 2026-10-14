@@ -349,4 +349,28 @@ export const wacrmService = {
       cities: feed.cities,
     };
   },
+
+  /**
+   * Tenant-scoped lead-existence check for WACRM stale-link
+   * recovery. Resolves the scope company exactly like the lookups
+   * feed (owner-email locator, else the credential's company) and
+   * answers only whether the lead id exists THERE — a lead owned
+   * by another company reads the same as a deleted one, so no
+   * cross-tenant record is ever exposed. Always resolves (never
+   * throws for a missing row); malformed ids fail closed upstream
+   * via route validation. Read-only: never creates, updates, or
+   * deletes anything.
+   */
+  async leadExists(
+    auth: AuthContext,
+    leadId: string,
+    ownerEmail: string | null = null,
+  ): Promise<{ exists: boolean; leadId: string }> {
+    const scopeCompanyId = await resolveItineraryScopeCompany(auth, ownerEmail);
+    const row = await prisma.query.findFirst({
+      where: { id: leadId, companyId: scopeCompanyId },
+      select: { id: true },
+    });
+    return { exists: row !== null, leadId };
+  },
 };

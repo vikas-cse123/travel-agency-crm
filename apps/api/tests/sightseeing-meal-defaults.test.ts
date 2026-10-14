@@ -59,6 +59,7 @@ const sightseeingPayload = (destinationId: string, cityId: string, overrides: Re
 const mealDefaults = {
   meals: { breakfast: true, lunch: false, dinner: true },
   mealModes: { breakfast: 'WITH_TRANSFER', lunch: null, dinner: 'INCLUDE_AT_HOTEL' },
+  mealTransferDetails: { breakfast: 'Lobby pickup at 8 AM', lunch: null, dinner: null },
   transfer: 'PRIVATE',
 };
 
@@ -143,11 +144,47 @@ describe('Sightseeing meal and transfer defaults', () => {
       (
         await client.post('/api/masters/sightseeing', {
           ...base,
-          title: 'Other Tour',
-          mealDefaults: { ...mealDefaults, transfer: 'SPACESHIP' },
+          title: 'Verbose Tour',
+          mealDefaults: { ...mealDefaults, mealTransferDetails: { breakfast: 'x'.repeat(301) } },
         })
       ).status,
     ).toBe(400);
+  });
+
+  it('round-trips per-meal transfer details and tolerates legacy blobs without them', async () => {
+    const client = await owner();
+    const { city, destination } = await cityAndDestination(client);
+    const created = await client.post(
+      '/api/masters/sightseeing',
+      sightseeingPayload(destination.id, city.id, { mealDefaults }),
+    );
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.data.mealDefaults).toMatchObject({
+      mealTransferDetails: { breakfast: 'Lobby pickup at 8 AM', lunch: null, dinner: null },
+    });
+
+    // Legacy blob without the new key stays valid and readable.
+    const legacy = await client.post(
+      '/api/masters/sightseeing',
+      sightseeingPayload(destination.id, city.id, {
+        title: 'Legacy Tour',
+        mealDefaults: {
+          meals: { breakfast: false, lunch: true, dinner: false },
+          mealModes: { lunch: 'NO_TRANSFER' },
+          transfer: 'SHARED',
+        },
+      }),
+    );
+    expect(legacy.status, JSON.stringify(legacy.body)).toBe(201);
+    const details = await client.get(`/api/masters/sightseeing/${legacy.body.data.id}`);
+    expect(details.status).toBe(200);
+    expect(details.body.data.mealDefaults.meals.lunch).toBe(true);
+
+    const feed = await client.get('/api/masters/sightseeing/activities?destination=Singapore');
+    const rows = feed.body.data.activities as Array<{ title: string; mealDefaults: any }>;
+    expect(
+      rows.find((row) => row.title === 'Gardens by the Bay')?.mealDefaults.mealTransferDetails,
+    ).toMatchObject({ breakfast: 'Lobby pickup at 8 AM' });
   });
 
   it('exposes meal defaults through the builder activities feed', async () => {
