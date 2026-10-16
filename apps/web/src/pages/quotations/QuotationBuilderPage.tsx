@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm, useWatch, type FieldPath, type UseFormReturn } from 'react-hook-form';
 import {
@@ -7,14 +7,12 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  Building2,
   ChevronDown,
   Eye,
   ImageIcon,
   Pencil,
   Plus,
   Save,
-  Star,
   Trash2,
   Upload,
   X,
@@ -23,7 +21,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   PERMISSIONS,
   QUOTATION_TAX_NOTE_OPTIONS,
-  QUOTATION_TAX_NOTE_SENTINEL,
+  QUOTATION_TAX_NOTE_HIDDEN,
   SETTINGS_CURRENCIES,
   calculateCruiseRoomLinesTotal,
   calculateFlightTotal,
@@ -41,15 +39,21 @@ import {
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
   resolveQuotationPricing,
-  resolveTaxNoteChoice,
+  isPublicTaxNote,
+  orderPricingRows,
+  TRAVELER_PRICING_ROW_IDS,
   validateQuotationPricing,
   DEFAULT_WEBLINK_SECTION_ORDER,
   resolveWeblinkSectionOrder,
   normalizePublicSlug,
   isReservedPublicSlug,
+  WEBLINK_PROFILE_FIELD_IDS,
+  WEBLINK_PROFILE_FIELD_LABELS,
+  normalizeWeblinkProfileConfig,
   type LiveSearchBookmark,
   type QuotationCruiseRoomLine,
   type QuotationVersionInput,
+  type WeblinkProfileFieldId,
 } from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { MasterSelect } from '@/components/ui/MasterSelect';
@@ -66,6 +70,7 @@ import {
   quotationDocumentInlineUrl,
   uploadQuotationAttachment,
   useQuotation,
+  useUpdateQuotation,
   useUpdateQuotationVersion,
   useUpdateQuotationWeblinkName,
   useUpdateQuotationWeblinkSettings,
@@ -96,10 +101,7 @@ import {
   type Page,
   type Sightseeing,
 } from '@/features/masters/masters.api';
-import {
-  formatAddonPricingOption,
-  normalizeAddonPricingSnapshot,
-} from '@/features/quotations/addonPricing';
+import { normalizeAddonPricingSnapshot } from '@/features/quotations/addonPricing';
 import { useUsers } from '@/features/users/users.api';
 import { useFaqs } from '@/features/masters/masters.api';
 import {
@@ -120,7 +122,9 @@ import {
 import { FlightRecordCard } from './FlightRecordCard';
 import { HotelCheckoutDatePicker, HotelDatePicker } from './HotelDatePicker';
 import { PinnedLiveQuotationPreview, previewDestinations, previewDurationNights, previewSectionForBuilderTab } from './FullQuotationPreview';
-import { resolveWeblinkDisplay } from './PublicQuotationPage';
+import { resolveWeblinkDisplay, resolveWeblinkProfile } from './PublicQuotationPage';
+import { dateShort } from './FlightPublicView';
+import { formatPublicQuotationNumber } from './quotationContact';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -319,6 +323,8 @@ export type FlightRecordInput = NonNullable<
 const emptyFlightJourney = (): FlightJourneyInput => ({
   fromCity: null,
   toCity: null,
+  routeFrom: null,
+  routeTo: null,
   travelClass: 'Economy',
   segments: [emptySegment()],
 });
@@ -329,6 +335,52 @@ export const emptyFlightRecord = (): FlightRecordInput => ({
   outbound: emptyFlightJourney(),
   returnJourney: emptyFlightJourney(),
 });
+
+interface HydratableFlightJourney {
+  fromCity?: string | null;
+  routeFrom?: string | null;
+  toCity?: string | null;
+  routeTo?: string | null;
+  travelClass?: string | null;
+  segments?: FlightSegmentInput[];
+}
+interface HydratableFlightRecord {
+  bookmarkCode?: string | null;
+  journeyType?: 'ROUND_TRIP' | 'ONEWAY_OUTBOUND' | 'ONEWAY_RETURN';
+  outbound?: HydratableFlightJourney;
+  returnJourney?: HydratableFlightJourney;
+}
+
+/**
+ * Rehydrate one saved flight record onto blank defaults. Saved values always
+ * win; the independent header route (`routeFrom`/`routeTo`) is preserved
+ * verbatim, and legacy records that predate it inherit the saved journey
+ * endpoints once — never recomputed afterwards, so later segment edits and
+ * re-hydrations leave custom labels alone.
+ */
+export function hydrateFlightRecord(
+  record: HydratableFlightRecord,
+  defaults: { outbound: FlightJourneyInput; returnJourney: FlightJourneyInput },
+): FlightRecordInput {
+  const hydrateJourney = (
+    saved: HydratableFlightJourney | undefined,
+    fallback: FlightJourneyInput,
+  ): FlightJourneyInput => {
+    const merged = { ...fallback, ...saved };
+    return {
+      ...merged,
+      routeFrom: saved?.routeFrom ?? saved?.fromCity ?? null,
+      routeTo: saved?.routeTo ?? saved?.toCity ?? null,
+      segments: saved?.segments?.length ? saved.segments : [emptySegment()],
+    };
+  };
+  return {
+    bookmarkCode: record.bookmarkCode ?? null,
+    journeyType: record.journeyType ?? 'ROUND_TRIP',
+    outbound: hydrateJourney(record.outbound, defaults.outbound),
+    returnJourney: hydrateJourney(record.returnJourney, defaults.returnJourney),
+  };
+}
 const defaultFlightDetails = (): NonNullable<QuotationVersionInput['flightDetails']> => ({
   include: true,
   sectionTitle: 'Flight Details',
@@ -340,10 +392,12 @@ const defaultFlightDetails = (): NonNullable<QuotationVersionInput['flightDetail
   imageFileName: null,
   images: [],
   journeyType: 'ROUND_TRIP',
-  outbound: { fromCity: null, toCity: null, travelClass: 'Economy', segments: [emptySegment()] },
+  outbound: { fromCity: null, toCity: null, routeFrom: null, routeTo: null, travelClass: 'Economy', segments: [emptySegment()] },
   returnJourney: {
     fromCity: null,
     toCity: null,
+    routeFrom: null,
+    routeTo: null,
     travelClass: 'Economy',
     segments: [emptySegment()],
   },
@@ -381,7 +435,6 @@ const sightseeingSectionTitle = (value: string | null | undefined) => {
 };
 
 const TABS: TabDef[] = [
-  { key: 'pricingMethod', label: 'Pricing Method' },
   { key: 'flight', label: 'Flight' },
   { key: 'hotel', label: 'Hotel' },
   { key: 'sightseeing', label: 'Sightseeing' },
@@ -392,7 +445,7 @@ const TABS: TabDef[] = [
   { key: 'inclusions', label: 'Inclusions & Exclusions' },
   ...(SHOW_DESTINATION_EXPERT_TAB ? [{ key: 'destinationExpert', label: 'Destination Expert' }] : []),
   { key: 'faqs', label: 'FAQs' },
-  { key: 'summary', label: 'Summary & Pricing' },
+  { key: 'summary', label: 'Pricing' },
   { key: 'pricingBreakdown', label: 'Pricing Breakdown' },
   { key: 'setting', label: 'Settings' },
 ];
@@ -475,6 +528,7 @@ const defaults: QuotationVersionInput = {
   pricingHeading: 'Price Breakdown',
   pricingSubheading: null,
   pricingDisplayOrder: undefined,
+  pricingRowOrder: undefined,
   markupMode: 'NONE',
   markupValue: 0,
   taxRate: 0,
@@ -483,6 +537,7 @@ const defaults: QuotationVersionInput = {
   perChildWithBedPrice: 0,
   perChildWithoutBedPrice: 0,
   perInfantPrice: 0,
+  packageCustomItems: [],
   taxNote: null,
   netAmount: 0,
   initialPaymentAmount: 0,
@@ -522,6 +577,7 @@ const defaults: QuotationVersionInput = {
   internalNotes: null,
   faqs: [],
   weblinkSectionOrder: null,
+  weblinkProfile: null,
   destinationExpertConfig: null,
   itinerary: [],
   hotels: [],
@@ -561,6 +617,8 @@ export function normalizeQuotationVersionForBuilder(version: QuotationVersion): 
       typeof raw.weblinkDurationText === 'string' ? raw.weblinkDurationText : null,
     weblinkProfileDestination:
       typeof raw.weblinkProfileDestination === 'string' ? raw.weblinkProfileDestination : null,
+    weblinkProfile: (objectOrNull(raw.weblinkProfile) ??
+      null) as QuotationVersion['weblinkProfile'],
     notes: typeof raw.notes === 'string' ? raw.notes : null,
     internalNotes: typeof raw.internalNotes === 'string' ? raw.internalNotes : null,
     inclusionsHtml: typeof raw.inclusionsHtml === 'string' ? raw.inclusionsHtml : null,
@@ -910,11 +968,12 @@ export const withSynthesizedLines = (row: HotelInputRow): HotelInputRow => {
     : resolveHotelMealPlanLines(row).map((line) => emptyMealLine(line));
   return {
     ...row,
-    // Meal-plan editing always has at least one (possibly empty) selection so
-    // "+ Add Meal Plan" extends an existing list. Room allocations deliberately
-    // have no such fallback: an unassigned stay must not count as one room.
+    // Neither room allocations nor meal plans get a synthesized fallback line:
+    // an unassigned stay must not count as one room or show a phantom
+    // "Meal Plan 1". Legacy rows still synthesize their single value from the
+    // scalar columns above, so existing quotations load unchanged.
     roomLines,
-    mealPlanLines: mealPlanLines.length ? mealPlanLines : [emptyMealLine()],
+    mealPlanLines,
   };
 };
 
@@ -1116,12 +1175,13 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
                 size="sm"
                 variant="ghost"
                 aria-label={`Remove room ${lineIndex + 1}`}
+                title={`Remove room ${lineIndex + 1}`}
                 onClick={() => {
                   roomLines.remove(lineIndex);
                   recalculateTotals();
                 }}
               >
-                <Trash2 className="h-4 w-4 text-red-600" /> Remove
+                <Trash2 className="h-4 w-4 text-red-600" />
               </Button>
             </div>
             <div className="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1338,12 +1398,13 @@ function HotelMealPlanLinesEditor({ form, hotelIndex, hotelId, canCost, recalcul
               size="sm"
               variant="ghost"
               aria-label={`Remove meal plan ${lineIndex + 1}`}
+              title={`Remove meal plan ${lineIndex + 1}`}
               onClick={() => {
                 mealPlanLines.remove(lineIndex);
                 recalculateTotals();
               }}
             >
-              <Trash2 className="h-4 w-4 text-red-600" /> Remove
+              <Trash2 className="h-4 w-4 text-red-600" />
             </Button>
           </div>
         );
@@ -1471,7 +1532,6 @@ function CruiseRoomLinesEditor({ form, serviceIndex, cruiseId, canCost, nights, 
                     }}
                   />
                 </span>
-                {isUnavailable && <span className="mt-1 block text-[11px] text-red-600">The selected cruise room type is not available.</span>}
                 {isSectionWise && showNoPriceHelper && !isUnavailable && <span className="mt-1 block text-[11px] text-amber-600">No master price found for this room type.</span>}
               </label>
               <label className="text-sm font-semibold text-slate-800">
@@ -1575,8 +1635,10 @@ const emptyHotel = (
   // A newly added stay starts with NO room allocation: Total Rooms stays
   // empty until the user explicitly adds room lines (via Add Room). A default
   // line here would silently count as one room and invent a total of 1.
+  // Meal-plan rows behave the same way: no default "Meal Plan 1" — the user
+  // adds one explicitly, so an untouched stay never shows an empty selection.
   roomLines: [],
-  mealPlanLines: [emptyMealLine()],
+  mealPlanLines: [],
   ...seed,
 });
 
@@ -2057,12 +2119,20 @@ type PolicyKey =
 export const hasPolicyHtml = (html?: string | null): boolean =>
   Boolean(html && html.replace(/<[^>]*>/g, '').trim());
 
-/** Resolve a policy field value: keep meaningful existing quotation content,
- *  fall back to the destination master default for empty/null/editor-blank. */
+/** Resolve a policy field value: an explicitly stored quotation value (even an
+ *  empty string from a cleared editor) is authoritative; otherwise fall back to
+ *  the destination master default. Only null/undefined fall back, so clearing a
+ *  policy no longer silently restores the destination master text on reopen. */
 export const policyValue = (
   versionValue: string | null | undefined,
   masterValue: string | null | undefined,
-): string | null => (hasPolicyHtml(versionValue) ? (versionValue ?? null) : (masterValue ?? null));
+): string | null => (versionValue === null || versionValue === undefined ? (masterValue ?? null) : versionValue);
+
+/** Stable id for a By Traveler Additional Price Item (legacy rows get one on load). */
+const newPricingRowId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? `item-${crypto.randomUUID()}`
+    : `item-${Math.random().toString(36).slice(2, 10)}`;
 
 /** Build quotation-policy prefills from the destination masters in lead order. */
 export const buildDestinationPolicyPrefill = (
@@ -2087,82 +2157,6 @@ export const buildDestinationPolicyPrefill = (
   }
   return result;
 };
-
-function HotelPreview({
-  hotelId,
-  snapshotImageUrl,
-  snapshotThumbnailUrl,
-  snapshotAuthoritative,
-}: {
-  hotelId?: string | null | undefined;
-  /** First saved snapshot image, shown when the hotel has no Master link. */
-  snapshotImageUrl?: string | null | undefined;
-  /** Fallback candidate for the same image, used if the primary fails. */
-  snapshotThumbnailUrl?: string | null | undefined;
-  /** True once this stay owns a gallery, including an intentional empty one. */
-  snapshotAuthoritative?: boolean | undefined;
-}) {
-  const hotel = useHotel(hotelId ?? undefined);
-  const image = useQuery({
-    queryKey: ['masters', 'hotels', hotelId ?? '', 'quotation-preview'],
-    queryFn: () => hotelImageUrl(hotelId!),
-    enabled: Boolean(hotelId && hotel.data?.hasImage && !snapshotAuthoritative),
-    staleTime: 4 * 60 * 1000,
-  });
-  const [previewFallback, setPreviewFallback] = useState(false);
-  const snapshotSrc =
-    previewFallback && snapshotThumbnailUrl ? snapshotThumbnailUrl : snapshotImageUrl;
-
-  return (
-    <div className="overflow-hidden rounded-lg border bg-card">
-      <div className="flex h-36 items-center justify-center bg-slate-100">
-        {!snapshotAuthoritative && image.data?.url ? (
-          <img
-            src={image.data.url}
-            alt={hotel.data?.name ?? 'Hotel preview'}
-            className="h-full w-full object-cover"
-          />
-        ) : snapshotSrc ? (
-          <img
-            src={snapshotSrc}
-            alt={hotel.data?.name ?? 'Hotel preview'}
-            className="h-full w-full object-cover"
-            onError={() => {
-              if (!previewFallback) setPreviewFallback(true);
-            }}
-          />
-        ) : (
-          <div className="text-center text-slate-400">
-            {hotelId ? (
-              <ImageIcon className="mx-auto h-8 w-8" />
-            ) : (
-              <Building2 className="mx-auto h-8 w-8" />
-            )}
-            <p className="mt-2 text-xs">
-              {hotelId ? 'No hotel image' : 'Select a hotel to preview'}
-            </p>
-          </div>
-        )}
-      </div>
-      {hotel.data && (
-        <div className="space-y-1 p-3">
-          <p className="truncate text-sm font-semibold text-slate-800">{hotel.data.name}</p>
-          <p className="flex items-center gap-1 text-xs text-slate-500">
-            {hotel.data.starCategory ? (
-              <>
-                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                {hotel.data.starCategory} Star
-              </>
-            ) : (
-              'Unrated'
-            )}
-            <span>·</span> {hotel.data.city.name}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * A hotel snapshot image thumbnail in the builder's image manager. Renders the
@@ -2328,6 +2322,27 @@ const PRICING_SECTION_LABELS: Record<string, string> = {
 };
 const DEFAULT_PRICING_ORDER = Object.keys(PRICING_SECTION_LABELS);
 
+/**
+ * Editable traveller mix keys for the "Summary & Pricing" tab. The bounds mirror
+ * the quotation schema (adults ≥ 1, others ≥ 0; adults ≤ 200, children ≤ 100) so
+ * a manually entered count can never be persisted as invalid.
+ */
+type TravelerCountKey = 'adults' | 'cwb' | 'cwob' | 'infants';
+const TRAVELER_COUNT_MIN: Record<TravelerCountKey, number> = {
+  adults: 1,
+  cwb: 0,
+  cwob: 0,
+  infants: 0,
+};
+const TRAVELER_COUNT_MAX: Record<TravelerCountKey, number> = {
+  adults: 200,
+  cwb: 100,
+  cwob: 100,
+  infants: 100,
+};
+const clampTravelerCount = (key: TravelerCountKey, value: number): number =>
+  Math.min(TRAVELER_COUNT_MAX[key], Math.max(TRAVELER_COUNT_MIN[key], Math.floor(value)));
+
 export function QuotationBuilderPage() {
   const { quotationId = '', versionId = '' } = useParams();
   const navigate = useNavigate();
@@ -2336,6 +2351,10 @@ export function QuotationBuilderPage() {
   const canManageAirlineMedia = hasPermission(PERMISSIONS.MASTER_AIRLINES_MANAGE_MEDIA);
   const quotation = useQuotation(quotationId);
   const save = useUpdateQuotationVersion(quotationId, versionId);
+  // Traveller counts live on the quotation (copied from the lead), not in the
+  // version snapshot, so manual edits are persisted with a quotation-level PATCH
+  // before the version save recomputes the stored totals from them.
+  const updateQuotation = useUpdateQuotation(quotationId);
   const weblinkSettings = useUpdateQuotationWeblinkSettings(quotationId);
   const weblinkName = useUpdateQuotationWeblinkName(quotationId);
   const [weblinkNameValue, setWeblinkNameValue] = useState('');
@@ -2382,7 +2401,7 @@ export function QuotationBuilderPage() {
   const vehicleMasters = useVehicles(
     useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
   );
-  const [activeTab, setActiveTab] = useState('pricingMethod');
+  const [activeTab, setActiveTab] = useState('flight');
   // Overflow container for the sub-tab bar: the active tab is scrolled into
   // view on switch so it never hides outside the visible strip.
   const tabBarRef = useRef<HTMLDivElement | null>(null);
@@ -2425,6 +2444,24 @@ export function QuotationBuilderPage() {
   // this card. Cleared when that stay collapses; removal falls back
   // gracefully to the section (see the preview target below).
   const [lastExpandedHotelRowId, setLastExpandedHotelRowId] = useState<string | null>(null);
+  // Local-only expand/collapse for Cruise Stay cards, keyed by row id. UI state
+  // only — never persisted, and it never resets the underlying form data.
+  // Every cruise card starts collapsed whenever the Cruise subtab is shown.
+  const [expandedCruises, setExpandedCruises] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    // Re-opening the Cruise subtab resets to the all-collapsed default. Only
+    // the expand/collapse UI state is cleared; cruise field values are kept.
+    if (activeTab === 'cruise') setExpandedCruises({});
+  }, [activeTab]);
+  // Local-only expand/collapse for Vehicle cards, keyed by row id. UI state
+  // only — never persisted, and it never resets the underlying form data.
+  // Every vehicle card starts collapsed whenever the Vehicle subtab is shown.
+  const [expandedVehicles, setExpandedVehicles] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    // Re-opening the Vehicle subtab resets to the all-collapsed default. Only
+    // the expand/collapse UI state is cleared; vehicle field values are kept.
+    if (activeTab === 'vehicle') setExpandedVehicles({});
+  }, [activeTab]);
   // Selected sightseeing day position (reported by SightseeingSection): the
   // live preview follows this day. Position-based, so reorder/add/remove stay
   // exact via the matching source index stamped on each rendered day.
@@ -2433,19 +2470,6 @@ export function QuotationBuilderPage() {
   // preview follows this flight's journey legs. Null until the user expands
   // a flight; collapsing the active one falls back to the section.
   const [activeFlightIndex, setActiveFlightIndex] = useState<number | null>(null);
-  // Local-only expand/collapse for the Room Configuration and Meal Plan
-  // sections inside each hotel stay. UI state only — never persisted and never
-  // clearing form values. Both start collapsed for every stay (including stays
-  // added later); the user opens each section explicitly and it stays open
-  // until the user closes it.
-  const [expandedHotelSections, setExpandedHotelSections] = useState<
-    Record<string, { rooms?: boolean; meals?: boolean }>
-  >({});
-  const toggleHotelSection = (rowId: string, section: 'rooms' | 'meals') =>
-    setExpandedHotelSections((current) => ({
-      ...current,
-      [rowId]: { ...current[rowId], [section]: !(current[rowId]?.[section] ?? false) },
-    }));
   // Local-only expand/collapse for the Weblink Section Order accordion. UI
   // state only — never persisted. Always starts collapsed on every load.
   const [sectionOrderOpen, setSectionOrderOpen] = useState(false);
@@ -2495,6 +2519,18 @@ export function QuotationBuilderPage() {
   // Wait for the reset/prefill effect itself, not merely its backing queries.
   // Otherwise V1 can persist the sparse server seed one effect too early.
   const [initializedFormVersionId, setInitializedFormVersionId] = useState<string | null>(null);
+  // Manual traveller-count edits from "Summary & Pricing". Empty until the user
+  // types, so the lead/quotation prefill keeps working; once edited the user's
+  // value wins and is never reset by a refetch, another form field, or a tab
+  // switch. Stored as raw strings so an in-progress entry (e.g. clearing before
+  // retyping) is preserved; the numeric value is normalised for pricing.
+  const [travelerCountEdits, setTravelerCountEdits] = useState<
+    Partial<Record<TravelerCountKey, string>>
+  >({});
+  // A different quotation or version starts from a clean prefill again.
+  useEffect(() => {
+    setTravelerCountEdits({});
+  }, [quotationId, versionId]);
   // Keep the resolver in sync with the latest include/exclude state without
   // re-creating the whole form. Hotel is the only tab that always carries a
   // default empty row, so excluding it must bypass hotel validation entirely.
@@ -2519,9 +2555,6 @@ export function QuotationBuilderPage() {
   // and mobile; a single `livePreviewPinned` boolean is the only open/close
   // state (no separate pane switch).
   const [livePreviewPinned, setLivePreviewPinned] = useState(true);
-  // "Tax Note on Total Price" is a control dropdown: it defaults to the sentinel
-  // (keep the saved note) and only writes `taxNote` when a real option is picked.
-  const [taxNoteChoice, setTaxNoteChoice] = useState<string>(QUOTATION_TAX_NOTE_SENTINEL);
   const form = useForm<QuotationVersionInput>({
     resolver: async (values, context, options) => {
       // When a section is excluded, its rows must not be required. Hotel rows
@@ -2539,6 +2572,16 @@ export function QuotationBuilderPage() {
           ...prepared,
           services: (prepared.services ?? []).filter((service) => service.serviceType !== 'VEHICLE_TRANSFER'),
         };
+      // Additional Price Items: drop blank-label / non-positive rows so an
+      // in-progress row never blocks a save. They are ignored by every pricing
+      // engine when the quotation is section-priced, so keeping them here never
+      // changes a By Section total.
+      prepared = {
+        ...prepared,
+        packageCustomItems: (prepared.packageCustomItems ?? []).filter(
+          (item) => (item.label ?? '').trim().length > 0 && Number(item.amount) > 0,
+        ),
+      };
       return zodResolver(quotationVersionInputSchema)(prepared, context, options);
     },
     defaultValues: defaults,
@@ -2841,6 +2884,65 @@ export function QuotationBuilderPage() {
     () => (version ? normalizeQuotationVersionForBuilder(version) : undefined),
     [version],
   );
+
+  // Automatic profile-card values for the Settings placeholders, resolved with
+  // no overrides so the builder previews exactly what the public weblink shows.
+  const weblinkAutoProfile = useMemo(() => {
+    const d = quotation.data;
+    const travelers = [
+      d?.adults && `${d.adults} Adult${d.adults > 1 ? 's' : ''}`,
+      d?.childrenWithBed && `${d.childrenWithBed} CWB`,
+      d?.childrenWithoutBed && `${d.childrenWithoutBed} CWOB`,
+      d?.infants && `${d.infants} Infant${d.infants > 1 ? 's' : ''}`,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    return resolveWeblinkProfile({
+      autoValues: {
+        travelerName: d?.customerName ?? '',
+        travelDate: dateShort(d?.travelStartDate ?? null) ?? 'Flexible',
+        duration: weblinkAutoDisplay.durationText ?? 'As advised',
+        travelers,
+        cwbAges: '',
+        cwobAges: '',
+        infantAges: '',
+        quotationId: formatPublicQuotationNumber(d?.quotationNumber ?? ''),
+        destinations: weblinkAutoDisplay.profileDestination,
+      },
+      autoPreparedBy: {
+        name: builderVersion?.createdBy?.fullName ?? d?.createdBy?.fullName ?? '',
+        phone: settingsQuery.data?.profile?.phone ?? '',
+        email: settingsQuery.data?.profile?.email ?? '',
+      },
+      overrides: null,
+    });
+  }, [quotation.data, weblinkAutoDisplay, builderVersion, settingsQuery.data]);
+  const watchedWeblinkProfile = form.watch('weblinkProfile');
+  const setWeblinkProfileField = (
+    id: WeblinkProfileFieldId,
+    patch: { label?: string | null; value?: string | null; hidden?: boolean },
+  ) => {
+    const base = form.getValues('weblinkProfile') ?? {};
+    form.setValue(
+      'weblinkProfile',
+      { ...base, [id]: { ...(base[id] ?? {}), ...patch } },
+      { shouldDirty: true },
+    );
+  };
+  const setWeblinkProfilePreparedBy = (patch: {
+    label?: string | null;
+    name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    hidden?: boolean;
+  }) => {
+    const base = form.getValues('weblinkProfile') ?? {};
+    form.setValue(
+      'weblinkProfile',
+      { ...base, preparedBy: { ...(base.preparedBy ?? {}), ...patch } },
+      { shouldDirty: true },
+    );
+  };
 
   // Quotation destination name tokens (lead itinerary country/destination + summary)
   // used to match destination-attached master FAQs.
@@ -3192,6 +3294,8 @@ export function QuotationBuilderPage() {
             ...base.outbound,
             fromCity: depCity || null,
             toCity: destCity || null,
+            routeFrom: depCity || null,
+            routeTo: destCity || null,
             segments: [
               {
                 ...emptySegment(),
@@ -3206,6 +3310,8 @@ export function QuotationBuilderPage() {
             ...base.returnJourney,
             fromCity: destCity || null,
             toCity: depCity || null,
+            routeFrom: destCity || null,
+            routeTo: depCity || null,
             segments: [
               {
                 ...emptySegment(),
@@ -3222,6 +3328,8 @@ export function QuotationBuilderPage() {
         ...base.outbound,
         fromCity: depCity || null,
         toCity: destCity || null,
+        routeFrom: depCity || null,
+        routeTo: destCity || null,
         segments: [
           {
             ...emptySegment(),
@@ -3236,6 +3344,8 @@ export function QuotationBuilderPage() {
         ...base.returnJourney,
         fromCity: destCity || null,
         toCity: depCity || null,
+        routeFrom: destCity || null,
+        routeTo: depCity || null,
         segments: [
           {
             ...emptySegment(),
@@ -3264,9 +3374,6 @@ export function QuotationBuilderPage() {
         .map((stay) => stay.country?.trim())
         .filter(Boolean) as string[],
     );
-    // A freshly loaded version keeps its saved tax note; the dropdown starts on
-    // the "keep existing" sentinel until the user deliberately changes it.
-    setTaxNoteChoice(QUOTATION_TAX_NOTE_SENTINEL);
     form.reset({
       title:
         legacyTitle === legacyDestinationTitle || legacyTitle === legacyPrimaryDestinationTitle
@@ -3277,6 +3384,7 @@ export function QuotationBuilderPage() {
       packageHeading: version.packageHeading ?? null,
       weblinkDurationText: version.weblinkDurationText ?? null,
       weblinkProfileDestination: version.weblinkProfileDestination ?? null,
+      weblinkProfile: version.weblinkProfile ?? null,
       destinationSummary: version.destinationSummary,
       travelStartDate: version.travelStartDate ? new Date(version.travelStartDate) : null,
       travelEndDate: version.travelEndDate ? new Date(version.travelEndDate) : null,
@@ -3288,6 +3396,9 @@ export function QuotationBuilderPage() {
         Array.isArray((version as { pricingDisplayOrder?: unknown }).pricingDisplayOrder)
           ? ((version as { pricingDisplayOrder?: unknown }).pricingDisplayOrder as string[])
           : undefined,
+      pricingRowOrder: Array.isArray((version as { pricingRowOrder?: unknown }).pricingRowOrder)
+        ? ((version as { pricingRowOrder?: unknown }).pricingRowOrder as string[])
+        : undefined,
       markupMode: version.markupMode as QuotationVersionInput['markupMode'],
       markupValue: Number(version.markupValue),
       taxRate: Number(version.taxRate),
@@ -3296,6 +3407,22 @@ export function QuotationBuilderPage() {
       perChildWithBedPrice: Number(version.perChildWithBedPrice ?? 0),
       perChildWithoutBedPrice: Number(version.perChildWithoutBedPrice ?? 0),
       perInfantPrice: Number(version.perInfantPrice ?? 0),
+      packageCustomItems: Array.isArray(
+        (version as unknown as { packageCustomItems?: unknown }).packageCustomItems,
+      )
+        ? (
+            (version as unknown as {
+              packageCustomItems: Array<{ id?: unknown; label?: string | null; amount?: unknown }>;
+            }).packageCustomItems ?? []
+          ).map((item) => ({
+            id:
+              typeof item.id === 'string' && item.id.trim().length > 0
+                ? item.id.trim()
+                : newPricingRowId(),
+            label: String(item.label ?? ''),
+            amount: Number(item.amount ?? 0),
+          }))
+        : [],
       taxNote: version.taxNote ?? null,
       netAmount: Number(version.netAmount ?? 0),
       initialPaymentAmount: Number(version.initialPaymentAmount ?? 0),
@@ -3358,40 +3485,28 @@ export function QuotationBuilderPage() {
               (
                 normalizeFlightDetails(version.flightDetails) as unknown as {
                   flights?: Array<{
-                  bookmarkCode?: string | null;
-                  journeyType?: 'ROUND_TRIP' | 'ONEWAY_OUTBOUND' | 'ONEWAY_RETURN';
-                  outbound?: {
-                    fromCity?: string | null;
-                    toCity?: string | null;
-                    travelClass?: string | null;
-                    segments?: FlightSegmentInput[];
-                  };
-                  returnJourney?: {
-                    fromCity?: string | null;
-                    toCity?: string | null;
-                    travelClass?: string | null;
-                    segments?: FlightSegmentInput[];
-                  };
-                }>;
-              }
-            ).flights ?? []).map((record) => ({
-              bookmarkCode: record.bookmarkCode ?? null,
-              journeyType: record.journeyType ?? 'ROUND_TRIP',
-              outbound: {
-                ...defaultFlightDetails().outbound,
-                ...record.outbound,
-                segments: record.outbound?.segments?.length
-                  ? record.outbound.segments
-                  : [emptySegment()],
-              },
-              returnJourney: {
-                ...defaultFlightDetails().returnJourney,
-                ...record.returnJourney,
-                segments: record.returnJourney?.segments?.length
-                  ? record.returnJourney.segments
-                  : [emptySegment()],
-              },
-            })),
+                    bookmarkCode?: string | null;
+                    journeyType?: 'ROUND_TRIP' | 'ONEWAY_OUTBOUND' | 'ONEWAY_RETURN';
+                    outbound?: {
+                      fromCity?: string | null;
+                      toCity?: string | null;
+                      routeFrom?: string | null;
+                      routeTo?: string | null;
+                      travelClass?: string | null;
+                      segments?: FlightSegmentInput[];
+                    };
+                    returnJourney?: {
+                      fromCity?: string | null;
+                      toCity?: string | null;
+                      routeFrom?: string | null;
+                      routeTo?: string | null;
+                      travelClass?: string | null;
+                      segments?: FlightSegmentInput[];
+                    };
+                  }>;
+                }
+              ).flights ?? []
+            ).map((record) => hydrateFlightRecord(record, defaultFlightDetails())),
           }
         : prefilledFlight,
       hotelDetails: version.hotelDetails
@@ -3496,6 +3611,17 @@ export function QuotationBuilderPage() {
               ? 'Cruise Details'
               : row.taxCategory,
           notes: row.notes,
+          // Quotation-owned add-on pricing snapshot (every option) plus the
+          // section-wise basis. These fields were previously omitted from this
+          // explicit mapper, so reopening a quotation silently dropped every
+          // add-on pricing option and its label: the builder then showed the
+          // master defaults via fallback while the weblink rendered a single
+          // synthesized amount with no label, and the next save made the loss
+          // permanent. An explicit empty array is preserved too, so deleting
+          // every option never resurrects the master defaults on reload.
+          pricingBasis: (row.pricingBasis ?? null) as QuotationVersionInput['services'][number]['pricingBasis'],
+          pricingBasisLabel: row.pricingBasisLabel ?? null,
+          pricingSnapshot: (row.pricingSnapshot ?? null) as QuotationVersionInput['services'][number]['pricingSnapshot'],
           cruiseNights: (row as unknown as { cruiseNights?: number | null })?.cruiseNights ?? null,
           cruiseRoomLines: Array.isArray((row as unknown as { cruiseRoomLines?: unknown[] })?.cruiseRoomLines)
             ? ((row as unknown as { cruiseRoomLines: unknown[] }).cruiseRoomLines as unknown as QuotationVersionInput['services'][number]['cruiseRoomLines'])
@@ -4144,35 +4270,109 @@ export function QuotationBuilderPage() {
         )
       : null;
   const nights = itineraryNights > 0 ? itineraryNights : dateNights || null;
-  const travellers = [
-    q.adults ? `${q.adults} Adult(s)` : '',
-    q.childrenWithBed + q.childrenWithoutBed
-      ? `${q.childrenWithBed + q.childrenWithoutBed} Child(ren)`
-      : '',
-    q.infants ? `${q.infants} Infant(s)` : '',
-  ]
-    .filter(Boolean)
-    .join(', ');
 
   // Reference "Summary & Pricing": the package total is per-passenger pricing
-  // multiplied by this lead's traveller mix. Add-ons are quoted separately.
-  const pax = {
+  // multiplied by this lead's traveller mix. The mix is prefilled from the
+  // quotation snapshot but stays editable — a manual edit (kept as a draft
+  // string) overrides the prefill after validation, and is normalised to a
+  // non-negative whole number within the schema bounds for pricing.
+  const basePax = {
     adults: q.adults ?? 0,
     cwb: q.childrenWithBed ?? 0,
     cwob: q.childrenWithoutBed ?? 0,
     infants: q.infants ?? 0,
   };
+  const paxNumberFor = (key: TravelerCountKey): number => {
+    const draft = travelerCountEdits[key];
+    if (draft === undefined) return basePax[key];
+    const parsed = Number(draft);
+    if (draft.trim() === '' || !Number.isFinite(parsed)) return basePax[key];
+    return clampTravelerCount(key, parsed);
+  };
+  const pax: Record<TravelerCountKey, number> = {
+    adults: paxNumberFor('adults'),
+    cwb: paxNumberFor('cwb'),
+    cwob: paxNumberFor('cwob'),
+    infants: paxNumberFor('infants'),
+  };
+  const travelerCountsChanged =
+    pax.adults !== basePax.adults ||
+    pax.cwb !== basePax.cwb ||
+    pax.cwob !== basePax.cwob ||
+    pax.infants !== basePax.infants;
+  const onTravelerCountChange = (key: TravelerCountKey, raw: string) => {
+    setTravelerCountEdits((prev) => ({ ...prev, [key]: raw }));
+  };
+  // On blur an empty or invalid entry snaps back to a valid whole number instead
+  // of lingering as an uneditable blank.
+  const onTravelerCountBlur = (key: TravelerCountKey) => {
+    setTravelerCountEdits((prev) => {
+      const draft = prev[key];
+      if (draft === undefined) return prev;
+      const parsed = Number(draft);
+      const normalized =
+        draft.trim() === '' || !Number.isFinite(parsed)
+          ? clampTravelerCount(key, basePax[key])
+          : clampTravelerCount(key, parsed);
+      return { ...prev, [key]: String(normalized) };
+    });
+  };
+  const travellers = [
+    pax.adults ? `${pax.adults} Adult(s)` : '',
+    pax.cwb + pax.cwob ? `${pax.cwb + pax.cwob} Child(ren)` : '',
+    pax.infants ? `${pax.infants} Infant(s)` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
   const perPax = {
     adult: Number(form.watch('perAdultPrice') ?? 0),
     cwb: Number(form.watch('perChildWithBedPrice') ?? 0),
     cwob: Number(form.watch('perChildWithoutBedPrice') ?? 0),
     infant: Number(form.watch('perInfantPrice') ?? 0),
   };
-  const packageTotal =
+  // "Tax Note on Total Price" shows the saved note directly (no "keep existing"
+  // sentinel). A hidden/unset note maps to the explicit "Do not show" option so
+  // the control always has a real selection.
+  const savedTaxNote = form.watch('taxNote');
+  const taxNoteSelectValue = isPublicTaxNote(savedTaxNote)
+    ? savedTaxNote.trim()
+    : QUOTATION_TAX_NOTE_HIDDEN;
+  const travelerPackageTotal =
     perPax.adult * pax.adults +
     perPax.cwb * pax.cwb +
     perPax.cwob * pax.cwob +
     perPax.infant * pax.infants;
+  // Additional Price Items — flat package charges (By Traveler only). Only
+  // valid positive-amount rows contribute so a blank/invalid amount can never
+  // corrupt the live total.
+  const packageCustomItems = form.watch('packageCustomItems') ?? [];
+  const packageCustomItemsTotal = packageCustomItems.reduce(
+    (sum, item) =>
+      sum + (item.label?.trim() && Number(item.amount) > 0 ? Number(item.amount) : 0),
+    0,
+  );
+  // The traveler subtotal plus any fixed additional price items. This single
+  // value drives every live display (Summary & Pricing, the Pricing Breakdown
+  // and the total package price) so they can never drift from the resolver.
+  const packageTotal = travelerPackageTotal + packageCustomItemsTotal;
+  // Builder-only row ordering for the By Traveler Price Breakdown. The effective
+  // order is the saved `pricingRowOrder` (filtered to live rows) with any new
+  // rows appended: traveler rows first, then custom items.
+  const orderablePricingRowIds = orderPricingRows(
+    [
+      ...TRAVELER_PRICING_ROW_IDS.map((id) => ({ id })),
+      ...packageCustomItems.map((item, index) => ({ id: item.id ?? `custom-${index}` })),
+    ],
+    form.watch('pricingRowOrder'),
+  ).map((row) => row.id);
+  const movePricingRow = (id: string, direction: -1 | 1) => {
+    const index = orderablePricingRowIds.indexOf(id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= orderablePricingRowIds.length) return;
+    const next = [...orderablePricingRowIds];
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    form.setValue('pricingRowOrder', next, { shouldDirty: true });
+  };
   const packageMargin = packageTotal - Number(form.watch('netAmount') ?? 0);
   const currency = form.watch('currency');
   // Currency-aware money formatting (₹10,000.00, $10,000.00, …). Indian
@@ -4216,6 +4416,7 @@ export function QuotationBuilderPage() {
         perChildWithBedPrice: form.watch('perChildWithBedPrice'),
         perChildWithoutBedPrice: form.watch('perChildWithoutBedPrice'),
         perInfantPrice: form.watch('perInfantPrice'),
+        packageCustomItems: form.watch('packageCustomItems'),
       },
       quotation: {
         adults: pax.adults,
@@ -4234,24 +4435,6 @@ export function QuotationBuilderPage() {
   // summary card, the Pricing Breakdown tab and the Summary & Pricing tab can
   // never disagree about the mode.
   const livePricing = resolveCurrentPricing();
-  // Switching the pricing method never deletes the other configuration — it
-  // only changes which subtotal is authoritative. When the customer total
-  // would change, the agent confirms first.
-  const handlePricingMethodChange = (next: 'SECTION_WISE' | 'PER_PERSON') => {
-    if (next === form.getValues('pricingMode')) return;
-    const fromTotal = resolveCurrentPricing().grandTotal;
-    const toTotal = resolveCurrentPricing(next).grandTotal;
-    // Confirm only when BOTH methods carry a real price and the customer total
-    // would change — switching to a not-yet-configured method is expected and
-    // needs no confirmation.
-    if (fromTotal > 0 && toTotal > 0 && fromTotal !== toTotal) {
-      const confirmed = window.confirm(
-        `Changing the pricing method will change the quotation total from ${formatMoney(fromTotal)} to ${formatMoney(toTotal)}. Continue?`,
-      );
-      if (!confirmed) return;
-    }
-    form.setValue('pricingMode', next, { shouldDirty: true });
-  };
   const isSectionWisePricing = livePricing.pricingMode === 'SECTION_WISE';
   // The single authoritative builder total. In section-wise mode this is always
   // the resolver's sectionTotal. It also becomes the sectionTotal when the
@@ -4289,6 +4472,7 @@ export function QuotationBuilderPage() {
       perChildWithBedPrice: form.watch('perChildWithBedPrice'),
       perChildWithoutBedPrice: form.watch('perChildWithoutBedPrice'),
       perInfantPrice: form.watch('perInfantPrice'),
+      packageCustomItems: form.watch('packageCustomItems'),
     },
     quotation: {
       adults: pax.adults,
@@ -4337,6 +4521,19 @@ export function QuotationBuilderPage() {
     if (path === 'currency') return 'Currency must be a 3-letter code.';
     if (path.includes('images')) return 'One image gallery could not be read.';
     return `${path.replace(/\.\d+\./g, ' ').replace(/\./g, ' ')}: ${message}`;
+  };
+
+  // Persist a manually edited traveller mix before the version save. The
+  // version's stored totals are recomputed by the backend from the quotation's
+  // counts, so the counts must land first. No-op when the prefill is unchanged.
+  const persistTravelerCounts = async () => {
+    if (!travelerCountsChanged) return;
+    await updateQuotation.mutateAsync({
+      adults: pax.adults,
+      childrenWithBed: pax.cwb,
+      childrenWithoutBed: pax.cwob,
+      infants: pax.infants,
+    });
   };
 
   const submit = form.handleSubmit(
@@ -4389,7 +4586,15 @@ export function QuotationBuilderPage() {
         if (excluded.vehicle) filtered = filtered.filter((service) => service.serviceType !== 'VEHICLE_TRANSFER');
         return filtered;
       })();
-      save.mutate(
+      void (async () => {
+        try {
+          await persistTravelerCounts();
+        } catch {
+          // Never save the version against stale counts if the count PATCH fails.
+          initialSnapshotRef.current.autoSaving = false;
+          return;
+        }
+        save.mutate(
         {
           ...value,
           flightDetails,
@@ -4483,6 +4688,13 @@ export function QuotationBuilderPage() {
               description: (c as { description?: string | null }).description?.trim() || null,
               category: (c as { category?: string | null }).category?.trim() || null,
             })),
+          packageCustomItems: (value.packageCustomItems ?? [])
+            .filter((item) => item.label?.trim() && Number(item.amount) > 0)
+            .map((item) => ({
+              ...(item.id ? { id: item.id } : {}),
+              label: item.label!.trim(),
+              amount: Number(item.amount),
+            })),
           services: seq(
             (persistedServices as unknown as QuotationVersionInput['services']).map((service: QuotationVersionInput['services'][number]) => {
                 if ((service as unknown as { serviceType: string })?.serviceType !== 'CRUISE') return service;
@@ -4541,6 +4753,7 @@ export function QuotationBuilderPage() {
           weblinkSectionOrder: value.weblinkSectionOrder?.length
             ? resolveWeblinkSectionOrder(value.weblinkSectionOrder)
             : null,
+          weblinkProfile: normalizeWeblinkProfileConfig(value.weblinkProfile),
           destinationExpertConfig: value.destinationExpertConfig
             ? {
                 enabled: Boolean(value.destinationExpertConfig.enabled),
@@ -4584,7 +4797,8 @@ export function QuotationBuilderPage() {
             initialSnapshotRef.current.autoSaving = false;
           },
         },
-      );
+        );
+      })();
     },
     (errors) => {
       // Surface why a save was blocked instead of failing silently.
@@ -4942,10 +5156,20 @@ export function QuotationBuilderPage() {
               </p>
             )}
             <div className="space-y-4">
-              {vehicleRows.map(({ row, index }) => {
+              {vehicleRows.map(({ row, index }, vehiclePosition) => {
                 const vehicle = watchedServices?.[index] as unknown as QuotationVersionInput['services'][number] | undefined;
+                // Every vehicle card starts collapsed; state is keyed by row id.
+                const isVehicleExpanded = expandedVehicles[row.id] ?? false;
+                const isFirstVehicle = vehiclePosition === 0;
+                const isLastVehicle = vehiclePosition === vehicleRows.length - 1;
+                // Move up/down by one vehicle position, preserving each row's data.
+                const moveVehicle = (direction: -1 | 1) => {
+                  const target = vehicleRows[vehiclePosition + direction];
+                  if (target) services.move(index, target.index);
+                };
                 const vehicleType = (vehicle as unknown as { city?: string | null })?.city ?? '';
                 const vehicleId = (vehicle as unknown as { vehicleId?: string | null })?.vehicleId ?? '';
+                const vehicleName = (vehicle as unknown as { name?: string | null })?.name ?? '';
                 const usage = (vehicle as unknown as { notes?: string | null })?.notes ?? '';
                 const description = (vehicle as unknown as { description?: string | null })?.description ?? '';
                 const amount = Number((vehicle as unknown as { sellingPrice?: number | null })?.sellingPrice ?? 0);
@@ -4963,11 +5187,67 @@ export function QuotationBuilderPage() {
                     className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
                   >
                     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3">
-                      <h4 className={`${subsectionHeading} text-slate-800 normal-case tracking-normal`}>Vehicle</h4>
-                      <Button size="sm" variant="ghost" onClick={() => services.remove(index)}>
-                        <Trash2 className="h-4 w-4 text-red-600" /> Remove
-                      </Button>
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <button
+                          type="button"
+                          aria-expanded={isVehicleExpanded ? 'true' : 'false'}
+                          aria-label={`${isVehicleExpanded ? 'Collapse' : 'Expand'} vehicle ${vehiclePosition + 1}`}
+                          title={`${isVehicleExpanded ? 'Collapse' : 'Expand'} vehicle ${vehiclePosition + 1}`}
+                          onClick={() =>
+                            setExpandedVehicles((current) => ({
+                              ...current,
+                              [row.id]: !isVehicleExpanded,
+                            }))
+                          }
+                          className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={`h-5 w-5 transition-transform ${isVehicleExpanded ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+                        <h4 className={`${subsectionHeading} truncate text-slate-800 normal-case tracking-normal`}>
+                          {vehicleName.trim() || 'Vehicle'}
+                        </h4>
+                      </div>
+                      {/* Icon trio matching the hotel stay header: Up, Down and
+                          an icon-only Delete carrying its own accessible label. */}
+                      <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-0.5 hover:bg-transparent"
+                          disabled={isFirstVehicle}
+                          aria-label={`Move vehicle ${vehiclePosition + 1} up`}
+                          title={`Move vehicle ${vehiclePosition + 1} up`}
+                          onClick={() => moveVehicle(-1)}
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-0.5 hover:bg-transparent"
+                          disabled={isLastVehicle}
+                          aria-label={`Move vehicle ${vehiclePosition + 1} down`}
+                          title={`Move vehicle ${vehiclePosition + 1} down`}
+                          onClick={() => moveVehicle(1)}
+                        >
+                          <ArrowDown className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-0.5"
+                          aria-label={`Remove vehicle ${vehiclePosition + 1}`}
+                          title={`Remove vehicle ${vehiclePosition + 1}`}
+                          onClick={() => services.remove(index)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-600" />
+                        </Button>
+                      </div>
                     </header>
+                    {isVehicleExpanded && (
                     <div className="space-y-4 p-4">
                       {isVehicleSectionWise && (
                         <div className="grid gap-4 md:grid-cols-3">
@@ -5142,6 +5422,7 @@ export function QuotationBuilderPage() {
                         onSelectPdf={(identity) => setServicePdfImage(index, identity)}
                       />
                     </div>
+                    )}
                   </article>
                 );
               })}
@@ -5185,7 +5466,10 @@ export function QuotationBuilderPage() {
         className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
       >
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3">
-          <div className="flex items-center gap-3">
+          {/* Title claims the flexible space (shrinking first on narrow
+              widths) so the action group below never gets pushed into a
+              left-aligned wrapped row: with ml-auto it stays right. */}
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               type="button"
               aria-expanded={(expandedHotels[rowId] ?? false) ? 'true' : 'false'}
@@ -5205,17 +5489,12 @@ export function QuotationBuilderPage() {
                 className={`h-5 w-5 transition-transform ${expandedHotels[rowId] ? 'rotate-180' : ''}`}
               />
             </button>
-            <div>
+            <div className="min-w-0">
               {hotel?.hotelName?.trim() ? (
-                <>
-                  <h4 className="font-semibold text-slate-800">{hotel.hotelName}</h4>
-                  {hotel?.city?.trim() ? (
-                    <p className="text-xs text-slate-500">{hotel.city}</p>
-                  ) : null}
-                </>
+                <h4 className="truncate font-semibold text-[16px] text-slate-800">{hotel.hotelName}</h4>
               ) : (
                 <>
-                  <h4 className="font-semibold text-slate-800">Hotel Stay</h4>
+                  <h4 className="truncate font-semibold text-[16px] text-slate-800">Hotel Stay</h4>
                   <p className="text-xs text-slate-500">
                     Choose the hotel, stay dates and room details.
                   </p>
@@ -5223,28 +5502,43 @@ export function QuotationBuilderPage() {
               )}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Compact action group that never shrinks away and always hugs
+              the right edge — including on a wrapped second row (ml-auto)
+              and across wrapped lines within itself (justify-end) —
+              so the first card (with Add Hotel Before) aligns exactly
+              like every other card. Tight gap-1.5 keeps every control
+              together with no excessive spacing. No fixed widths involved. */}
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 ml-auto shrink-0">
             {allowInsertBefore && (
               <Button
                 size="sm"
                 variant="secondary"
+                className="px-2 text-[12px]"
                 aria-label={`Add hotel before stay ${index + 1}`}
                 onClick={() => insertHotelBefore(index)}
               >
-                <Plus className="h-4 w-4" /> Add Hotel Before
+                Add Hotel Before
               </Button>
             )}
             <Button
               size="sm"
               variant="secondary"
+              className="px-2 text-[12px]"
               aria-label={`Add hotel after stay ${index + 1}`}
               onClick={() => insertHotelAfter(index)}
             >
-              <Plus className="h-4 w-4" /> Add Hotel After
+              Add Hotel After
             </Button>
+            {/* Icon trio in its own tight subgroup: 2px gaps plus minimal
+                side padding group Up/Down/Delete ~70% closer than the
+                surrounding action spacing, without touching the Add buttons
+                or the title-to-group distance. Icons stay 16px; only the
+                spacing around them shrinks. */}
+            <div className="flex items-center gap-0.5">
             <Button
               size="sm"
-              variant="secondary"
+              variant="ghost"
+              className="px-0.5 hover:bg-transparent"
               disabled={index === 0}
               aria-label={`Move hotel stay ${index + 1} up`}
               title={`Move hotel stay ${index + 1} up`}
@@ -5254,7 +5548,8 @@ export function QuotationBuilderPage() {
             </Button>
             <Button
               size="sm"
-              variant="secondary"
+              variant="ghost"
+              className="px-0.5 hover:bg-transparent"
               disabled={index === hotels.fields.length - 1}
               aria-label={`Move hotel stay ${index + 1} down`}
               title={`Move hotel stay ${index + 1} down`}
@@ -5262,18 +5557,26 @@ export function QuotationBuilderPage() {
             >
               <ArrowDown className="h-4 w-4" />
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => hotels.remove(index)}>
-              <Trash2 className="h-4 w-4 text-red-600" /> Remove
+            <Button
+              size="sm"
+              variant="ghost"
+              className="px-0.5"
+              aria-label={`Remove hotel stay ${index + 1}`}
+              title={`Remove hotel stay ${index + 1}`}
+              onClick={() => hotels.remove(index)}
+            >
+              <Trash2 className="h-4 w-4 text-red-600" />
             </Button>
+            </div>
           </div>
         </header>
 
         {(expandedHotels[rowId] ?? false) && (
           <>
-            <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+            <div className="grid gap-5 p-4">
               <div className="space-y-5">
                 <div>
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-3">
                     <HotelMasterFields
                     canCost={canCost}
                     preferredCity={hotel?.city ?? undefined}
@@ -5362,24 +5665,14 @@ export function QuotationBuilderPage() {
                   </div>
                 </div>
 
-                <p className={`${subsectionHeadingMuted} border-b border-border/50 pb-1`}>Stay Dates</p>
                 {/*
-                  Stay Dates layout: Check-in and Check-out each occupy their
-                  own row so the date inputs stay readable. City spans both
-                  date rows (rendered once); Nights and Total Rooms sit
-                  underneath in a third row. On narrow screens everything
-                  stacks in the same order.
+                  Stay dates layout (heading removed): Check-in date + time
+                  share the first row and Check-out date + time share the
+                  second row so the date inputs stay readable. Nights and
+                  Total Rooms sit underneath in a third row pair. On narrow
+                  screens everything stacks in the same order.
                 */}
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,1fr)]">
-                  <label className="text-sm font-semibold text-slate-800 md:row-span-2">
-                    City <span className="text-xs font-normal text-muted-foreground">· from master</span>
-                    <input
-                      aria-label="Hotel city"
-                      value={hotel?.city ?? ''}
-                      readOnly
-                      className={`${fieldMuted} mt-1`}
-                    />
-                  </label>
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
                   <label className="text-sm font-semibold text-slate-800">
                     Check-in date
                     <HotelDatePicker
@@ -5462,8 +5755,26 @@ export function QuotationBuilderPage() {
                         className={`${field} mt-1`}
                       />
                     </label>
+                    {hotel?.checkOutTime ? (
+                      <button
+                        type="button"
+                        aria-label="Clear check-out time"
+                        title="Clear check-out time"
+                        onClick={() => {
+                          form.setValue(`hotels.${index}.checkOutTime`, null, {
+                            shouldDirty: true,
+                          });
+                          form.setValue(`hotels.${index}.showCheckOutTime`, false, {
+                            shouldDirty: true,
+                          });
+                        }}
+                        className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
+                      >
+                        <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear
+                      </button>
+                    ) : null}
                   </div>
-                  <label className="text-sm font-semibold text-slate-800 md:col-start-2">
+                  <label className="text-sm font-semibold text-slate-800">
                     <span className={calculatedLabel}>Nights</span>
                     <input
                       aria-label="Hotel nights"
@@ -5471,7 +5782,6 @@ export function QuotationBuilderPage() {
                       value={String(displayNights)}
                       className={`${fieldMuted} mt-1`}
                     />
-                    <span className="text-[11px] text-muted-foreground">calculated from dates</span>
                   </label>
                   <label className="text-sm font-semibold text-slate-800">
                     <span className={calculatedLabel}>Total Rooms</span>
@@ -5542,22 +5852,6 @@ export function QuotationBuilderPage() {
                 </div>
 
                 <div>
-                  <div className="mb-3 flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      aria-expanded={(expandedHotelSections[rowId]?.rooms ?? false) ? 'true' : 'false'}
-                      aria-label={`${expandedHotelSections[rowId]?.rooms ? 'Collapse' : 'Expand'} room configuration for hotel stay ${index + 1}`}
-                      title={`${expandedHotelSections[rowId]?.rooms ? 'Collapse' : 'Expand'} room configuration for hotel stay ${index + 1}`}
-                      onClick={() => toggleHotelSection(rowId, 'rooms')}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
-                    >
-                      <ChevronDown
-                        aria-hidden="true"
-                        className={`h-4 w-4 transition-transform ${expandedHotelSections[rowId]?.rooms ? 'rotate-180' : ''}`}
-                      />
-                    </button>
-                  </div>
-                  {(expandedHotelSections[rowId]?.rooms ?? false) && (
                   <HotelRoomLinesEditor
                     form={form}
                     hotelIndex={index}
@@ -5565,35 +5859,16 @@ export function QuotationBuilderPage() {
                     canCost={canCost}
                     recalculateTotals={() => recalculateHotelTotals(index)}
                   />
-                  )}
                 </div>
 
                 <div>
-                  <div className="mb-3 flex items-center justify-between gap-2 border-b border-border/50 pb-1">
-                    <p className={subsectionHeadingMuted}>Meal Plan</p>
-                    <button
-                      type="button"
-                      aria-expanded={(expandedHotelSections[rowId]?.meals ?? false) ? 'true' : 'false'}
-                      aria-label={`${expandedHotelSections[rowId]?.meals ? 'Collapse' : 'Expand'} meal plan for hotel stay ${index + 1}`}
-                      title={`${expandedHotelSections[rowId]?.meals ? 'Collapse' : 'Expand'} meal plan for hotel stay ${index + 1}`}
-                      onClick={() => toggleHotelSection(rowId, 'meals')}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
-                    >
-                      <ChevronDown
-                        aria-hidden="true"
-                        className={`h-4 w-4 transition-transform ${expandedHotelSections[rowId]?.meals ? 'rotate-180' : ''}`}
-                      />
-                    </button>
-                  </div>
-                  {(expandedHotelSections[rowId]?.meals ?? false) && (
                   <HotelMealPlanLinesEditor
                     form={form}
-                  hotelIndex={index}
-                  hotelId={hotel?.hotelId}
-                  canCost={canCost}
-                  recalculateTotals={() => recalculateHotelTotals(index)}
+                    hotelIndex={index}
+                    hotelId={hotel?.hotelId}
+                    canCost={canCost}
+                    recalculateTotals={() => recalculateHotelTotals(index)}
                   />
-                  )}
                 </div>
 
                 {hotel &&
@@ -5631,15 +5906,6 @@ export function QuotationBuilderPage() {
                 )}
 
               </div>
-
-              <HotelPreview
-                hotelId={hotel?.hotelId}
-                snapshotImageUrl={hotel?.hotelName ? hotel?.images?.[0]?.url : undefined}
-                snapshotThumbnailUrl={
-                  hotel?.hotelName ? hotel?.images?.[0]?.thumbnailUrl : undefined
-                }
-                snapshotAuthoritative={hotel?.imageSnapshotPresent}
-              />
             </div>
 
             <QuotationImageManager
@@ -5719,20 +5985,86 @@ export function QuotationBuilderPage() {
             )}
 
             <div className="space-y-4">
-              {cruiseRows.map(({ row, index }) => {
+              {cruiseRows.map(({ row, index }, cruisePosition) => {
                 const cruise = watchedServices?.[index] as unknown as QuotationVersionInput['services'][number] | undefined;
+                // Every cruise card starts collapsed; state is keyed by row id.
+                const isCruiseExpanded = expandedCruises[row.id] ?? false;
+                const isFirstCruise = cruisePosition === 0;
+                const isLastCruise = cruisePosition === cruiseRows.length - 1;
+                // Move up/down by one cruise position, preserving each row's data.
+                const moveCruise = (direction: -1 | 1) => {
+                  const target = cruiseRows[cruisePosition + direction];
+                  if (target) services.move(index, target.index);
+                };
                 return (
                   <article
                     key={row.id}
                     className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
                   >
                     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3">
-                      <h4 className={`${subsectionHeading} text-slate-800 normal-case tracking-normal`}>Cruise Stay</h4>
-                      <Button size="sm" variant="ghost" onClick={() => services.remove(index)}>
-                        <Trash2 className="h-4 w-4 text-red-600" /> Remove
-                      </Button>
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <button
+                          type="button"
+                          aria-expanded={isCruiseExpanded ? 'true' : 'false'}
+                          aria-label={`${isCruiseExpanded ? 'Collapse' : 'Expand'} cruise stay ${cruisePosition + 1}`}
+                          title={`${isCruiseExpanded ? 'Collapse' : 'Expand'} cruise stay ${cruisePosition + 1}`}
+                          onClick={() =>
+                            setExpandedCruises((current) => ({
+                              ...current,
+                              [row.id]: !isCruiseExpanded,
+                            }))
+                          }
+                          className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={`h-5 w-5 transition-transform ${isCruiseExpanded ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+                        <h4 className={`${subsectionHeading} text-slate-800 normal-case tracking-normal`}>
+                          {cruise?.name?.trim() || 'Cruise Stay'}
+                        </h4>
+                      </div>
+                      {/* Icon trio matching the hotel stay header: Up, Down and
+                          an icon-only Delete carrying its own accessible label. */}
+                      <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-0.5 hover:bg-transparent"
+                          disabled={isFirstCruise}
+                          aria-label={`Move cruise stay ${cruisePosition + 1} up`}
+                          title={`Move cruise stay ${cruisePosition + 1} up`}
+                          onClick={() => moveCruise(-1)}
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-0.5 hover:bg-transparent"
+                          disabled={isLastCruise}
+                          aria-label={`Move cruise stay ${cruisePosition + 1} down`}
+                          title={`Move cruise stay ${cruisePosition + 1} down`}
+                          onClick={() => moveCruise(1)}
+                        >
+                          <ArrowDown className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-0.5"
+                          aria-label={`Remove cruise stay ${cruisePosition + 1}`}
+                          title={`Remove cruise stay ${cruisePosition + 1}`}
+                          onClick={() => services.remove(index)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-600" />
+                        </Button>
+                      </div>
                     </header>
-                    <div className="space-y-4 p-4">
+                    {isCruiseExpanded && (
+                      <>
+                        <div className="space-y-4 p-4">
                       <div className="grid gap-4 md:grid-cols-2">
                         <label className="text-sm font-semibold text-slate-800">
                           Cruise Name <span className="text-red-500">*</span>
@@ -5866,6 +6198,8 @@ export function QuotationBuilderPage() {
                       onRemove={(imageIndex) => removeServiceImage(index, imageIndex)}
                       onSelectPdf={(identity) => setServicePdfImage(index, identity)}
                     />
+                      </>
+                    )}
                   </article>
                 );
               })}
@@ -6385,6 +6719,54 @@ export function QuotationBuilderPage() {
       }
     };
     const isAddonSectionWise = (form.watch('pricingMode') as string) === 'SECTION_WISE';
+    // Quotation-owned pricing options for one row: a saved snapshot wins,
+    // otherwise fall back to the master's options (a legacy single price
+    // normalizes to one option). Editing these never touches the master.
+    const pricingOptionsFor = (index: number, master: (typeof masters)[number]) => {
+      // A saved snapshot (even an explicitly emptied one) is authoritative;
+      // only a legacy row with NO snapshot falls back to the master's options.
+      // Falling back on an empty array would re-synthesize a deleted option
+      // from the legacy single price/basis.
+      const saved = watchedServices?.[index]?.pricingSnapshot;
+      const hasSnapshot = Array.isArray(saved);
+      return normalizeAddonPricingSnapshot({
+        id: master.id,
+        pricing: hasSnapshot ? saved : master.pricing,
+        price: hasSnapshot ? null : master.price,
+        currency: master.currency,
+        pricingBasis: hasSnapshot ? null : master.pricingBasis,
+      });
+    };
+    // Persist a quotation-specific edit (label/amount) to one pricing option by
+    // writing the whole price list back, materializing a snapshot when needed.
+    const updatePricingOption = (
+      index: number,
+      options: AddOnServicePricingEntry[],
+      optionIndex: number,
+      patch: Partial<AddOnServicePricingEntry>,
+    ) => {
+      const next = options.map((entry, i) => (i === optionIndex ? { ...entry, ...patch } : entry));
+      form.setValue(
+        `services.${index}.pricingSnapshot` as 'services.0.pricingSnapshot',
+        next as never,
+        { shouldDirty: true },
+      );
+    };
+    // Delete one pricing option for THIS quotation only. The master record is
+    // never touched; writing the shortened list (possibly empty) marks the
+    // snapshot as quotation-owned so removed defaults never come back on reload.
+    const removePricingOption = (
+      index: number,
+      options: AddOnServicePricingEntry[],
+      optionIndex: number,
+    ) => {
+      const next = options.filter((_, i) => i !== optionIndex);
+      form.setValue(
+        `services.${index}.pricingSnapshot` as 'services.0.pricingSnapshot',
+        next as never,
+        { shouldDirty: true },
+      );
+    };
     return (
       <div className="space-y-4">
         <label className="flex items-center gap-2 text-sm font-medium">
@@ -6402,217 +6784,260 @@ export function QuotationBuilderPage() {
             <p className="text-sm text-slate-600">
               {isAddonSectionWise ? 'Select additional services — pricing entered per service below:' : 'Select additional services to include (pricing entered centrally in Summary & Pricing):'}
             </p>
-            <div className="overflow-hidden rounded-lg border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50 text-left text-slate-600">
-                    <th className="w-20 px-4 py-3 font-semibold">Include</th>
-                    <th className="w-48 px-4 py-3 font-semibold">Service</th>
-                    <th className="px-4 py-3 font-semibold">Description</th>
-                    {isAddonSectionWise && <th className="w-40 px-4 py-3 font-semibold">Pricing Basis</th>}
-                    {isAddonSectionWise && <th className="w-24 px-4 py-3 font-semibold">Qty</th>}
-                    {isAddonSectionWise && <th className="w-40 px-4 py-3 font-semibold">Unit Price</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {masters.length === 0 && (
-                    <tr>
-                      <td colSpan={isAddonSectionWise ? 6 : 3} className="px-4 py-8 text-center text-slate-500">
-                        {addOnMasters.isPending
-                          ? 'Loading add-on services…'
-                          : 'No add-on services in the master list yet.'}
-                      </td>
-                    </tr>
-                  )}
-                  {masters.map((master) => {
-                    const index = includedIndex(master.id);
-                    const included = index >= 0;
-                    return (
-                      <tr key={master.id} className="border-t align-top">
-                        <td className="px-4 py-3">
+            {masters.length === 0 ? (
+              <p className="rounded-lg border px-4 py-8 text-center text-slate-500">
+                {addOnMasters.isPending
+                  ? 'Loading add-on services…'
+                  : 'No add-on services in the master list yet.'}
+              </p>
+            ) : (
+              <div className="min-w-0 space-y-4">
+                {masters.map((master) => {
+                  const index = includedIndex(master.id);
+                  const included = index >= 0;
+                  const options = included ? pricingOptionsFor(index, master) : [];
+                  return (
+                    <article
+                      key={master.id}
+                      className="min-w-0 rounded-xl border border-border bg-card p-4"
+                    >
+                      <div className="flex min-w-0 flex-wrap items-center gap-3">
+                        <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
                           <input
                             type="checkbox"
+                            className="h-4 w-4"
                             aria-label={`Include ${master.name}`}
                             checked={included}
                             onChange={(event) => toggle(master, event.target.checked)}
                           />
-                        </td>
-                        <td className="px-4 py-3 font-medium text-slate-800">{master.name}</td>
-                        <td className="min-w-[18rem] px-4 py-3">
+                          Include
+                        </label>
+                        <div className="min-w-0 flex-1">
                           {included ? (
-                            <>
-                              <RichTextEditor
-                                ariaLabel={`${master.name} description`}
-                                value={(watchedServices?.[index]?.description as string) ?? ''}
-                                onChange={(html) =>
-                                  form.setValue(
-                                    `services.${index}.description` as 'services.0.description',
-                                    html as never,
-                                    { shouldDirty: true },
-                                  )
-                                }
-                                placeholder="Describe this add-on for the customer…"
-                              />
-                              <QuotationImageManager
-                                label={`${master.name} Images`}
-                                ariaPrefix={`addon-${index}`}
-                                images={
-                                  (watchedServices?.[index]?.images ?? []) as QuotationImage[]
-                                }
-                                pdfImageUrl={watchedServices?.[index]?.pdfImageUrl}
-                                onMove={(imageIndex, direction) =>
-                                  moveServiceImage(index, imageIndex, direction)
-                                }
-                                onRemove={(imageIndex) => removeServiceImage(index, imageIndex)}
-                                onSelectPdf={(identity) => setServicePdfImage(index, identity)}
-                              />
-                              {(() => {
-                                const options = normalizeAddonPricingSnapshot({
-                                  id: master.id,
-                                  pricing:
-                                    watchedServices?.[index]?.pricingSnapshot ??
-                                    master.pricing,
-                                  price: master.price,
-                                  currency: master.currency,
-                                  pricingBasis: master.pricingBasis,
-                                });
-                                if (options.length === 0) return null;
-                                return (
-                                  <p className="mt-2 text-xs text-slate-500">
-                                    Pricing options:{' '}
-                                    {options
-                                      .map((option) => formatAddonPricingOption(option))
-                                      .join(' · ')}
-                                  </p>
-                                );
-                              })()}
-
-                            </>
+                            <input
+                              type="text"
+                              maxLength={200}
+                              aria-label={`${master.name} service name`}
+                              placeholder="Service name / display label"
+                              value={((watchedServices?.[index]?.name as string) ?? '') || ''}
+                              onChange={(event) =>
+                                form.setValue(
+                                  `services.${index}.name` as 'services.0.name',
+                                  event.target.value as never,
+                                  { shouldDirty: true },
+                                )
+                              }
+                              className={`${field} min-w-0`}
+                            />
                           ) : (
-                            <p className="text-slate-500">
-                              {master.description
-                                ?.replace(/<[^>]*>/g, ' ')
-                                .replace(/\s+/g, ' ')
-                                .trim() || '—'}
+                            <p className="min-w-0 [overflow-wrap:anywhere] font-medium text-slate-800">
+                              {master.name}
                             </p>
                           )}
-                        </td>
-                        {isAddonSectionWise && (
-                        <td className="px-4 py-3">
-                          {included ? (
-                            <select
-                              aria-label={`${master.name} pricing basis`}
-                              value={(watchedServices?.[index]?.pricingBasis as string) ?? 'FIXED'}
-                              onChange={(event) => {
-                                const basis = event.target.value;
+                        </div>
+                      </div>
+                      {included ? (
+                        <div className="mt-4 min-w-0 space-y-4">
+                          <div className="min-w-0">
+                            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Description
+                            </p>
+                            <RichTextEditor
+                              ariaLabel={`${master.name} description`}
+                              value={(watchedServices?.[index]?.description as string) ?? ''}
+                              onChange={(html) =>
                                 form.setValue(
-                                  `services.${index}.pricingBasis` as 'services.0.pricingBasis',
-                                  basis as never,
-                                  { shouldDirty: true },
-                                );
-                                if (basis === 'PER_TRAVELER') {
-                                  form.setValue(
-                                    `services.${index}.quantity` as 'services.0.quantity',
-                                    Math.max(1, totalPax),
-                                    { shouldDirty: true },
-                                  );
-                                }
-                              }}
-                              className={`${field}`}
-                            >
-                              {ADDON_BASES.map(([value, label]) => (
-                                <option key={value} value={value}>
-                                  {label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        )}
-                        {isAddonSectionWise && (
-                        <td className="px-4 py-3">
-                          {included ? (
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              aria-label={`${master.name} quantity`}
-                              value={Number(watchedServices?.[index]?.quantity ?? 1) || 1}
-                              readOnly={
-                                (watchedServices?.[index]?.pricingBasis as string) ===
-                                'PER_TRAVELER'
-                              }
-                              onChange={(event) =>
-                                form.setValue(
-                                  `services.${index}.quantity` as 'services.0.quantity',
-                                  Math.max(1, Math.floor(Number(event.target.value) || 1)),
+                                  `services.${index}.description` as 'services.0.description',
+                                  html as never,
                                   { shouldDirty: true },
                                 )
                               }
-                              className={`${field} ${
-                                (watchedServices?.[index]?.pricingBasis as string) ===
-                                'PER_TRAVELER'
-                                  ? 'bg-slate-100'
-                                  : ''
-                              }`}
-                            />
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        )}
-                        {isAddonSectionWise && (
-                        <td className="px-4 py-3">
-                          <div className="flex items-stretch overflow-hidden rounded-lg border border-slate-300">
-                            <span className="flex items-center bg-slate-100 px-2 text-slate-500">
-                              {currency}
-                            </span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              aria-label={`${master.name} price`}
-                              disabled={!included}
-                              value={
-                                included
-                                  ? (watchedServices?.[index]?.sellingPrice ?? 0)
-                                  : (master.price ?? 0)
-                              }
-                              onChange={(event) =>
-                                included &&
-                                form.setValue(
-                                  `services.${index}.sellingPrice`,
-                                  event.target.value === '' ? 0 : Number(event.target.value),
-                                  { shouldDirty: true },
-                                )
-                              }
-                              className="min-w-0 flex-1 bg-card px-3 py-2 outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                              placeholder="Describe this add-on for the customer…"
                             />
                           </div>
-                        </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                {isAddonSectionWise && (
-                <tfoot>
-                  <tr className="border-t bg-slate-50">
-                    <td colSpan={5} className="px-4 py-3 text-right font-semibold text-slate-700">
-                      Total Add-on Services:
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-slate-900">
-                      {currency} {total.toFixed(2)}
-                    </td>
-                  </tr>
-                </tfoot>
-                )}
-                {!isAddonSectionWise && masters.filter(m=> includedIndex(m.id)>=0).length>0 && (
-                  <tfoot><tr className="border-t bg-slate-50"><td colSpan={3} className="px-4 py-2 text-sm text-slate-600">Add-ons selected: {masters.filter(m=> includedIndex(m.id)>=0).length} · Pricing in Summary & Pricing</td></tr></tfoot>
-                )}
-              </table>
-            </div>
+                          {options.length > 0 && (
+                            <div className="min-w-0">
+                              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Pricing options
+                              </p>
+                              <div className="space-y-2">
+                                {options.map((option, optionIndex) => (
+                                  <div
+                                    key={option.id}
+                                    className="flex min-w-0 flex-wrap items-center gap-2"
+                                  >
+                                    <input
+                                      type="text"
+                                      maxLength={80}
+                                      aria-label={`${master.name} pricing option ${optionIndex + 1} label`}
+                                      placeholder="Label"
+                                      value={option.label ?? ''}
+                                      onChange={(event) =>
+                                        updatePricingOption(index, options, optionIndex, {
+                                          label: event.target.value,
+                                        })
+                                      }
+                                      className={`${field} min-w-0 flex-1`}
+                                    />
+                                    <div className="flex shrink-0 items-stretch overflow-hidden rounded-lg border border-slate-300">
+                                      <span className="flex items-center bg-slate-100 px-2 text-xs text-slate-500">
+                                        {option.currency || currency}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        aria-label={`${master.name} pricing option ${optionIndex + 1} amount`}
+                                        value={option.price ?? ''}
+                                        onChange={(event) =>
+                                          updatePricingOption(index, options, optionIndex, {
+                                            price:
+                                              event.target.value === ''
+                                                ? null
+                                                : Math.max(0, Number(event.target.value)),
+                                          })
+                                        }
+                                        className="w-28 min-w-0 bg-card px-3 py-2 text-sm outline-none"
+                                      />
+                                    </div>
+                                    <button
+                                      type="button"
+                                      aria-label={`Remove ${master.name} pricing option ${optionIndex + 1}`}
+                                      title="Delete this pricing option"
+                                      onClick={() => removePricingOption(index, options, optionIndex)}
+                                      className="shrink-0 rounded-lg p-2 text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {isAddonSectionWise && (
+                            <div className="grid min-w-0 gap-3 sm:grid-cols-3">
+                              <label className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <span className="mb-1 block">Pricing Basis</span>
+                                <select
+                                  aria-label={`${master.name} pricing basis`}
+                                  value={(watchedServices?.[index]?.pricingBasis as string) ?? 'FIXED'}
+                                  onChange={(event) => {
+                                    const basis = event.target.value;
+                                    form.setValue(
+                                      `services.${index}.pricingBasis` as 'services.0.pricingBasis',
+                                      basis as never,
+                                      { shouldDirty: true },
+                                    );
+                                    if (basis === 'PER_TRAVELER') {
+                                      form.setValue(
+                                        `services.${index}.quantity` as 'services.0.quantity',
+                                        Math.max(1, totalPax),
+                                        { shouldDirty: true },
+                                      );
+                                    }
+                                  }}
+                                  className={`${field} min-w-0`}
+                                >
+                                  {ADDON_BASES.map(([value, label]) => (
+                                    <option key={value} value={value}>
+                                      {label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <span className="mb-1 block">Qty</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  aria-label={`${master.name} quantity`}
+                                  value={Number(watchedServices?.[index]?.quantity ?? 1) || 1}
+                                  readOnly={
+                                    (watchedServices?.[index]?.pricingBasis as string) ===
+                                    'PER_TRAVELER'
+                                  }
+                                  onChange={(event) =>
+                                    form.setValue(
+                                      `services.${index}.quantity` as 'services.0.quantity',
+                                      Math.max(1, Math.floor(Number(event.target.value) || 1)),
+                                      { shouldDirty: true },
+                                    )
+                                  }
+                                  className={`${field} min-w-0 ${
+                                    (watchedServices?.[index]?.pricingBasis as string) ===
+                                    'PER_TRAVELER'
+                                      ? 'bg-slate-100'
+                                      : ''
+                                  }`}
+                                />
+                              </label>
+                              <label className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <span className="mb-1 block">Unit Price</span>
+                                <div className="flex items-stretch overflow-hidden rounded-lg border border-slate-300">
+                                  <span className="flex items-center bg-slate-100 px-2 text-xs text-slate-500">
+                                    {currency}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    aria-label={`${master.name} price`}
+                                    value={
+                                      included
+                                        ? (watchedServices?.[index]?.sellingPrice ?? 0)
+                                        : (master.price ?? 0)
+                                    }
+                                    onChange={(event) =>
+                                      form.setValue(
+                                        `services.${index}.sellingPrice`,
+                                        event.target.value === '' ? 0 : Number(event.target.value),
+                                        { shouldDirty: true },
+                                      )
+                                    }
+                                    className="min-w-0 flex-1 bg-card px-3 py-2 text-sm outline-none"
+                                  />
+                                </div>
+                              </label>
+                            </div>
+                          )}
+                          <QuotationImageManager
+                            label={`${master.name} Images`}
+                            ariaPrefix={`addon-${index}`}
+                            images={
+                              (watchedServices?.[index]?.images ?? []) as QuotationImage[]
+                            }
+                            pdfImageUrl={watchedServices?.[index]?.pdfImageUrl}
+                            onMove={(imageIndex, direction) =>
+                              moveServiceImage(index, imageIndex, direction)
+                            }
+                            onRemove={(imageIndex) => removeServiceImage(index, imageIndex)}
+                            onSelectPdf={(identity) => setServicePdfImage(index, identity)}
+                          />
+                        </div>
+                      ) : (
+                        <p className="mt-3 min-w-0 text-sm text-slate-500 [overflow-wrap:anywhere]">
+                          {master.description
+                            ?.replace(/<[^>]*>/g, ' ')
+                            .replace(/\s+/g, ' ')
+                            .trim() || '—'}
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+            {isAddonSectionWise && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-slate-50 px-4 py-3 text-sm">
+                <span className="font-semibold text-slate-700">Total Add-on Services:</span>
+                <span className="font-semibold text-slate-900">
+                  {currency} {total.toFixed(2)}
+                </span>
+              </div>
+            )}
+            {!isAddonSectionWise && masters.filter(m=> includedIndex(m.id)>=0).length>0 && (
+              <p className="text-sm text-slate-600">Add-ons selected: {masters.filter(m=> includedIndex(m.id)>=0).length} · Pricing in Summary & Pricing</p>
+            )}
           </>
         )}
       </div>
@@ -6789,7 +7214,7 @@ export function QuotationBuilderPage() {
               Open Live Preview
             </Button>
           )}
-          <Button type="submit" isLoading={save.isPending}>
+          <Button type="submit" isLoading={save.isPending || updateQuotation.isPending}>
             <Save className="h-4 w-4" />
             Save quotation
           </Button>
@@ -6882,132 +7307,6 @@ export function QuotationBuilderPage() {
 
       {/* Tab panels — only the active tab is mounted (RHF keeps field values). */}
       <section className="rounded-xl border border-border bg-card p-4">
-        {activeTab === 'pricingMethod' &&
-          (() => {
-            const mode = (form.watch('pricingMode') ?? 'PER_PERSON') as 'SECTION_WISE' | 'PER_PERSON';
-            const switchMode = (next: 'SECTION_WISE' | 'PER_PERSON') => {
-              if (next === form.getValues('pricingMode')) return;
-              const cur = form.watch('currency') || 'INR';
-              const fmt = (v: number) => {
-                try {
-                  return new Intl.NumberFormat(cur === 'INR' ? 'en-IN' : undefined, { style: 'currency', currency: cur }).format(v);
-                } catch {
-                  return `${cur} ${v.toFixed(2)}`;
-                }
-              };
-              try {
-                const fromPricing = resolveQuotationPricing({
-                  version: {
-                    pricingMode: mode,
-                    finalAmount: 0,
-                    currency: cur,
-                    flightDetails: form.getValues('flightDetails'),
-                    hotelDetails: form.getValues('hotelDetails'),
-                    hotels: form.getValues('hotels'),
-                    sightseeingDetails: form.getValues('sightseeingDetails'),
-                    services: form.getValues('services'),
-                    includeVisa: form.getValues('includeVisa'),
-                    visaAmount: form.getValues('visaAmount'),
-                    visaServiceCharge: form.getValues('visaServiceCharge'),
-                    visaGstPercent: form.getValues('visaGstPercent'),
-                    visaVfsCharge: form.getValues('visaVfsCharge'),
-                    discountAmount: form.getValues('discountAmount'),
-                    taxRate: form.getValues('taxRate'),
-                    perAdultPrice: form.getValues('perAdultPrice'),
-                    perChildWithBedPrice: form.getValues('perChildWithBedPrice'),
-                    perChildWithoutBedPrice: form.getValues('perChildWithoutBedPrice'),
-                    perInfantPrice: form.getValues('perInfantPrice'),
-                  },
-                  quotation: {
-                    adults: quotation.data?.adults ?? 0,
-                    childrenWithBed: quotation.data?.childrenWithBed ?? 0,
-                    childrenWithoutBed: quotation.data?.childrenWithoutBed ?? 0,
-                    infants: quotation.data?.infants ?? 0,
-                    currency: cur,
-                  },
-                });
-                const toPricing = resolveQuotationPricing({
-                  version: {
-                    pricingMode: next,
-                    finalAmount: 0,
-                    currency: cur,
-                    flightDetails: form.getValues('flightDetails'),
-                    hotelDetails: form.getValues('hotelDetails'),
-                    hotels: form.getValues('hotels'),
-                    sightseeingDetails: form.getValues('sightseeingDetails'),
-                    services: form.getValues('services'),
-                    includeVisa: form.getValues('includeVisa'),
-                    visaAmount: form.getValues('visaAmount'),
-                    visaServiceCharge: form.getValues('visaServiceCharge'),
-                    visaGstPercent: form.getValues('visaGstPercent'),
-                    visaVfsCharge: form.getValues('visaVfsCharge'),
-                    discountAmount: form.getValues('discountAmount'),
-                    taxRate: form.getValues('taxRate'),
-                    perAdultPrice: form.getValues('perAdultPrice'),
-                    perChildWithBedPrice: form.getValues('perChildWithBedPrice'),
-                    perChildWithoutBedPrice: form.getValues('perChildWithoutBedPrice'),
-                    perInfantPrice: form.getValues('perInfantPrice'),
-                  },
-                  quotation: {
-                    adults: quotation.data?.adults ?? 0,
-                    childrenWithBed: quotation.data?.childrenWithBed ?? 0,
-                    childrenWithoutBed: quotation.data?.childrenWithoutBed ?? 0,
-                    infants: quotation.data?.infants ?? 0,
-                    currency: cur,
-                  },
-                });
-                if (fromPricing.grandTotal > 0 && toPricing.grandTotal > 0 && fromPricing.grandTotal !== toPricing.grandTotal) {
-                  const ok = window.confirm(
-                    `Change pricing method? Your quotation currently uses ${mode === 'SECTION_WISE' ? 'By Section' : 'By Traveler'} (${fmt(fromPricing.grandTotal)}). Switching to ${next === 'SECTION_WISE' ? 'By Section' : 'By Traveler'} will change the authoritative total to ${fmt(toPricing.grandTotal)}. Existing values will be preserved where possible.`,
-                  );
-                  if (!ok) return;
-                }
-              } catch (_e) {
-                void _e;
-              }
-              form.setValue('pricingMode', next, { shouldDirty: true });
-            };
-            return (
-              <div className="space-y-4">
-                <div className="text-center">
-                  <h2 className="text-base font-semibold text-slate-900">How would you like to price this quotation?</h2>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {(
-                    [
-                      ['SECTION_WISE', 'By Section', 'Set and calculate a selling price for each service section individually.'],
-                      ['PER_PERSON', 'By Traveler', 'Build the itinerary and calculate the final package price per traveler.'],
-                    ] as const
-                  ).map(([value, title, desc]) => {
-                    const selected = mode === value;
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        aria-pressed={selected}
-                        aria-label={title}
-                        onClick={() => switchMode(value as 'SECTION_WISE' | 'PER_PERSON')}
-                        className={`text-left rounded-xl border-2 p-5 transition ${selected ? 'border-brand-600 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className={`text-sm font-semibold ${selected ? 'text-brand-700' : 'text-slate-800'}`}>{title}</p>
-                            <p className="mt-1 text-xs leading-5 text-slate-600">{desc}</p>
-                          </div>
-                          <span
-                            className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 bg-white'}`}
-                            aria-hidden="true"
-                          >
-                            {selected ? '✓' : ''}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         {TABS.filter(
           (t) => t.types && t.key === activeTab && !['addon', 'vehicle', 'cruise'].includes(t.key),
         ).map((tab) => (
@@ -7446,14 +7745,6 @@ export function QuotationBuilderPage() {
                 Pricing
               </div>
               <div className="space-y-5 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2">
-                  <div className="text-sm">
-                    <span className="font-semibold text-slate-800">Pricing Method: </span>
-                    <span className="font-medium text-brand-700">{isSectionWiseMode ? 'By Section' : 'By Traveler'}</span>
-                    <span className="ml-2 text-xs text-slate-500">{isSectionWiseMode ? 'Section totals are authoritative' : 'Traveler prices are authoritative'}</span>
-                  </div>
-                  <Button type="button" size="sm" variant="secondary" onClick={() => handlePricingMethodChange(isSectionWiseMode ? 'PER_PERSON' : 'SECTION_WISE')}>Change pricing method</Button>
-                </div>
                 {isSectionWiseMode && (
                   <>
                     <label className="block max-w-sm text-sm font-semibold text-slate-800">
@@ -7546,12 +7837,12 @@ export function QuotationBuilderPage() {
                     </p>
                   </>
                 )}
-                <label className="block max-w-sm text-sm font-semibold text-slate-800">
+                <label className="block text-sm font-semibold text-slate-800">
                   Currency <span className="text-red-500">*</span>
                   <select
                     aria-label="Currency"
                     {...form.register('currency')}
-                    className={`${field} mt-1`}
+                    className="mt-1 block w-auto min-w-[5.5rem] rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors"
                   >
                     {(SETTINGS_CURRENCIES.includes(currency as (typeof SETTINGS_CURRENCIES)[number])
                       ? SETTINGS_CURRENCIES
@@ -7565,93 +7856,169 @@ export function QuotationBuilderPage() {
                 </label>
 
                 {!isSectionWisePricing && (
-                <div className="grid gap-4 md:grid-cols-4">
-                  {(
-                    [
-                      ['Per Adult Price', 'perAdultPrice', true],
-                      ['Per CWB Price', 'perChildWithBedPrice', false],
-                      ['Per CWOB Price', 'perChildWithoutBedPrice', false],
-                      ['Per Infant Price', 'perInfantPrice', false],
-                    ] as const
-                  ).map(([label, name, required]) => (
-                    <label key={name} className="text-sm font-semibold text-slate-800">
-                      {label} {required && <span className="text-red-500">*</span>}
-                      <div className="mt-1 flex items-stretch overflow-hidden rounded-lg border border-slate-300 focus-within:border-brand-500">
-                        <span className="flex items-center bg-slate-100 px-2 text-slate-500">
-                          {currency}
-                        </span>
+                  <>
+                    {/* One aligned row per traveler category: price on the left,
+                        matching count on the right. */}
+                    <div className="space-y-4">
+                      {(
+                        [
+                          ['Per Adult Price', 'perAdultPrice', true, 'Adults', 'adults'],
+                          ['Per CWB Price', 'perChildWithBedPrice', false, 'CWB', 'cwb'],
+                          ['Per CWOB Price', 'perChildWithoutBedPrice', false, 'CWOB', 'cwob'],
+                          ['Per Infant Price', 'perInfantPrice', false, 'Infants', 'infants'],
+                        ] as const
+                      ).map(([priceLabel, priceName, required, countLabel, countKey]) => (
+                        <div
+                          key={priceName}
+                          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-start gap-4"
+                        >
+                          <label className="min-w-0 text-sm font-semibold text-slate-800">
+                            {priceLabel} {required && <span className="text-red-500">*</span>}
+                            <div className="mt-1 flex items-stretch overflow-hidden rounded-lg border border-slate-300 focus-within:border-brand-500">
+                              <span className="flex items-center bg-slate-100 px-2 text-slate-500">
+                                {currency}
+                              </span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                aria-label={priceLabel}
+                                {...form.register(priceName, MONEY_FIELD)}
+                                className="min-w-0 flex-1 bg-card px-3 py-2 text-sm outline-none"
+                              />
+                            </div>
+                          </label>
+                          <label className="min-w-0 text-sm font-semibold text-slate-800">
+                            {countLabel}
+                            <input
+                              type="number"
+                              min={TRAVELER_COUNT_MIN[countKey]}
+                              max={TRAVELER_COUNT_MAX[countKey]}
+                              step="1"
+                              aria-label={countLabel}
+                              value={travelerCountEdits[countKey] ?? String(basePax[countKey])}
+                              onChange={(event) => onTravelerCountChange(countKey, event.target.value)}
+                              onBlur={() => onTravelerCountBlur(countKey)}
+                              className={`${field} mt-1`}
+                            />
+                          </label>
+                          <div className="flex items-center gap-1 pt-6">
+                            <button
+                              type="button"
+                              aria-label={`Move ${countLabel} up`}
+                              disabled={orderablePricingRowIds.indexOf(countKey) <= 0}
+                              onClick={() => movePricingRow(countKey, -1)}
+                              className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Move ${countLabel} down`}
+                              disabled={
+                                orderablePricingRowIds.indexOf(countKey) < 0 ||
+                                orderablePricingRowIds.indexOf(countKey) >=
+                                  orderablePricingRowIds.length - 1
+                              }
+                              onClick={() => movePricingRow(countKey, 1)}
+                              className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40"
+                            >
+                              ↓
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Totals + Tax Note, kept out of the price/count pairs. */}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="text-sm font-semibold text-slate-800">
+                        Total Package Price
                         <input
-                          type="number"
-                          step="0.01"
-                          aria-label={label}
-                          {...form.register(name, MONEY_FIELD)}
-                          className="min-w-0 flex-1 bg-card px-3 py-2 text-sm outline-none"
+                          readOnly
+                          aria-label="Total Package Price"
+                          value={formatMoney(packageTotal)}
+                          className={`${field} mt-1 bg-slate-100`}
                         />
-                      </div>
-                    </label>
-                  ))}
-                </div>
+                      </label>
+                      <label className="text-sm font-semibold text-slate-800">
+                        Tax Note on Total Price
+                        <select
+                          aria-label="Tax note"
+                          value={taxNoteSelectValue}
+                          onChange={(event) => {
+                            const choice = event.target.value;
+                            form.setValue(
+                              'taxNote',
+                              choice === QUOTATION_TAX_NOTE_HIDDEN ? null : choice,
+                              { shouldDirty: true },
+                            );
+                          }}
+                          className={`${field} mt-1`}
+                        >
+                          {QUOTATION_TAX_NOTE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </>
                 )}
 
-                <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-6">
-                  {(
-                    [
-                      ['Adults', pax.adults],
-                      ['CWB', pax.cwb],
-                      ['CWOB', pax.cwob],
-                      ['Infants', pax.infants],
-                    ] as const
-                  ).map(([label, value]) => (
-                    <label key={label} className="text-sm font-semibold text-slate-800">
-                      {label}
-                      <input readOnly value={value} className={`${field} mt-1 bg-slate-100`} />
-                    </label>
-                  ))}
-                  {!isSectionWisePricing && (
-                  <label className="text-sm font-semibold text-slate-800">
-                    Total Package Price
-                    <input
-                      readOnly
-                      aria-label="Total Package Price"
-                      value={formatMoney(packageTotal)}
-                      className={`${field} mt-1 bg-slate-100`}
-                    />
-                  </label>
-                  )}
-                  {isSectionWisePricing && (
+                {isSectionWisePricing && (
+                  <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-6">
+                    {(
+                      [
+                        ['Adults', 'adults'],
+                        ['CWB', 'cwb'],
+                        ['CWOB', 'cwob'],
+                        ['Infants', 'infants'],
+                      ] as const
+                    ).map(([label, key]) => (
+                      <label key={key} className="text-sm font-semibold text-slate-800">
+                        {label}
+                        <input
+                          type="number"
+                          min={TRAVELER_COUNT_MIN[key]}
+                          max={TRAVELER_COUNT_MAX[key]}
+                          step="1"
+                          aria-label={label}
+                          value={travelerCountEdits[key] ?? String(basePax[key])}
+                          onChange={(event) => onTravelerCountChange(key, event.target.value)}
+                          onBlur={() => onTravelerCountBlur(key)}
+                          className={`${field} mt-1`}
+                        />
+                      </label>
+                    ))}
                     <label className="text-sm font-semibold text-slate-800">
                       Section Total
                       <input readOnly aria-label="Section Total" value={formatMoney(livePricing.sectionTotal)} className={`${field} mt-1 bg-slate-100`} />
                     </label>
-                  )}
-                  <label className="text-sm font-semibold text-slate-800">
-                    Tax Note on Total Price
-                    <select
-                      aria-label="Tax note"
-                      value={taxNoteChoice}
-                      onChange={(event) => {
-                        const choice = event.target.value;
-                        setTaxNoteChoice(choice);
-                        if (choice === QUOTATION_TAX_NOTE_SENTINEL) return;
-                        form.setValue(
-                          'taxNote',
-                          resolveTaxNoteChoice(choice, form.getValues('taxNote')) ?? null,
-                          { shouldDirty: true },
-                        );
-                      }}
-                      className={`${field} mt-1`}
-                    >
-                      {QUOTATION_TAX_NOTE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="mt-1 block text-xs font-normal text-slate-500">
-                      Current: {form.watch('taxNote')?.trim() || 'not shown publicly'}
-                    </span>
-                  </label>
-                </div>
+                    <label className="text-sm font-semibold text-slate-800">
+                      Tax Note on Total Price
+                      <select
+                        aria-label="Tax note"
+                        value={taxNoteSelectValue}
+                        onChange={(event) => {
+                          const choice = event.target.value;
+                          form.setValue(
+                            'taxNote',
+                            choice === QUOTATION_TAX_NOTE_HIDDEN ? null : choice,
+                            { shouldDirty: true },
+                          );
+                        }}
+                        className={`${field} mt-1`}
+                      >
+                        {QUOTATION_TAX_NOTE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
 
                 {canCost && (
                   <div className="grid gap-4 md:grid-cols-2">
@@ -7698,26 +8065,47 @@ export function QuotationBuilderPage() {
                   <p className="mt-1 text-sm text-white/80">Enter prices to see the breakdown.</p>
                 ) : (
                   <div className="mt-3 space-y-1 text-sm">
-                    {(
-                      [
-                        ['Adults', pax.adults, perPax.adult],
-                        ['CWB', pax.cwb, perPax.cwb],
-                        ['CWOB', pax.cwob, perPax.cwob],
-                        ['Infants', pax.infants, perPax.infant],
-                      ] as const
-                    )
-                      .filter(([, count, price]) => count > 0 && price > 0)
-                      .map(([label, count, price]) => (
+                    {(() => {
+                      const stripRows = orderPricingRows(
+                        [
+                          { id: 'adults', kind: 'traveler' as const, label: 'Adults', count: pax.adults, price: perPax.adult },
+                          { id: 'cwb', kind: 'traveler' as const, label: 'CWB', count: pax.cwb, price: perPax.cwb },
+                          { id: 'cwob', kind: 'traveler' as const, label: 'CWOB', count: pax.cwob, price: perPax.cwob },
+                          { id: 'infants', kind: 'traveler' as const, label: 'Infants', count: pax.infants, price: perPax.infant },
+                          ...packageCustomItems.map((item, index) => ({
+                            id: item.id ?? `custom-${index}`,
+                            kind: 'custom' as const,
+                            label: item.label ?? '',
+                            count: 0,
+                            price: Number(item.amount ?? 0),
+                          })),
+                        ].filter((row) =>
+                          row.kind === 'traveler'
+                            ? row.count > 0 && row.price > 0
+                            : row.label.trim().length > 0 && row.price > 0,
+                        ),
+                        form.watch('pricingRowOrder'),
+                      );
+                      return stripRows.map((row) => (
                         <div
-                          key={label}
+                          key={row.id}
                           className="flex justify-between border-b border-white/20 py-1"
                         >
                           <span>
-                            {label}: {count} × {formatMoney(price)}
+                            {row.kind === 'traveler' ? (
+                              `${row.label}: ${row.count} × ${formatMoney(row.price)}`
+                            ) : (
+                              <>
+                                {row.label} <span className="text-white/70">(Fixed)</span>
+                              </>
+                            )}
                           </span>
-                          <span>{formatMoney(price * count)}</span>
+                          <span>
+                            {formatMoney(row.kind === 'traveler' ? row.price * row.count : row.price)}
+                          </span>
                         </div>
-                      ))}
+                      ));
+                    })()}
                     <div className="flex justify-between py-1 font-bold">
                       <span>Package Subtotal:</span>
                       <span>{formatMoney(packageTotal)}</span>
@@ -7741,6 +8129,149 @@ export function QuotationBuilderPage() {
                   </div>
                 )}
               </div>
+            )}
+
+            {!isSectionWisePricing && (
+              <section className="rounded-xl border p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-800">Additional Price Items</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">Flat package amounts added on top of the traveler subtotal — e.g. Flights, Visa Fees, Travel Insurance. Not multiplied by the traveler count.</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={() => {
+                      const current = form.getValues('packageCustomItems') ?? [];
+                      form.setValue(
+                        'packageCustomItems',
+                        [...current, { id: newPricingRowId(), label: '', amount: 0 }],
+                        { shouldDirty: true },
+                      );
+                    }}
+                  >
+                    <Plus className="h-4 w-4" /> Add Item
+                  </Button>
+                </div>
+                {(() => {
+                  const items = form.watch('packageCustomItems') ?? [];
+                  if (items.length === 0) {
+                    return (
+                      <div className="mt-4 rounded-lg border border-dashed p-6 text-center">
+                        <p className="text-sm font-medium text-slate-700">No additional price items yet</p>
+                        <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
+                          Items are fixed package amounts — not multiplied by traveler count. Add
+                          flights, visa fees, travel insurance, etc.
+                        </p>
+                      </div>
+                    );
+                  }
+                  const updateItem = (
+                    index: number,
+                    patch: { label?: string; amount?: number },
+                  ) => {
+                    const next = [...(form.getValues('packageCustomItems') ?? [])];
+                    next[index] = { ...next[index], ...patch } as {
+                      label: string;
+                      amount: number;
+                    };
+                    form.setValue('packageCustomItems', next, { shouldDirty: true });
+                  };
+                  return (
+                    <div className="mt-4 space-y-3">
+                      {items.map((item, index) => (
+                        <div
+                          key={item.id ?? index}
+                          className="flex flex-wrap items-end gap-3"
+                        >
+                          <label className="min-w-[200px] flex-1 text-sm font-semibold text-slate-800">
+                            Label
+                            <input
+                              type="text"
+                              aria-label={`Additional item ${index + 1} label`}
+                              maxLength={100}
+                              placeholder="e.g. Flight tickets"
+                              value={item.label ?? ''}
+                              onChange={(event) => updateItem(index, { label: event.target.value })}
+                              className={`${field} mt-1`}
+                            />
+                          </label>
+                          <label className="text-sm font-semibold text-slate-800">
+                            Amount
+                            <div className="mt-1 flex items-stretch overflow-hidden rounded-lg border border-slate-300 focus-within:border-brand-500">
+                              <span className="flex items-center bg-slate-100 px-2 text-slate-500">
+                                {currency}
+                              </span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                aria-label={`Additional item ${index + 1} amount`}
+                                value={item.amount ? item.amount : ''}
+                                onChange={(event) => {
+                                  const raw = event.target.value;
+                                  updateItem(index, {
+                                    amount: raw === '' ? 0 : Math.max(0, Number(raw) || 0),
+                                  });
+                                }}
+                                className="w-32 min-w-0 bg-card px-3 py-2 text-sm outline-none"
+                              />
+                            </div>
+                          </label>
+                          <div className="flex items-center gap-1">
+                            {(() => {
+                              const rowId = item.id ?? `custom-${index}`;
+                              const position = orderablePricingRowIds.indexOf(rowId);
+                              return (
+                                <>
+                                  <button
+                                    type="button"
+                                    aria-label={`Move ${item.label?.trim() || `item ${index + 1}`} up`}
+                                    disabled={position <= 0}
+                                    onClick={() => movePricingRow(rowId, -1)}
+                                    className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40"
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label={`Move ${item.label?.trim() || `item ${index + 1}`} down`}
+                                    disabled={
+                                      position < 0 ||
+                                      position >= orderablePricingRowIds.length - 1
+                                    }
+                                    onClick={() => movePricingRow(rowId, 1)}
+                                    className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40"
+                                  >
+                                    ↓
+                                  </button>
+                                </>
+                              );
+                            })()}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            aria-label={`Delete item ${index + 1}`}
+                            onClick={() => {
+                              const next = [...(form.getValues('packageCustomItems') ?? [])];
+                              next.splice(index, 1);
+                              form.setValue('packageCustomItems', next, { shouldDirty: true });
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      <p className="text-xs text-slate-500">
+                        Fixed package amounts — each appears as its own line in the public Package
+                        Price Breakdown. Not multiplied by traveler count.
+                      </p>
+                    </div>
+                  );
+                })()}
+              </section>
             )}
 
             {isSectionWisePricing &&
@@ -8123,36 +8654,6 @@ export function QuotationBuilderPage() {
                 </label>
               </div>
             </section>
-
-            <section className="grid gap-4 rounded-xl border p-5 md:grid-cols-1">
-              <label className="text-sm font-semibold text-slate-800">
-                Introduction
-                <textarea rows={2} {...form.register('introduction')} className={`${field} mt-1`} />
-                <span className="mt-1 block text-xs font-normal text-slate-500">
-                  Shown to the customer near the beginning of the weblink and PDF.
-                </span>
-              </label>
-              <label className="text-sm font-semibold text-slate-800">
-                Notes for Customer
-                <textarea rows={2} {...form.register('notes')} className={`${field} mt-1`} />
-                <span className="mt-1 block text-xs font-normal text-slate-500">
-                  Shown to the customer near the end of the weblink and PDF.
-                </span>
-              </label>
-              {canCost && (
-                <label className="text-sm font-semibold text-slate-800">
-                  Internal Notes
-                  <textarea
-                    rows={2}
-                    {...form.register('internalNotes')}
-                    className={`${field} mt-1`}
-                  />
-                  <span className="mt-1 block text-xs font-normal text-slate-500">
-                    Staff only - never shown in customer weblinks or PDFs.
-                  </span>
-                </label>
-              )}
-            </section>
           </div>
         )}
 
@@ -8191,10 +8692,10 @@ export function QuotationBuilderPage() {
               const details = form.watch('flightDetails') as unknown;
               if (!details || typeof details !== 'object') return null;
               return getFlightPerTravelerBreakdown(details, {
-                adults: (q as unknown as { adults?: number }).adults ?? 0,
-                childrenWithBed: (q as unknown as { childrenWithBed?: number }).childrenWithBed ?? 0,
-                childrenWithoutBed: (q as unknown as { childrenWithoutBed?: number }).childrenWithoutBed ?? 0,
-                infants: (q as unknown as { infants?: number }).infants ?? 0,
+                adults: pax.adults,
+                childrenWithBed: pax.cwb,
+                childrenWithoutBed: pax.cwob,
+                infants: pax.infants,
               });
             })();
             const money = (value: number) => formatMoney(Math.round(value * 100) / 100);
@@ -8610,6 +9111,206 @@ export function QuotationBuilderPage() {
                         </div>
                       );
                     })}
+
+                    {/* Profile Information card rows — per-item label/value/show
+                        overrides plus the Prepared By composite. Display only;
+                        never writes back to lead/business data. */}
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+                      <p className="text-sm font-semibold text-slate-800">Profile Information</p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Rows in the profile card. Blank label or value fields use the automatic
+                        values.
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        {WEBLINK_PROFILE_FIELD_IDS.map((id) => {
+                          const config = watchedWeblinkProfile?.[id] ?? {};
+                          const labelId = `weblink-profile-label-${id}`;
+                          const valueId = `weblink-profile-value-${id}`;
+                          return (
+                            <div key={id} className="rounded-lg border border-slate-200 bg-white p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                  {WEBLINK_PROFILE_FIELD_LABELS[id]}
+                                </span>
+                                <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
+                                  <input
+                                    type="checkbox"
+                                    checked={config.hidden !== true}
+                                    aria-label={`Show ${WEBLINK_PROFILE_FIELD_LABELS[id]}`}
+                                    onChange={(event) =>
+                                      setWeblinkProfileField(id, { hidden: !event.target.checked })
+                                    }
+                                    className="h-3.5 w-3.5 rounded border-slate-300"
+                                  />
+                                  Show
+                                </label>
+                              </div>
+                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                <div>
+                                  <label
+                                    htmlFor={labelId}
+                                    className="text-[11px] font-medium text-slate-500"
+                                  >
+                                    Label
+                                  </label>
+                                  <input
+                                    id={labelId}
+                                    type="text"
+                                    maxLength={60}
+                                    aria-label={`${WEBLINK_PROFILE_FIELD_LABELS[id]} label`}
+                                    placeholder={WEBLINK_PROFILE_FIELD_LABELS[id]}
+                                    value={config.label ?? ''}
+                                    onChange={(event) =>
+                                      setWeblinkProfileField(id, {
+                                        label:
+                                          event.target.value === '' ? null : event.target.value,
+                                      })
+                                    }
+                                    className={`${field} mt-1 w-full`}
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    htmlFor={valueId}
+                                    className="text-[11px] font-medium text-slate-500"
+                                  >
+                                    Value
+                                  </label>
+                                  <input
+                                    id={valueId}
+                                    type="text"
+                                    maxLength={300}
+                                    aria-label={`${WEBLINK_PROFILE_FIELD_LABELS[id]} value`}
+                                    placeholder={
+                                      weblinkAutoProfile.items.find((row) => row.id === id)?.value ??
+                                      ''
+                                    }
+                                    value={config.value ?? ''}
+                                    onChange={(event) =>
+                                      setWeblinkProfileField(id, {
+                                        value:
+                                          event.target.value === '' ? null : event.target.value,
+                                      })
+                                    }
+                                    className={`${field} mt-1 w-full`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                              Prepared By
+                            </span>
+                            <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
+                              <input
+                                type="checkbox"
+                                checked={watchedWeblinkProfile?.preparedBy?.hidden !== true}
+                                aria-label="Show Prepared By"
+                                onChange={(event) =>
+                                  setWeblinkProfilePreparedBy({ hidden: !event.target.checked })
+                                }
+                                className="h-3.5 w-3.5 rounded border-slate-300"
+                              />
+                              Show
+                            </label>
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <div>
+                              <label
+                                htmlFor="weblink-profile-pb-label"
+                                className="text-[11px] font-medium text-slate-500"
+                              >
+                                Label
+                              </label>
+                              <input
+                                id="weblink-profile-pb-label"
+                                type="text"
+                                maxLength={60}
+                                aria-label="Prepared By label"
+                                placeholder={weblinkAutoProfile.preparedBy.label}
+                                value={watchedWeblinkProfile?.preparedBy?.label ?? ''}
+                                onChange={(event) =>
+                                  setWeblinkProfilePreparedBy({
+                                    label: event.target.value === '' ? null : event.target.value,
+                                  })
+                                }
+                                className={`${field} mt-1 w-full`}
+                              />
+                            </div>
+                            <div>
+                              <label
+                                htmlFor="weblink-profile-pb-name"
+                                className="text-[11px] font-medium text-slate-500"
+                              >
+                                Name
+                              </label>
+                              <input
+                                id="weblink-profile-pb-name"
+                                type="text"
+                                maxLength={120}
+                                aria-label="Prepared By name"
+                                placeholder={weblinkAutoProfile.preparedBy.name}
+                                value={watchedWeblinkProfile?.preparedBy?.name ?? ''}
+                                onChange={(event) =>
+                                  setWeblinkProfilePreparedBy({
+                                    name: event.target.value === '' ? null : event.target.value,
+                                  })
+                                }
+                                className={`${field} mt-1 w-full`}
+                              />
+                            </div>
+                            <div>
+                              <label
+                                htmlFor="weblink-profile-pb-phone"
+                                className="text-[11px] font-medium text-slate-500"
+                              >
+                                Phone
+                              </label>
+                              <input
+                                id="weblink-profile-pb-phone"
+                                type="text"
+                                maxLength={60}
+                                aria-label="Prepared By phone"
+                                placeholder={weblinkAutoProfile.preparedBy.phone}
+                                value={watchedWeblinkProfile?.preparedBy?.phone ?? ''}
+                                onChange={(event) =>
+                                  setWeblinkProfilePreparedBy({
+                                    phone: event.target.value === '' ? null : event.target.value,
+                                  })
+                                }
+                                className={`${field} mt-1 w-full`}
+                              />
+                            </div>
+                            <div>
+                              <label
+                                htmlFor="weblink-profile-pb-email"
+                                className="text-[11px] font-medium text-slate-500"
+                              >
+                                Email
+                              </label>
+                              <input
+                                id="weblink-profile-pb-email"
+                                type="text"
+                                maxLength={160}
+                                aria-label="Prepared By email"
+                                placeholder={weblinkAutoProfile.preparedBy.email}
+                                value={watchedWeblinkProfile?.preparedBy?.email ?? ''}
+                                onChange={(event) =>
+                                  setWeblinkProfilePreparedBy({
+                                    email: event.target.value === '' ? null : event.target.value,
+                                  })
+                                }
+                                className={`${field} mt-1 w-full`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -9052,7 +9753,7 @@ export function QuotationBuilderPage() {
                 Cancel
               </Button>
             </Link>
-            <Button type="submit" isLoading={save.isPending} className="w-full sm:w-auto">
+            <Button type="submit" isLoading={save.isPending || updateQuotation.isPending} className="w-full sm:w-auto">
               <Save className="h-4 w-4" />
               Save quotation
             </Button>
@@ -9060,7 +9761,7 @@ export function QuotationBuilderPage() {
         </div>
       ) : (
         <div className="flex gap-2">
-          <Button type="submit" isLoading={save.isPending}>
+          <Button type="submit" isLoading={save.isPending || updateQuotation.isPending}>
             <Save className="h-4 w-4" />
             Save quotation
           </Button>
@@ -9091,7 +9792,13 @@ export function QuotationBuilderPage() {
           )}
         >
           <PinnedLiveQuotationPreview
-            quotation={quotation.data}
+            quotation={{
+              ...quotation.data,
+              adults: pax.adults,
+              childrenWithBed: pax.cwb,
+              childrenWithoutBed: pax.cwob,
+              infants: pax.infants,
+            }}
             savedVersion={version}
             settings={settingsQuery.data ?? null}
             control={form.control}

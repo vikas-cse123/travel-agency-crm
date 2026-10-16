@@ -11,6 +11,7 @@ import {
   PERMISSIONS,
   normalizePublicSlug,
   isReservedPublicSlug,
+  friendlySlugCandidates,
   PUBLIC_SLUG_MAX_LENGTH,
   quotationSnapshotImageIdentity,
   normalizeFaqs,
@@ -1142,6 +1143,9 @@ function versionCreateData(
       packageHeading: normalized.packageHeading ?? null,
       weblinkDurationText: normalized.weblinkDurationText ?? null,
       weblinkProfileDestination: normalized.weblinkProfileDestination ?? null,
+      weblinkProfile: (normalized.weblinkProfile
+        ? (normalized.weblinkProfile as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull) as Prisma.InputJsonValue,
       destinationSummary: normalized.destinationSummary,
       travelStartDate: normalized.travelStartDate ?? null,
       travelEndDate: normalized.travelEndDate ?? null,
@@ -1160,6 +1164,10 @@ function versionCreateData(
         Array.isArray(input.pricingDisplayOrder) && input.pricingDisplayOrder.length
           ? (input.pricingDisplayOrder.slice(0, 20) as unknown as Prisma.InputJsonValue)
           : Prisma.JsonNull,
+      pricingRowOrder:
+        Array.isArray(normalized.pricingRowOrder) && normalized.pricingRowOrder.length
+          ? (normalized.pricingRowOrder.slice(0, 80) as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       markupMode: normalized.markupMode,
       markupValue: normalized.markupValue,
       taxRate: normalized.taxRate,
@@ -1168,6 +1176,11 @@ function versionCreateData(
       perChildWithBedPrice: normalized.perChildWithBedPrice ?? 0,
       perChildWithoutBedPrice: normalized.perChildWithoutBedPrice ?? 0,
       perInfantPrice: normalized.perInfantPrice ?? 0,
+      // Additional Price Items — fixed flat charges for By Traveler pricing.
+      packageCustomItems:
+        Array.isArray(normalized.packageCustomItems) && normalized.packageCustomItems.length
+          ? (normalized.packageCustomItems.slice(0, 50) as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       taxNote: normalized.taxNote ?? null,
       // Net amount is internal margin data — never taken from viewers without costing.
       netAmount: allowCosting ? (normalized.netAmount ?? 0) : 0,
@@ -1260,11 +1273,13 @@ function versionCreateData(
       pricingBasis: row.pricingBasis ?? null,
       pricingBasisLabel: row.pricingBasisLabel ?? null,
       // Quotation-owned snapshot of every master pricing option available at
-      // selection time. Empty/absent stays JsonNull (legacy single-price rows).
-      pricingSnapshot:
-        row.pricingSnapshot?.length
-          ? (row.pricingSnapshot as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
+      // selection time. An ARRAY (even empty) is an explicit override and must
+      // persist as-is, so deleting every option can never fall back to master
+      // defaults on reload. Only an absent/undefined value stays JsonNull
+      // (legacy single-price rows that should still synthesize from the price).
+      pricingSnapshot: Array.isArray(row.pricingSnapshot)
+        ? (row.pricingSnapshot as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       taxCategory: row.taxCategory,
       notes: row.notes,
       images: row.imageSnapshotPresent
@@ -1286,6 +1301,8 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
     packageHeading: source.packageHeading,
     weblinkDurationText: source.weblinkDurationText,
     weblinkProfileDestination: source.weblinkProfileDestination,
+    weblinkProfile: ((source as unknown as { weblinkProfile?: unknown }).weblinkProfile ??
+      null) as QuotationVersionInput['weblinkProfile'],
     introduction: source.introduction,
     destinationSummary: source.destinationSummary,
     travelStartDate: source.travelStartDate,
@@ -1299,6 +1316,11 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
     )
       ? ((source as unknown as { pricingDisplayOrder?: unknown }).pricingDisplayOrder as string[])
       : undefined,
+    pricingRowOrder: Array.isArray(
+      (source as unknown as { pricingRowOrder?: unknown }).pricingRowOrder,
+    )
+      ? ((source as unknown as { pricingRowOrder?: unknown }).pricingRowOrder as string[])
+      : undefined,
     markupMode: source.markupMode,
     markupValue: source.markupValue.toNumber(),
     taxRate: source.taxRate.toNumber(),
@@ -1307,6 +1329,9 @@ function fromVersion(source: FullVersion): QuotationVersionInput {
     perChildWithBedPrice: source.perChildWithBedPrice.toNumber(),
     perChildWithoutBedPrice: source.perChildWithoutBedPrice.toNumber(),
     perInfantPrice: source.perInfantPrice.toNumber(),
+    packageCustomItems: Array.isArray(source.packageCustomItems)
+      ? (source.packageCustomItems as unknown as QuotationVersionInput['packageCustomItems'])
+      : undefined,
     taxNote: source.taxNote,
     netAmount: source.netAmount.toNumber(),
     initialPaymentAmount: source.initialPaymentAmount.toNumber(),
@@ -2546,6 +2571,7 @@ export const quotationsService = {
         input.version?.weblinkDurationText ?? source?.weblinkDurationText ?? null,
       weblinkProfileDestination:
         input.version?.weblinkProfileDestination ?? source?.weblinkProfileDestination ?? null,
+      weblinkProfile: input.version?.weblinkProfile ?? source?.weblinkProfile ?? null,
       introduction: input.version?.introduction ?? source?.introduction ?? '',
       destinationSummary: input.version?.destinationSummary ?? destination,
       travelStartDate:
@@ -2566,6 +2592,10 @@ export const quotationsService = {
       pricingDisplayOrder:
         input.version?.pricingDisplayOrder ??
         source?.pricingDisplayOrder ??
+        undefined,
+      pricingRowOrder:
+        input.version?.pricingRowOrder ??
+        source?.pricingRowOrder ??
         undefined,
       markupMode: input.version?.markupMode ?? source?.markupMode ?? 'NONE',
       markupValue: input.version?.markupValue ?? source?.markupValue ?? 0,
@@ -2615,8 +2645,27 @@ export const quotationsService = {
       weblinkSectionOrder:
         input.version?.weblinkSectionOrder ?? source?.weblinkSectionOrder ?? null,
     };
+    // The friendly weblink name is generated automatically from the associated
+    // lead's name — never asked for in Quotation Settings. Candidates are tried
+    // in the exact priority order; an advisory lock serializes concurrent
+    // creations that target the same candidate so two can never pick the same
+    // name, and the global unique index is the final guard. When all five
+    // patterns are taken, no sixth pattern is generated: the name stays NULL so
+    // the user can choose one manually.
     const created = await prisma.$transaction(async (tx) => {
       const quotationNumber = await nextCompanyNumber(tx, auth.companyId, 'quotation');
+      let publicSlug: string | null = null;
+      for (const candidate of friendlySlugCandidates(lead.customerName)) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${candidate}))`;
+        const claimed = await tx.quotation.findFirst({
+          where: { publicSlug: candidate },
+          select: { id: true },
+        });
+        if (!claimed) {
+          publicSlug = candidate;
+          break;
+        }
+      }
       // A public weblink is provisioned as part of quotation creation: the link
       // and the quotation are one workflow, so the Leads Weblink column never
       // needs a manual Create action. The token is stored raw (for URL
@@ -2674,6 +2723,7 @@ export const quotationsService = {
           publicToken: token,
           publicTokenHash: hashToken(token),
           publicTokenExpiresAt: input.validUntil ?? null,
+          publicSlug,
         },
       });
       const initial = await createVersion(tx, auth, quotation.id, version, 1, costing, quotation, {

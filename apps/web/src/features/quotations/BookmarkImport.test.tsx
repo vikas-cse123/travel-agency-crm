@@ -124,6 +124,9 @@ describe('flightBookmarkToDetails', () => {
     expect(details.amount).toBe(18777);
     expect(details.outbound.fromCity).toBe('Delhi');
     expect(details.outbound.toCity).toBe('Singapore');
+    // Fresh bookmark journeys initialize the independent header route.
+    expect(details.outbound.routeFrom).toBe('Delhi');
+    expect(details.outbound.routeTo).toBe('Singapore');
     expect(details.outbound.segments).toHaveLength(1);
 
     const segment = details.outbound.segments[0]!;

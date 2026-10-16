@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
 const TABS = [
-  { key: 'pricingMethod', label: 'Pricing Method' },
   { key: 'flight', label: 'Flight' },
   { key: 'hotel', label: 'Hotel' },
   { key: 'sightseeing', label: 'Sightseeing' },
@@ -20,15 +19,17 @@ const defaults = {
   pricingMode: 'PER_PERSON' as const,
 };
 
-describe('Pricing Method tab order and default', () => {
-  it('Pricing Method is first tab', () => {
-    expect(TABS[0]!.key).toBe('pricingMethod');
-    expect(TABS[0]!.label).toBe('Pricing Method');
+describe('Builder tab order and pricing-mode default', () => {
+  // Pricing Method is no longer a builder tab; it lives on the Quotation
+  // Details page. The builder opens on its first content tab, Flight.
+  it('Flight is first tab', () => {
+    expect(TABS[0]!.key).toBe('flight');
+    expect(TABS[0]!.label).toBe('Flight');
   });
 
-  it('Flight is second tab', () => {
-    expect(TABS[1]!.key).toBe('flight');
-    expect(TABS[1]!.label).toBe('Flight');
+  it('Hotel is second tab', () => {
+    expect(TABS[1]!.key).toBe('hotel');
+    expect(TABS[1]!.label).toBe('Hotel');
   });
 
   it('New quotation defaults to By Traveler', () => {

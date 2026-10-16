@@ -92,6 +92,9 @@ export function calculatePricing(input: {
   visaGstPercent?: number | string | null | undefined;
   visaVfsCharge?: number | string | null | undefined;
   customCharges?: Array<{ label?: string | null; amount?: number | string | null }> | null | undefined;
+  // Additional Price Items — fixed flat package charges for By Traveler
+  // (PER_PERSON) pricing. Never multiplied by traveler counts.
+  packageCustomItems?: Array<{ label?: string | null; amount?: number | string | null }> | null | undefined;
   markupMode?: 'NONE' | 'FIXED' | 'PERCENTAGE';
   markupValue?: number | string | null;
   taxRate?: number | string | null;
@@ -206,13 +209,22 @@ export function calculatePricing(input: {
       ? (input.customCharges ?? []).reduce((sum, c) => sum.plus(D(c.amount)), D(0))
       : D(0);
 
+  // ---- Additional Price Items (By Traveler only) -----------------------------
+  // Fixed package charges entered in the Pricing tab. Each is a flat amount,
+  // never multiplied by traveler counts. Excluded from SECTION_WISE pricing.
+  const packageCustomItemsTotal =
+    input.pricingMode === 'SECTION_WISE'
+      ? D(0)
+      : (input.packageCustomItems ?? []).reduce((sum, c) => sum.plus(D(c.amount)), D(0));
+
   // ---- Traveler-wise package total -------------------------------------------
   const packageTotal = roundMoney(
     D(input.perAdultPrice)
       .mul(D(pax.adults))
       .plus(D(input.perChildWithBedPrice).mul(D(pax.childrenWithBed)))
       .plus(D(input.perChildWithoutBedPrice).mul(D(pax.childrenWithoutBed)))
-      .plus(D(input.perInfantPrice).mul(D(pax.infants))),
+      .plus(D(input.perInfantPrice).mul(D(pax.infants)))
+      .plus(packageCustomItemsTotal),
   );
 
   const markupValue = D(input.markupValue);

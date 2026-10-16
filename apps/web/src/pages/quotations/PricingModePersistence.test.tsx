@@ -122,166 +122,56 @@ const renderBuilder = () =>
     { route: '/quotations/quotation-1/versions/version-1/edit' },
   );
 
-describe('Pricing mode persistence — builder save must keep the selected mode', () => {
+const saveAndReadPatch = async (fetchMock: ReturnType<typeof masterFetch>) => {
+  await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
+  );
+  const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+  return JSON.parse(String(patch![1]!.body)) as Record<string, unknown>;
+};
+
+// Pricing Method now lives on the Quotation Details page. The builder owns no
+// pricing-method UI; it only carries the stored mode through a save untouched.
+describe('Builder carries the stored pricing mode through a save', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.stubGlobal('scrollTo', vi.fn());
     auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
   });
 
-  it('persists SECTION_WISE when selected (By Section)', async () => {
-    const fetchMock = masterFetch(quotationDetail('PER_PERSON'));
-    vi.stubGlobal('fetch', fetchMock);
+  it('no longer renders a Pricing Method tab', async () => {
+    vi.stubGlobal('fetch', masterFetch(quotationDetail('PER_PERSON')));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-
-    // Pricing Method is first tab
-    expect(screen.getByRole('button', { name: 'Pricing Method' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Pricing Method' }));
-    expect(screen.getByLabelText('By Section')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByLabelText('By Section'));
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
-    );
-    const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
-    const body = JSON.parse(String(patch![1]!.body));
-    expect(body.pricingMode).toBe('SECTION_WISE');
+    expect(screen.queryByRole('button', { name: 'Pricing Method' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Flight' })).toBeInTheDocument();
   });
 
-  it('persists PER_PERSON when selected (By Traveler)', async () => {
+  it('preserves the stored SECTION_WISE mode on save', async () => {
     const fetchMock = masterFetch(quotationDetail('SECTION_WISE'));
     vi.stubGlobal('fetch', fetchMock);
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-
-    expect(screen.getByRole('button', { name: 'Pricing Method' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Pricing Method' }));
-    expect(screen.getByLabelText('By Traveler')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByLabelText('By Traveler'));
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
-    );
-    const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
-    const body = JSON.parse(String(patch![1]!.body));
-    expect(body.pricingMode).toBe('PER_PERSON');
+    const body = await saveAndReadPatch(fetchMock);
+    expect(body.pricingMode).toBe('SECTION_WISE');
   });
 
-  it('does not let a background data refresh revert a just-selected SECTION_WISE mode', async () => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const base = quotationDetail('TOTAL');
-    const routes: Record<string, unknown> = {
-      '/masters/hotels': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/airlines': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/cruises': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/vehicles': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/sightseeing': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/sightseeing/activities': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/add-on-services': { success: true, data: [], pagination: { total: 0 } },
-      '/masters/faqs': { success: true, data: [], pagination: { total: 0 } },
-      '/users': { success: true, data: [], pagination: { total: 0 } },
-      '/settings': {
-        success: true,
-        data: { profile: { phone: null, email: 'a@b.test' }, quotationDefaults: {} },
-      },
-      '/destination-expert/presets': { success: true, data: [] },
-    };
-    let mastersCalls = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
-      void options;
-      const url = String(input);
-      if (url.includes('/quotations/')) return response(base);
-      if (url.includes('/masters/')) {
-        mastersCalls += 1;
-        if (mastersCalls <= 1) return response(routes['/masters/hotels']);
-        await gate;
-        return response({ success: true, data: [], pagination: { total: 0 } });
-      }
-      return response({ success: true, data: [], pagination: { total: 0 } });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    renderBuilder();
-    await screen.findByRole('heading', { name: 'Quotation builder' });
-
-    expect(screen.getByRole('button', { name: 'Pricing Method' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Pricing Method' }));
-    expect(screen.getByLabelText('By Section')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByLabelText('By Section'));
-
-    release();
-    await waitFor(() => expect(mastersCalls).toBeGreaterThan(1));
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
-    );
-    const patches = fetchMock.mock.calls.filter(([, options]) => options?.method === 'PATCH');
-    const lastBody = JSON.parse(String(patches[patches.length - 1]![1]!.body));
-    // If the reset effect clobbered the selection, this is 'PER_PERSON' — the bug.
-    expect(lastBody.pricingMode).toBe('SECTION_WISE');
-  });
-
-  it('shows both pricing-method labels, the default heading, and a per-person breakdown', async () => {
-    const fetchMock = masterFetch(quotationDetail('TOTAL'));
-    vi.stubGlobal('fetch', fetchMock);
-    renderBuilder();
-    await screen.findByRole('heading', { name: 'Quotation builder' });
-
-    // Pricing Method tab should be first
-    expect(screen.getByRole('button', { name: 'Pricing Method' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Pricing Method' }));
-    expect(screen.getByLabelText('By Section')).toBeInTheDocument();
-    expect(screen.getByLabelText('By Traveler')).toBeInTheDocument();
-    // A legacy TOTAL quotation loads as By Traveler (backward compatible).
-    expect(screen.getByLabelText('By Traveler')).toHaveAttribute('aria-pressed', 'true');
-    await userEvent.click(await screen.findByRole('button', { name: 'Summary & Pricing' }));
-    // Custom heading field with the default value.
-    expect(screen.getByLabelText('Pricing heading')).toHaveValue('Price Breakdown');
-    expect(screen.getByLabelText('Pricing subheading')).toBeInTheDocument();
-    expect(
-      screen.getByText('The heading and pricing method will be used on the customer Weblink and PDF.'),
-    ).toBeInTheDocument();
-
-    // The per-person breakdown shows travelers and the package total.
-    await userEvent.click(await screen.findByRole('button', { name: 'Pricing Breakdown' }));
-    expect(await screen.findByText('Number of Travelers')).toBeInTheDocument();
-    expect(screen.getAllByText('Package Subtotal').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Grand Total').length).toBeGreaterThan(0);
-  });
-
-  it('persists the custom heading, subheading and display order', async () => {
+  it('preserves the stored PER_PERSON mode on save', async () => {
     const fetchMock = masterFetch(quotationDetail('PER_PERSON'));
     vi.stubGlobal('fetch', fetchMock);
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
+    const body = await saveAndReadPatch(fetchMock);
+    expect(body.pricingMode).toBe('PER_PERSON');
+  });
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Summary & Pricing' }));
-    await userEvent.clear(screen.getByLabelText('Pricing heading'));
-    await userEvent.type(screen.getByLabelText('Pricing heading'), 'Your Trip Cost');
-    await userEvent.type(screen.getByLabelText('Pricing subheading'), 'Complete package cost');
-    // Move the first category down so the order is non-default.
-    await userEvent.click(screen.getByRole('button', { name: 'Move Flights down' }));
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
-    );
-    const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
-    const body = JSON.parse(String(patch![1]!.body));
-    expect(body.pricingHeading).toBe('Your Trip Cost');
-    expect(body.pricingSubheading).toBe('Complete package cost');
-    expect(body.pricingDisplayOrder).toEqual([
-      'hotel', 'flight', 'cruise', 'vehicle', 'sightseeing', 'addon', 'visa',
-    ]);
+  it('normalizes a legacy TOTAL quotation to PER_PERSON on save', async () => {
+    const fetchMock = masterFetch(quotationDetail('TOTAL'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const body = await saveAndReadPatch(fetchMock);
+    expect(body.pricingMode).toBe('PER_PERSON');
   });
 });

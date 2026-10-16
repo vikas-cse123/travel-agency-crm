@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
+import { fetchPublicToken } from './helpers/public-token.js';
 import { createAuthClient } from './helpers/auth-client.js';
 import { createCompanyFixture } from './helpers/fixtures.js';
 
@@ -62,11 +63,10 @@ async function createFinalizedQuotationWithSlug(
   const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
   const version = quotation.versions[0];
   await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-  const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+  await client.post(`/api/quotations/${quotation.id}/public-link`, {
     quotationVersionId: version.id,
   });
-  const tokenRaw: string = link.body.data.url as string;
-  const token = tokenRaw.includes('/q/') ? tokenRaw.split('/q/')[1] : tokenRaw.split('/').pop()!;
+  const token = await fetchPublicToken(db, quotation.id);
   await client.patch(`/api/quotations/${quotation.id}/weblink-name`, { publicSlug: slug });
   return { quotationId: quotation.id, token, slug };
 }

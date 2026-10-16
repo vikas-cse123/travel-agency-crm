@@ -157,7 +157,7 @@ export function RichTextEditor({ value, onChange, ariaLabel, placeholder }: Rich
         onInput={emit}
         onBlur={emit}
         onPaste={(event) => insertNormalizedPaste(event, emit)}
-        className="rich-text-content min-h-[8rem] px-3 py-2 text-sm leading-relaxed outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)] [&_a]:text-brand-600 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+        className="rich-text-content min-h-[8rem] max-w-full px-3 py-2 text-sm leading-relaxed outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)] [overflow-wrap:anywhere] [&_a]:text-brand-600 [&_a]:underline [&_code]:whitespace-pre-wrap [&_ol]:list-decimal [&_ol]:list-inside [&_ol]:pl-5 [&_pre]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:list-inside [&_ul]:pl-5"
       />
     </div>
   );

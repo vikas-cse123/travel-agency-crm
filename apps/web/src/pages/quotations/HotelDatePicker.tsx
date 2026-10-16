@@ -314,21 +314,22 @@ export function HotelDatePicker({
         >
           <CalendarIcon className="h-4 w-4" aria-hidden="true" />
         </button>
-        {selected !== null && (
-          <button
-            type="button"
-            aria-label={labels.clear}
-            title={labels.clear}
-            onClick={() => {
-              setDraft(null);
-              onSelect(null);
-            }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-500 transition hover:border-slate-400 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        )}
       </div>
+
+      {selected !== null && (
+        <button
+          type="button"
+          aria-label={labels.clear}
+          title={labels.clear}
+          onClick={() => {
+            setDraft(null);
+            onSelect(null);
+          }}
+          className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear
+        </button>
+      )}
 
       {open && (
         <div

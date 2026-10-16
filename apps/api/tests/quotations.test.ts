@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
+import { fetchPublicToken } from './helpers/public-token.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { storageService } from '../src/services/storage/storage.service.js';
@@ -773,7 +774,7 @@ describe('Phase 8 customer quotations', () => {
       quotationVersionId: revision.body.data.id,
     });
     expect(link.status, JSON.stringify(link.body)).toBe(200);
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.status, JSON.stringify(publicView.body)).toBe(200);
     expect(publicView.body.data.version.sightseeingDetails.days[1].activities[0].name).toBe(
@@ -1022,7 +1023,7 @@ describe('Phase 8 customer quotations', () => {
       includePublicLink: true,
     });
     expect(sent.status).toBe(200);
-    expect(sent.body.data.publicUrl).toContain('/q/');
+    expect(sent.body.data.publicUrl).toMatch(/\/aarav-mehta$/);
     expect(getMemoryEmailProvider()?.last('customer@example.test')?.text).toContain(
       quotation.quotationNumber,
     );
@@ -1085,10 +1086,10 @@ describe('Phase 8 customer quotations', () => {
     ).body.data;
     const version = quotation.versions[0];
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
       quotationVersionId: version.id,
     });
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const anonymous = createAuthClient(app);
     const view = await anonymous.get(`/api/public/quotations/${token}`);
     expect(view.status, JSON.stringify(view.body)).toBe(200);
@@ -1176,10 +1177,10 @@ describe('Phase 8 customer quotations', () => {
     });
 
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
       quotationVersionId: version.id,
     });
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const view = await createAuthClient(app).get(`/api/public/quotations/${token}`);
 
     expect(view.status, JSON.stringify(view.body)).toBe(200);
@@ -1228,8 +1229,8 @@ describe('Phase 8 customer quotations', () => {
       const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
         quotationVersionId: version.id,
       });
-      const token = link.body.data.url.split('/q/')[1];
-      return { client, lead, template, quotation, version, token };
+      const token = await fetchPublicToken(db, quotation.id);
+      return { client, lead, template, quotation, version, token, weblinkUrl: link.body.data.url as string };
     }
 
     const publicGet = (token: string, ip: string) =>
@@ -1346,15 +1347,15 @@ describe('Phase 8 customer quotations', () => {
     });
 
     it('creates a public link idempotently without resetting analytics', async () => {
-      const { client, quotation, version, token } = await readyQuotation();
+      const { client, quotation, version, token, weblinkUrl } = await readyQuotation();
       await publicGet(token, '203.0.113.10');
       const second = await client.post(`/api/quotations/${quotation.id}/public-link`, {
         quotationVersionId: version.id,
       });
       expect(second.status).toBe(200);
-      expect(second.body.data.url).toContain('/q/');
-      // Same token reused: the URL matches the first link.
-      expect(second.body.data.url.split('/q/')[1]).toBe(token);
+      expect(second.body.data.url).not.toContain('/q/');
+      // Same friendly URL reused for the same quotation.
+      expect(second.body.data.url).toBe(weblinkUrl);
       expect(second.body.data.reused).toBe(true);
       // Analytics preserved.
       expect(await db.quotationWeblinkView.count()).toBe(1);
@@ -1416,10 +1417,10 @@ describe('Phase 8 customer quotations', () => {
     const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
     const version = quotation.versions[0];
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
       quotationVersionId: version.id,
     });
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const rejected = await createAuthClient(app).post(`/api/public/quotations/${token}/reject`, {
       reason: 'Dates no longer work',
       note: 'Please contact me next season.',
@@ -1438,10 +1439,10 @@ describe('Phase 8 customer quotations', () => {
     ).body.data;
     const version = quotation.versions[0];
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
       quotationVersionId: version.id,
     });
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
 
     await client.patch('/api/settings/profile', {
       name: 'Alpha Travel',
@@ -1770,10 +1771,10 @@ describe('Phase 14 quotation master references', () => {
       (await client.post(`/api/quotations/${created.body.data.id}/versions/${versionId}/finalize`))
         .status,
     ).toBe(200);
-    const publicLink = await client.post(`/api/quotations/${created.body.data.id}/public-link`, {
+    await client.post(`/api/quotations/${created.body.data.id}/public-link`, {
       quotationVersionId: versionId,
     });
-    const token = publicLink.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, created.body.data.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.status).toBe(200);
     expect(
@@ -2297,10 +2298,10 @@ describe('Phase 14 quotation master references', () => {
     });
 
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
       quotationVersionId: version.id,
     });
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.status).toBe(200);
     const hotelPresentation = Object.values(

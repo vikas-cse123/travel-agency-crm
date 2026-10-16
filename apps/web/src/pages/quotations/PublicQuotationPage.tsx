@@ -1,4 +1,4 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react';
 import {
   Baby,
   Ban,
@@ -24,6 +24,7 @@ import {
   Phone,
   Ship,
   Star,
+  Tag,
   Utensils,
   XCircle,
 } from 'lucide-react';
@@ -36,6 +37,7 @@ import {
   hotelStayNights,
   isItineraryActivityTitleDuplicate,
   isPublicTaxNote,
+  orderPricingRows,
   resolveCruiseRoomLines,
   resolveHotelMealPlanLines,
   resolveHotelRoomLines,
@@ -45,6 +47,12 @@ import {
   resolveWeblinkSectionOrder,
   normalizeFaqs,
   getFlightPerTravelerBreakdown,
+  WEBLINK_PROFILE_FIELD_IDS,
+  WEBLINK_PROFILE_FIELD_LABELS,
+  WEBLINK_PROFILE_PREPARED_BY_LABEL,
+  type QuotationPricing,
+  type WeblinkProfileConfig,
+  type WeblinkProfileFieldId,
 } from '@interscale/shared';
 import { useFavicon } from '@/hooks/useFavicon';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -384,6 +392,63 @@ export function resolveWeblinkDisplay(
 
 const publicHeroIntroduction = (value: string | null | undefined) =>
   (value ?? '').replace(/A travel proposal prepared for [^.]*\./g, '').trim();
+
+export interface ResolvedWeblinkProfileItem {
+  id: WeblinkProfileFieldId;
+  label: string;
+  value: string;
+  hidden: boolean;
+}
+
+export interface ResolvedWeblinkProfile {
+  items: ResolvedWeblinkProfileItem[];
+  preparedBy: {
+    label: string;
+    name: string;
+    phone: string;
+    email: string;
+    hidden: boolean;
+  };
+}
+
+/**
+ * Resolve the customer-facing weblink profile information card.
+ *
+ * A pure display transform: the caller supplies the automatically derived
+ * values (from the quotation/lead) and this applies the saved per-item
+ * label/value/visibility overrides. A blank customization always falls back to
+ * the automatic value, and nothing here ever reads or writes source data.
+ * Shared by the real public weblink and the builder's live preview (same
+ * component), so both stay consistent.
+ */
+export function resolveWeblinkProfile(input: {
+  autoValues: Record<WeblinkProfileFieldId, string>;
+  autoPreparedBy: { name: string; phone: string; email: string };
+  overrides?: WeblinkProfileConfig | null | undefined;
+}): ResolvedWeblinkProfile {
+  const overrides = input.overrides ?? {};
+  const items = WEBLINK_PROFILE_FIELD_IDS.map((id): ResolvedWeblinkProfileItem => {
+    const config = overrides[id] ?? {};
+    const auto = input.autoValues[id] ?? '';
+    return {
+      id,
+      label: config.label?.trim() || WEBLINK_PROFILE_FIELD_LABELS[id],
+      value: config.value?.trim() || auto,
+      hidden: config.hidden === true,
+    };
+  });
+  const preparedBy = overrides.preparedBy ?? {};
+  return {
+    items,
+    preparedBy: {
+      label: preparedBy.label?.trim() || WEBLINK_PROFILE_PREPARED_BY_LABEL,
+      name: preparedBy.name?.trim() || input.autoPreparedBy.name,
+      phone: preparedBy.phone?.trim() || input.autoPreparedBy.phone,
+      email: preparedBy.email?.trim() || input.autoPreparedBy.email,
+      hidden: preparedBy.hidden === true,
+    },
+  };
+}
 
 function Info({ label, value, full }: { label: string; value: string; full?: boolean }) {
   return (
@@ -1498,25 +1563,64 @@ function quotationGalleryImages(value: unknown): QuotationGalleryImage[] {
 function QuotationImageCarousel({
   images,
   label = 'Hotel',
+  imageFit = 'cover',
 }: {
   images: QuotationGalleryImage[];
   label?: string;
+  /** How the photo fills its fixed frame; `contain` shows the whole image. */
+  imageFit?: 'cover' | 'contain';
 }) {
   const [active, setActive] = useState(0);
   const [failed, setFailed] = useState<Set<string>>(new Set());
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  // Touch-swipe tracking for mobile galleries. Single-image galleries return
+  // before these are used, so their behavior is unchanged.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const swipedRef = useRef(false);
   const count = images.length;
   if (count === 0) return null;
   const current = images[Math.min(active, count - 1)]!;
   const previous = () => setActive((index) => (index - 1 + count) % count);
   const next = () => setActive((index) => (index + 1) % count);
   const alt = current.alt?.trim() || `${label} image`;
+  const fitClass = imageFit === 'contain' ? 'object-contain' : 'object-cover';
   // Fall back to the same image's thumbnail candidate when the primary URL
-  // fails, mirroring how the bookmark carousel resolves provider images.
+  // fails, mirroring how the bookmark carousel resolves provider images. Once
+  // the primary AND its thumbnail have both failed we show a neutral
+  // placeholder instead of a broken-image glyph.
   const currentUrl =
     failed.has(current.url) && current.thumbnailUrl ? current.thumbnailUrl : current.url;
+  const imageFailed = failed.has(currentUrl);
   const onError = () => {
-    if (!failed.has(current.url)) setFailed((prev) => new Set(prev).add(current.url));
+    if (!failed.has(currentUrl)) setFailed((prev) => new Set(prev).add(currentUrl));
+  };
+  const unavailable = (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-slate-400">
+      <ImageIcon className="h-7 w-7" aria-hidden="true" />
+      <span className="text-xs">Image unavailable</span>
+    </div>
+  );
+  const onTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    touchStart.current = { x: touch.clientX, y: touch.clientY };
+    swipedRef.current = false;
+  };
+  // Commit only clearly horizontal drags, so vertical page scrolling and taps
+  // keep working untouched. Wrapping matches the arrow buttons' first/last
+  // behavior. A trailing click after a swipe is suppressed so it never opens
+  // the lightbox mid-gesture.
+  const onTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const start = touchStart.current;
+    touchStart.current = null;
+    const touch = event.changedTouches[0];
+    if (!start || !touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 40 || Math.abs(dx) <= Math.abs(dy)) return;
+    swipedRef.current = true;
+    if (dx < 0) next();
+    else previous();
   };
 
   if (count === 1) {
@@ -1528,13 +1632,17 @@ function QuotationImageCarousel({
           onClick={() => setLightboxIndex(0)}
           className="block h-full w-full cursor-zoom-in bg-slate-100"
         >
-          <img
-            src={currentUrl}
-            alt={alt}
-            loading="lazy"
-            onError={onError}
-            className="h-full w-full object-cover"
-          />
+          {imageFailed ? (
+            unavailable
+          ) : (
+            <img
+              src={currentUrl}
+              alt={alt}
+              loading="lazy"
+              onError={onError}
+              className={`h-full w-full object-center ${fitClass}`}
+            />
+          )}
         </button>
         {lightboxIndex !== null && (
           <QuotationLightbox
@@ -1550,20 +1658,35 @@ function QuotationImageCarousel({
 
   return (
     <>
-      <div className="group relative h-full w-full overflow-hidden bg-slate-100">
+      <div
+        className="group relative h-full w-full touch-pan-y overflow-hidden bg-slate-100"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
         <button
           type="button"
           aria-label={`Open ${label} image viewer`}
-          onClick={() => setLightboxIndex(active)}
+          onClick={() => {
+            // Ignore the click that can trail a swipe so it never opens the viewer.
+            if (swipedRef.current) {
+              swipedRef.current = false;
+              return;
+            }
+            setLightboxIndex(active);
+          }}
           className="block h-full w-full cursor-zoom-in"
         >
-          <img
-            src={currentUrl}
-            alt={alt}
-            loading="lazy"
-            onError={onError}
-            className="h-full w-full object-cover"
-          />
+          {imageFailed ? (
+            unavailable
+          ) : (
+            <img
+              src={currentUrl}
+              alt={alt}
+              loading="lazy"
+              onError={onError}
+              className={`h-full w-full object-center ${fitClass}`}
+            />
+          )}
         </button>
         {/* Subtle edge gradients keep the slim chevrons legible on any photo. */}
         <div
@@ -1621,6 +1744,7 @@ function QuotationMediaFrame({
   placeholder,
   radius = 'rounded-xl',
   className,
+  imageFit = 'cover',
   'aria-label': ariaLabel,
 }: {
   images: QuotationGalleryImage[];
@@ -1632,6 +1756,8 @@ function QuotationMediaFrame({
   placeholder?: ReactNode;
   radius?: string;
   className?: string;
+  /** `contain` letterboxes the whole image instead of cropping to the frame. */
+  imageFit?: 'cover' | 'contain';
   'aria-label'?: string;
 }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -1644,7 +1770,7 @@ function QuotationMediaFrame({
       className={`relative aspect-[16/9] w-full overflow-hidden bg-slate-100 ${radius} ${className ?? ''}`}
     >
       {images.length > 0 ? (
-        <QuotationImageCarousel images={images} label={label} />
+        <QuotationImageCarousel images={images} label={label} imageFit={imageFit} />
       ) : imageUrl ? (
         <button
           type="button"
@@ -1656,7 +1782,9 @@ function QuotationMediaFrame({
             src={imageUrl}
             alt={imageAlt ?? label}
             loading="lazy"
-            className="h-full w-full object-cover object-center"
+            className={`h-full w-full object-center ${
+              imageFit === 'contain' ? 'object-contain' : 'object-cover'
+            }`}
           />
         </button>
       ) : (
@@ -1850,6 +1978,133 @@ export function PublicQuotationPage() {
 }
 
 /**
+ * Customer-friendly labels for the shared traveler pricing rows
+ * (`TravelerPriceRow.label` is 'Adults' | 'CWB' | 'CWOB' | 'Infants').
+ */
+const TRAVELER_BREAKDOWN_LABELS: Record<string, string> = {
+  Adults: 'Adults',
+  CWB: 'Children with bed (CWB)',
+  CWOB: 'Children without bed (CWOB)',
+  Infants: 'Infants',
+};
+
+/**
+ * Transparent "explain the total" breakdown shown ONLY for By Traveler
+ * (PER_PERSON) pricing. It is additive information that sits alongside the
+ * existing Total Package Price card — never a replacement — and reads every
+ * value from the single shared pricing resolver so it can never drift from the
+ * authoritative total:
+ *  - each row's qty/rate/amount comes from `travelerPricing.rows`
+ *    (Σ count × rate, zero-count/zero-rate rows already dropped);
+ *  - the package subtotal is `travelerPricing.subtotal`;
+ *  - discount and tax are applied once, in the same order as the engine;
+ *  - the prominent final line is `grandTotal`, exactly the number shown on the
+ *    Total Package Price card.
+ * Renders nothing for By Section quotations or when no traveler rates exist, so
+ * By Section weblinks are completely unchanged.
+ */
+function TravelerPriceBreakdown({
+  pricing,
+  fmt,
+}: {
+  pricing: QuotationPricing;
+  fmt: (value: number) => string;
+}) {
+  if (pricing.pricingMode !== 'PER_PERSON') return null;
+  const rows = pricing.travelerPricing.rows;
+  // Additional Price Items — flat package charges added on top of the traveler
+  // subtotal (never multiplied by the traveler count).
+  const customRows = pricing.customItems?.rows ?? [];
+  if (!rows.length && !customRows.length) return null;
+  // The subtotal only differs from the total when an adjustment is applied, so
+  // it is shown only then — never as a second, equal-looking copy of the total.
+  const hasAdjustments = pricing.discountAmount !== 0 || pricing.taxAmount !== 0;
+  return (
+    <section
+      data-testid="traveler-price-breakdown"
+      className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+    >
+      <h2 className="text-xl font-bold text-[#000000]">Price Breakdown</h2>
+      {/* Traveller + fixed item rows — clean, borderless lines separated by
+          subtle dividers instead of individual grey cards. Rows are rendered in
+          the quotation's saved builder order (`pricingRowOrder`), falling back
+          to traveler rows then custom items. */}
+      <ul className="mt-5 divide-y divide-slate-100">
+        {orderPricingRows(
+          [
+            ...rows.map((row) => ({ id: row.id, kind: 'traveler' as const, row })),
+            ...customRows.map((row) => ({ id: row.id, kind: 'custom' as const, row })),
+          ],
+          pricing.pricingRowOrder,
+        ).map(({ id, kind, row }) => (
+          <li key={id} className="flex items-center justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <p className="break-words text-sm font-semibold text-[#000000]">
+                {kind === 'traveler'
+                  ? TRAVELER_BREAKDOWN_LABELS[row.label] ?? row.label
+                  : row.label}
+              </p>
+              {kind === 'traveler' && (
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {row.count} × {fmt(row.price)}
+                </p>
+              )}
+            </div>
+            <p
+              data-testid="breakdown-amount"
+              className="shrink-0 whitespace-nowrap text-sm font-semibold tabular-nums text-[#000000]"
+            >
+              {fmt(kind === 'traveler' ? row.total : row.amount)}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {hasAdjustments && (
+        <div className="mt-2 space-y-2 border-t border-slate-200 pt-4">
+          <div className="flex items-center justify-between gap-4 text-sm">
+            <span className="text-[#000000]">Package subtotal</span>
+            <span className="whitespace-nowrap font-medium tabular-nums text-[#000000]">
+              {fmt(pricing.subtotal)}
+            </span>
+          </div>
+          {pricing.discountAmount !== 0 && (
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="text-[#000000]">Discount</span>
+              <span className="whitespace-nowrap tabular-nums text-[#000000]">
+                -{fmt(pricing.discountAmount)}
+              </span>
+            </div>
+          )}
+          {pricing.taxAmount !== 0 && (
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="text-[#000000]">
+                Tax{pricing.taxRate ? ` (${pricing.taxRate}%)` : ''}
+              </span>
+              <span className="whitespace-nowrap tabular-nums text-[#000000]">
+                {fmt(pricing.taxAmount)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {/* Final total — solid emerald band, matching the existing green Total
+          Package Price card, so the amount is unambiguously the headline. */}
+      <div className="mt-4 flex items-center justify-between gap-4 rounded-xl bg-emerald-600 px-4 py-3.5 text-white shadow-sm">
+        <span className="text-xs font-semibold uppercase tracking-wide sm:text-sm">
+          Total Package Price
+        </span>
+        <span
+          data-testid="breakdown-total-amount"
+          className="whitespace-nowrap text-lg font-bold tabular-nums sm:text-xl"
+        >
+          {fmt(pricing.grandTotal)}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+/**
  * Pure customer-facing quotation presentation, shared by the public weblink
  * route and the Quotation Builder's full live preview. Everything renders
  * from `data` alone: no fetching, no telemetry, no saves.
@@ -1938,6 +2193,13 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
   // pricing method's subtotal with the discount → tax pipeline applied.
   // Section-wise and traveler-wise amounts are never added together.
   const displayTotal = pricing.grandTotal;
+  // A discount only exists for a real, positive reduction. Zero, absent and
+  // negative (surcharge) values all fall back to the clean, single-price card.
+  const hasDiscount = pricing.discountAmount > 0;
+  // Pre-discount payable, derived from the authoritative pipeline — never
+  // recomputed — so `originalTotal - discountAmount === grandTotal` holds to the
+  // cent and the discount can never be applied twice or shown inconsistently.
+  const originalTotal = pricing.grandTotal + pricing.discountAmount;
   // Public tax note: never the control values ("Do not show" / the sentinel).
   const taxNoteText = isPublicTaxNote(v.taxNote) ? v.taxNote.trim() : null;
   // "Secure Your Booking Now" shows only with a real amount AND a valid link.
@@ -1996,28 +2258,50 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
   if (showVisa) addService('visa', 'Visa');
   if (addonServices.length > 0) addService('add-ons', 'Add-ons');
 
-  const preparedBy = v.createdBy?.fullName ?? '';
-  // Secondary contact row under "Prepared By": only present values, separated
-  // by a single "|" between items (never leading/trailing).
+  const preparedByName = v.createdBy?.fullName ?? '';
+  // Profile information card: automatic values resolved from the quotation,
+  // then per-item label/value/visibility overrides applied. Display-only.
+  const resolvedProfile = resolveWeblinkProfile({
+    autoValues: {
+      travelerName: q.customerName ?? '',
+      travelDate: dateShort(q.travelStartDate) ?? 'Flexible',
+      duration: display.durationText ?? 'As advised',
+      travelers,
+      cwbAges: cwbAgesText ?? '',
+      cwobAges: cwobAgesText ?? '',
+      infantAges: infantAgesText ?? '',
+      quotationId: formatPublicQuotationNumber(q.quotationNumber),
+      destinations: display.profileDestination,
+    },
+    autoPreparedBy: {
+      name: preparedByName,
+      phone: company.phone ?? '',
+      email: company.email ?? '',
+    },
+    overrides: v.weblinkProfile,
+  });
+  // Secondary contact row under the Prepared By label: only present values,
+  // separated by a single "|" (never leading/trailing). Uses the resolved
+  // (possibly customized) phone/email, never the raw company record.
   const preparedContacts: ReactNode[] = [];
-  if (company.phone)
+  if (resolvedProfile.preparedBy.phone)
     preparedContacts.push(
       <a
         key="phone"
-        href={`tel:${company.phone}`}
+        href={`tel:${resolvedProfile.preparedBy.phone}`}
         className="text-[#000000] hover:text-[#000000] hover:underline"
       >
-        {company.phone}
+        {resolvedProfile.preparedBy.phone}
       </a>,
     );
-  if (company.email)
+  if (resolvedProfile.preparedBy.email)
     preparedContacts.push(
       <a
         key="email"
-        href={`mailto:${company.email}`}
+        href={`mailto:${resolvedProfile.preparedBy.email}`}
         className="break-all text-[#000000] hover:text-[#000000] hover:underline"
       >
-        {company.email}
+        {resolvedProfile.preparedBy.email}
       </a>,
     );
   const heroIntroduction = publicHeroIntroduction(v.introduction);
@@ -2078,25 +2362,30 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
           <section data-preview-section="pricing" className="grid gap-4 lg:grid-cols-3">
             <div className="rounded-2xl bg-card p-6 shadow-lg lg:col-span-2">
               <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 md:grid-cols-4">
-                <Info label="Traveler Name" value={q.customerName} />
-                <Info label="Travel Date" value={dateShort(q.travelStartDate) ?? 'Flexible'} />
-                <Info label="Duration" value={display.durationText ?? 'As advised'} />
-                <Info label="Travelers" value={travelers} />
-                {cwbAgesText && <Info label="CWB Ages" value={cwbAgesText} />}
-                {cwobAgesText && <Info label="CWOB Ages" value={cwobAgesText} />}
-                {infantAgesText && <Info label="Infant Ages" value={infantAgesText} />}
-                <Info label="Quotation ID" value={formatPublicQuotationNumber(q.quotationNumber)} />
-                <Info
-                  label="Destinations"
-                  value={display.profileDestination}
-                  full
-                />
-                {preparedBy && (
+                {resolvedProfile.items.map((item) => {
+                  if (item.hidden) return null;
+                  // CWB/CWOB/Infant Ages only appear when they have a value (or
+                  // a custom override), so empty optional rows stay out.
+                  const optional =
+                    item.id === 'cwbAges' || item.id === 'cwobAges' || item.id === 'infantAges';
+                  if (optional && !item.value) return null;
+                  return (
+                    <Info
+                      key={item.id}
+                      label={item.label}
+                      value={item.value}
+                      full={item.id === 'destinations'}
+                    />
+                  );
+                })}
+                {!resolvedProfile.preparedBy.hidden && resolvedProfile.preparedBy.name && (
                   <div className="sm:col-span-2">
                     <p className="text-xs font-medium uppercase tracking-wide text-[#000000]">
-                      Prepared By
+                      {resolvedProfile.preparedBy.label}
                     </p>
-                    <p className="mt-0.5 font-semibold text-[#000000]">{preparedBy}</p>
+                    <p className="mt-0.5 font-semibold text-[#000000]">
+                      {resolvedProfile.preparedBy.name}
+                    </p>
                     {preparedContacts.length > 0 && (
                       <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-[#000000]">
                         {preparedContacts.map((contact, index) => (
@@ -2111,26 +2400,55 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 )}
               </div>
             </div>
-            <div className="flex flex-col justify-center rounded-2xl bg-emerald-600 p-6 text-white shadow-lg">
-              <p className="text-center text-sm font-medium uppercase tracking-wide text-white/85">
-                {pricing.pricingMode === 'SECTION_WISE'
-                  ? 'Quotation Total'
-                  : 'Total Package Price'}
-              </p>
-              <p className="mt-1 text-center text-4xl font-bold">{fmt(displayTotal)}</p>
-              {taxNoteText && (
-                <p className="mt-1 text-center text-xs italic text-white/80">{taxNoteText}</p>
-              )}
-              {company.phone && (
-                <a
-                  href={`tel:${company.phone}`}
-                  className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 font-semibold text-[#000000] hover:bg-slate-50"
+            <div className="relative flex flex-col justify-center overflow-hidden rounded-2xl bg-emerald-600 bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-700 p-6 text-white shadow-lg">
+              <div className="relative">
+                <p className="text-sm font-medium uppercase tracking-wide text-white/85">
+                  {pricing.pricingMode === 'SECTION_WISE'
+                    ? 'Quotation Total'
+                    : 'Total Package Price'}
+                </p>
+                {hasDiscount && (
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span
+                      data-testid="total-original-price"
+                      className="text-lg font-semibold text-white/60 line-through decoration-white/50 decoration-2"
+                    >
+                      {fmt(originalTotal)}
+                    </span>
+                    <span
+                      data-testid="total-discount-badge"
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-200 px-3 py-1 text-sm font-bold text-emerald-900 shadow-sm"
+                    >
+                      <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+                      {fmt(pricing.discountAmount)} OFF
+                    </span>
+                  </div>
+                )}
+                <p
+                  data-testid="total-final-price"
+                  className="mt-1 text-4xl font-extrabold tracking-tight"
                 >
-                  <Phone className="h-4 w-4" /> Contact Now
-                </a>
-              )}
+                  {fmt(displayTotal)}
+                </p>
+                {taxNoteText && (
+                  <p className="mt-1 text-xs italic text-white/80">{taxNoteText}</p>
+                )}
+                {company.phone && (
+                  <a
+                    href={`tel:${company.phone}`}
+                    className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 font-semibold text-[#000000] shadow-sm transition-colors hover:bg-slate-50"
+                  >
+                    <Phone className="h-4 w-4" /> Contact Now
+                  </a>
+                )}
+              </div>
             </div>
           </section>
+
+          {/* By Traveler pricing only: transparent, additive breakdown that
+              explains the Total Package Price above. By Section is untouched
+              and keeps its own Price Breakdown section below. */}
+          <TravelerPriceBreakdown pricing={pricing} fmt={fmt} />
 
           {(() => {
             // Price Breakdown renders only for By Section pricing. When By
@@ -2403,96 +2721,109 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                             </p>
                           )}
 
-                          <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <div className="mt-4 text-[#000000]">
                             {(() => {
-                              // Multi-room / multi-meal hotel options list EVERY
-                              // allocation; legacy single-room rows keep the
-                              // exact historical chips.
-                              const roomLines = resolveHotelRoomLines(hotel);
-                              const mealLines = resolveHotelMealPlanLines(hotel);
-                              const multiRoom = roomLines.length > 1;
-                              const multiMeal = mealLines.length > 1;
-                              const chipClass =
-                                'inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-[#000000]';
-                              const labelClass =
-                                'text-xs font-medium uppercase tracking-wide text-[#000000]';
+                              // Room and meal-plan details render from the
+                              // resolved line arrays so the first allocation
+                              // shows in the live preview before save, and any
+                              // number of configured rooms or meal plans is
+                              // supported. Unconfigured placeholders are
+                              // skipped rather than shown as empty rows.
+                              const roomLines = resolveHotelRoomLines(hotel).filter(
+                                (line) =>
+                                  Boolean((line.roomType ?? '').trim()) ||
+                                  Boolean(line.hotelRoomTypeId) ||
+                                  line.extraBedQuantity != null ||
+                                  line.childWithoutBedQuantity != null,
+                              );
+                              const mealLines = resolveHotelMealPlanLines(hotel).filter(
+                                (line) =>
+                                  Boolean((line.mealPlan ?? '').trim()) ||
+                                  Boolean(line.hotelMealPlanId),
+                              );
                               return (
                                 <>
-                                  {multiRoom
-                                    ? roomLines.map((line, lineIndex) => (
-                                        <span key={`room-line-${lineIndex}`} className={chipClass}>
-                                          <strong className={labelClass}>Room {lineIndex + 1}</strong>
-                                          {' '}
-                                          {(line.roomType ?? '').trim() || 'Room'}
-                                          {line.rooms != null && line.rooms !== 1
-                                            ? ` — ${line.rooms} rooms`
-                                            : line.rooms != null
-                                              ? ' — 1 room'
-                                              : ''}
-                                          {line.extraBedQuantity
-                                            ? ` — Extra Bed: ${line.extraBedQuantity}`
-                                            : ''}
-                                          {line.childWithoutBedQuantity
-                                            ? ` — Child W/O Bed: ${line.childWithoutBedQuantity}`
-                                            : ''}
-                                        </span>
-                                      ))
-                                    : hotel.roomType?.trim() ? (
-                                        <span className={chipClass}>
-                                          <strong className={labelClass}>Room</strong>
-                                          {' '}
-                                          {hotel.roomType}
-                                        </span>
-                                      ) : null}
-                                  {!multiRoom && hotel.extraBedQuantity ? (
-                                    <span className={chipClass}>
-                                      <strong className={labelClass}>Extra Bed:</strong>
-                                      {' '}
-                                      {hotel.extraBedQuantity}
-                                    </span>
-                                  ) : null}
-                                  {!multiRoom && hotel.childWithoutBedQuantity ? (
-                                    <span className={chipClass}>
-                                      <strong className={labelClass}>Child W/O Bed:</strong>
-                                      {' '}
-                                      {hotel.childWithoutBedQuantity}
-                                    </span>
-                                  ) : null}
-                                  {multiMeal
-                                    ? mealLines.map((line, lineIndex) => (
-                                        <span key={`meal-line-${lineIndex}`} className={chipClass}>
-                                          <strong className={labelClass}>Meal {lineIndex + 1}</strong>
-                                          {' '}
-                                          {(line.mealPlan ?? '').trim()}
-                                        </span>
-                                      ))
-                                    : hotel.mealPlan?.trim() ? (
-                                        <span className={chipClass}>
-                                          <strong className={labelClass}>Meals</strong>
-                                          {' '}
-                                          {hotel.mealPlan}
-                                        </span>
-                                      ) : null}
-                                  {hotel.rooms != null ? (
-                                    <span className={chipClass}>
-                                      <strong className={labelClass}>Rooms:</strong>
-                                      {' '}
-                                      {hotel.rooms}
-                                    </span>
-                                  ) : null}
-                                  {nights != null && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white">
-                                      <strong className="text-xs font-medium uppercase tracking-wide text-white/85">
-                                        Nights:
-                                      </strong>
-                                      {' '}
-                                      {nights}
-                                    </span>
+                                  {roomLines.length > 0 && (
+                                    <div>
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Rooms
+                                      </p>
+                                      {/* Compact rows on a plain background: a
+                                          thin divider between every room, never
+                                          pills or panels. */}
+                                      <div className="mt-1.5 divide-y divide-slate-200 border-t border-slate-200 text-sm">
+                                        {roomLines.map((line, lineIndex) => (
+                                          <div
+                                            key={`room-line-${lineIndex}`}
+                                            className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-0.5 py-2"
+                                          >
+                                            <span className="font-semibold">
+                                              {(line.roomType ?? '').trim() || 'Room'}
+                                            </span>
+                                            <span className="flex items-baseline gap-x-6 tabular-nums">
+                                              {line.rooms != null && (
+                                                <span>
+                                                  {line.rooms} {line.rooms === 1 ? 'room' : 'rooms'}
+                                                </span>
+                                              )}
+                                              {line.extraBedQuantity != null &&
+                                                line.extraBedQuantity > 0 && (
+                                                  <span>Extra bed: {line.extraBedQuantity}</span>
+                                                )}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* Meal Plan always sits on its own full-width
+                                      line below the room list, one compact row
+                                      per configured plan, never beside the
+                                      rooms. */}
+                                  {mealLines.length > 0 && (
+                                    <div className="mt-4 w-full">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Meal Plan
+                                      </p>
+                                      <div className="mt-1.5 divide-y divide-slate-200 border-t border-slate-200 text-sm">
+                                        {mealLines.map((line, lineIndex) => (
+                                          <div
+                                            key={`meal-line-${lineIndex}`}
+                                            className="py-2 font-medium"
+                                          >
+                                            {(line.mealPlan ?? '').trim()}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
                                   )}
                                 </>
                               );
                             })()}
                           </div>
+
+                          {(hotel.rooms != null || nights != null) && (
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                              {hotel.rooms != null ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-[#000000]">
+                                  <strong className="text-xs font-medium uppercase tracking-wide text-[#000000]">
+                                    Rooms:
+                                  </strong>
+                                  {' '}
+                                  {hotel.rooms}
+                                </span>
+                              ) : null}
+                              {nights != null && (
+                                <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white">
+                                  <strong className="text-xs font-medium uppercase tracking-wide text-white/85">
+                                    Nights:
+                                  </strong>
+                                  {' '}
+                                  {nights}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           <div className="mt-4 grid gap-1.5 text-sm text-[#000000] sm:grid-cols-2">
                             {dateShort(hotel.checkInDate) ? (
@@ -2682,13 +3013,18 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                             )}
                             {roomLines.length > 0 ? (
                               <div className="flex flex-wrap gap-2">
-                                {roomLines.map((line, lineIndex) => (
-                                  <span key={lineIndex} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-[#000000]">
-                                    <strong className="text-xs font-medium uppercase tracking-wide text-[#000000]">Room {lineIndex + 1}</strong>{' '}
-                                    {(line.roomType ?? '').trim() || roomTypeFallback || 'Room'}
-                                    {line.rooms != null && line.rooms !== 1 ? ` — ${line.rooms} rooms` : ' — 1 room'}
-                                  </span>
-                                ))}
+                                {roomLines.map((line, lineIndex) => {
+                                  const roomType =
+                                    (line.roomType ?? '').trim() || roomTypeFallback || 'Room';
+                                  const rooms =
+                                    line.rooms != null && line.rooms > 0 ? line.rooms : null;
+                                  return (
+                                    <span key={lineIndex} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-[#000000]">
+                                      {roomType}
+                                      {rooms != null ? ` · ${rooms} ${rooms === 1 ? 'room' : 'rooms'}` : ''}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             ) : roomTypeFallback ? (
                               <p className="text-sm text-[#000000]">
@@ -2722,36 +3058,43 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                       const displayImages = quotationGalleryImages(service.images);
                       // Every saved pricing option as a compact tile (same style as
                       // activity pricing): label on the first line, price
-                      // beneath it. Legacy single price/basis rows normalize
-                      // to one tile; rows with neither render no tiles.
+                      // beneath it. A quotation-owned snapshot is authoritative —
+                      // including an EMPTY one (all options deleted) — so we only
+                      // fall back to a single synthesized tile for legacy rows
+                      // that carry no snapshot at all.
+                      const hasSnapshot = Array.isArray(service.pricingSnapshot);
                       const rawUnitPrice =
                         service.unitSellingPrice != null && service.unitSellingPrice !== ''
                           ? Number(service.unitSellingPrice)
                           : null;
                       const pricingOptions = normalizeAddonPricingSnapshot({
                         id: String(service.id),
-                        pricing: service.pricingSnapshot ?? null,
+                        pricing: hasSnapshot ? service.pricingSnapshot : null,
                         price:
-                          rawUnitPrice != null && Number.isFinite(rawUnitPrice)
+                          !hasSnapshot && rawUnitPrice != null && Number.isFinite(rawUnitPrice)
                             ? rawUnitPrice
                             : null,
                         currency: v.currency,
-                        pricingBasis: service.pricingBasisLabel,
+                        pricingBasis: hasSnapshot ? null : service.pricingBasisLabel,
                       });
                       return (
-                        <article key={service.id ?? `addon-${serviceIndex}`} className="rounded-2xl bg-card p-6 shadow-sm">
+                        <article
+                          key={service.id ?? `addon-${serviceIndex}`}
+                          className="min-w-0 overflow-hidden rounded-2xl bg-card p-6 shadow-sm"
+                        >
                           {displayImages.length > 0 && (
                             <div className="mb-4">
                               <QuotationMediaFrame
                                 images={displayImages}
                                 label="Add-on"
                                 imageAlt={service.name}
+                                imageFit="contain"
                               />
                             </div>
                           )}
-                          <h3 className="text-lg font-bold text-[#000000]">{service.name}</h3>
+                          <h3 className="break-words text-lg font-bold text-[#000000]">{service.name}</h3>
                           {plainText && (
-                            <div className="mt-2">
+                            <div className="mt-2 min-w-0 [overflow-wrap:anywhere]">
                               <RichHtml html={service.description ?? ''} />
                             </div>
                           )}
@@ -2907,7 +3250,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
           {/* Contact Us */}
           <PublicQuotationContact
             companyName={company.name}
-            contactPerson={preparedBy}
+            contactPerson={preparedByName}
             phone={company.phone}
             gstin={company.taxRegistrationNumber}
             email={company.email}

@@ -173,9 +173,10 @@ describe('Child Policy - destination prefill', () => {
     expect(policyValue('<p>Custom child terms</p>', prefill.childPolicy)).toBe(
       '<p>Custom child terms</p>',
     );
-    // Empty quotation content falls back to the master default.
+    // Only an unset (null) quotation value falls back to the master default.
     expect(policyValue(null, prefill.childPolicy)).toContain('Children below 5 stay free');
-    expect(policyValue('', prefill.childPolicy)).toContain('Children below 5 stay free');
+    // A cleared quotation value stays cleared instead of restoring the master.
+    expect(policyValue('', prefill.childPolicy)).toBe('');
   });
 
   it('leaves Child Policy empty when no destination defines one', () => {

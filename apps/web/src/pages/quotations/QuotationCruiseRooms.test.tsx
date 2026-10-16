@@ -124,9 +124,19 @@ const renderBuilderPage = () =>
 
 const openCruiseTab = async () => {
   await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
-  // The cruise stay card renders once the tab is active.
-  await screen.findByText('Cruise Stay');
+  // Every cruise card starts collapsed; expand the first so its fields show.
+  await userEvent.click(await screen.findByRole('button', { name: 'Expand cruise stay 1' }));
 };
+
+/** Cruise card titles in DOM order (header headings inside cruise articles). */
+const cruiseCardTitles = () =>
+  screen
+    .getAllByRole('article')
+    .filter(
+      (card) =>
+        within(card).queryAllByRole('button', { name: /Move cruise stay \d+ (up|down)/ }).length > 0,
+    )
+    .map((card) => within(card).getByRole('heading', { level: 4 }).textContent);
 
 const removeRoomButtons = () =>
   screen.queryAllByRole('button', { name: /Remove room \d+/ });
@@ -205,8 +215,8 @@ describe('Quotation Builder — cruise room removal', () => {
     await waitFor(() => expect(removeRoomButtons()).toHaveLength(0));
     expect(screen.queryByLabelText('Room 1 type master')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Room 1 number of rooms')).not.toBeInTheDocument();
-    // The stay itself remains, ready for an explicit Add Room.
-    expect(screen.getByText('Cruise Stay')).toBeInTheDocument();
+    // The stay itself remains (header shows its name), ready for Add Room.
+    expect(screen.getByRole('heading', { level: 4, name: 'Genting Dream' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add room' })).toBeInTheDocument();
   });
 
@@ -308,7 +318,7 @@ describe('Quotation Builder — cruise room removal', () => {
     await waitFor(() => expect(removeRoomButtons()).toHaveLength(1));
 
     expect(screen.getByLabelText('Cruise nights')).toHaveValue(3);
-    expect(screen.getByText('Cruise Stay')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 4, name: 'Genting Dream' })).toBeInTheDocument();
 
     await clickSave();
     const cruise = cruiseOf(await getPatchBody(fetchMock));
@@ -349,7 +359,7 @@ describe('Quotation Builder — cruise rooms appear only via Add Room', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
 
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
-    await screen.findByText('Cruise Stay');
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand cruise stay 1' }));
 
     // No room rows, no room inputs — only the explicit Add control.
     expect(removeRoomButtons()).toHaveLength(0);
@@ -364,7 +374,7 @@ describe('Quotation Builder — cruise rooms appear only via Add Room', () => {
     renderBuilderPage();
     await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
-    await screen.findByText('Cruise Stay');
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand cruise stay 1' }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
 
@@ -379,13 +389,13 @@ describe('Quotation Builder — cruise rooms appear only via Add Room', () => {
     renderBuilderPage();
     await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
-    await screen.findByText('Cruise Stay');
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand cruise stay 1' }));
     expect(removeRoomButtons()).toHaveLength(0);
 
     // Opening the tab chrome and switching tabs must not create rooms either.
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
-    await screen.findByText('Cruise Stay');
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand cruise stay 1' }));
     expect(removeRoomButtons()).toHaveLength(0);
     expect(screen.queryByLabelText('Room 1 type master')).not.toBeInTheDocument();
   });
@@ -458,7 +468,7 @@ describe('Quotation Builder — optional cruise nights', () => {
     // Enabling Cruise auto-creates the first stay.
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
 
-    await screen.findByText('Cruise Stay');
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand cruise stay 1' }));
     expect(nightsValue()).toBe('');
     // The field is optional: no required marker on its label.
     expect(screen.getByLabelText('Cruise nights').closest('label')?.textContent).not.toContain(
@@ -518,6 +528,121 @@ describe('Quotation Builder — optional cruise nights', () => {
     expect(cruise.cruiseRoomLines).toHaveLength(2);
     expect(cruise.sellingPrice).toBe(4000);
     expect(screen.queryByText('Please fix the following before saving:')).not.toBeInTheDocument();
+  });
+});
+
+describe('Quotation Builder — cruise card header, collapse and ordering', () => {
+  it('opens the Cruise tab with every card collapsed by default', async () => {
+    vi.stubGlobal('fetch', stubFetch(builderQuotation([cruiseServiceRow()])));
+    renderBuilderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
+
+    const expand = await screen.findByRole('button', { name: 'Expand cruise stay 1' });
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    // Body is hidden until expanded, but the header keeps the cruise name.
+    expect(screen.queryByLabelText('Cruise nights')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 4, name: 'Genting Dream' })).toBeInTheDocument();
+  });
+
+  it('shows the entered cruise name in the header and falls back to Cruise Stay', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch(
+        builderQuotation([
+          cruiseServiceRow({ name: 'Genting Dream', sequence: 1 }),
+          cruiseServiceRow({ name: '   ', sequence: 2 }),
+        ]),
+      ),
+    );
+    renderBuilderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
+
+    await waitFor(() => expect(cruiseCardTitles()).toEqual(['Genting Dream', 'Cruise Stay']));
+  });
+
+  it('expanding and collapsing never changes the cruise values', async () => {
+    vi.stubGlobal('fetch', stubFetch(builderQuotation([cruiseServiceRow()])));
+    renderBuilderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
+
+    // Collapsed by default.
+    await screen.findByRole('button', { name: 'Expand cruise stay 1' });
+    expect(screen.queryByLabelText('Cruise nights')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Expand cruise stay 1' }));
+    expect(await screen.findByLabelText('Cruise nights')).toHaveValue(3);
+    expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Interior');
+    expect(screen.getByLabelText('Room 2 type master')).toHaveValue('Oceanview');
+
+    // Collapse: body hidden, header/title/delete remain.
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse cruise stay 1' }));
+    await screen.findByRole('button', { name: 'Expand cruise stay 1' });
+    expect(screen.queryByLabelText('Cruise nights')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 4, name: 'Genting Dream' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove cruise stay 1' })).toBeInTheDocument();
+
+    // Re-expand: values untouched.
+    await userEvent.click(screen.getByRole('button', { name: 'Expand cruise stay 1' }));
+    expect(await screen.findByLabelText('Cruise nights')).toHaveValue(3);
+    expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Interior');
+    expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(2);
+    expect(screen.getByLabelText('Room 2 type master')).toHaveValue('Oceanview');
+  });
+
+  it('saving while a cruise card is collapsed still submits its data', async () => {
+    const fetchMock = stubFetch(builderQuotation([cruiseServiceRow()]));
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
+    await screen.findByRole('button', { name: 'Expand cruise stay 1' });
+    expect(screen.queryByLabelText('Cruise nights')).not.toBeInTheDocument();
+
+    await clickSave();
+    const cruise = cruiseOf(await getPatchBody(fetchMock));
+    expect(cruise.cruiseRoomLines).toHaveLength(2);
+    expect(cruise.cruiseNights).toBe(3);
+    expect(cruise.name).toBe('Genting Dream');
+  });
+
+  it('keeps only the delete icon with an accessible label', async () => {
+    vi.stubGlobal('fetch', stubFetch(builderQuotation([cruiseServiceRow()])));
+    renderBuilderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
+
+    const remove = await screen.findByRole('button', { name: 'Remove cruise stay 1' });
+    expect(remove).toHaveAttribute('title', 'Remove cruise stay 1');
+    // Icon-only: no visible "Remove" text remains in the header.
+    expect(within(remove).queryByText(/Remove/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  });
+
+  it('reorders cruises with the Up/Down controls and disables the ends', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch(
+        builderQuotation([
+          cruiseServiceRow({ name: 'Cruise A', sequence: 1 }),
+          cruiseServiceRow({ name: 'Cruise B', sequence: 2 }),
+        ]),
+      ),
+    );
+    renderBuilderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cruise' }));
+
+    await waitFor(() => expect(cruiseCardTitles()).toEqual(['Cruise A', 'Cruise B']));
+
+    // Ends are disabled, middles enabled.
+    expect(screen.getByRole('button', { name: 'Move cruise stay 1 up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move cruise stay 1 down' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Move cruise stay 2 up' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Move cruise stay 2 down' })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Move cruise stay 1 down' }));
+    await waitFor(() => expect(cruiseCardTitles()).toEqual(['Cruise B', 'Cruise A']));
+
+    // Move it back up to restore the original order (data preserved).
+    await userEvent.click(screen.getByRole('button', { name: 'Move cruise stay 2 up' }));
+    await waitFor(() => expect(cruiseCardTitles()).toEqual(['Cruise A', 'Cruise B']));
   });
 });
 
@@ -622,9 +747,35 @@ describe('Public weblink — cruise rooms', () => {
     renderPublicPage();
     await screen.findByText('Custom Package for Mira Shah');
 
-    expect(screen.getByText(/Room 1/)).toBeInTheDocument();
-    expect(screen.getByText(/Interior/)).toBeInTheDocument();
-    expect(screen.getByText(/Oceanview/)).toBeInTheDocument();
+    // Room configurations render as "<type> · <qty>" with no "ROOM N" prefix.
+    expect(screen.getByText('Interior · 2 rooms')).toBeInTheDocument();
+    expect(screen.getByText('Oceanview · 1 room')).toBeInTheDocument();
+    expect(screen.queryByText(/Room 1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Room 2/)).not.toBeInTheDocument();
+  });
+
+  it('renders a safe label when a room line omits both type and quantity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch(
+        publicFixture([
+          publicCruiseService({
+            cruiseNights: 2,
+            cruiseRoomLines: [
+              { cruiseRoomTypeId: null, roomType: '  ', rooms: null, roomRate: 1000 },
+            ],
+          }),
+        ]),
+      ),
+    );
+    renderPublicPage();
+    await screen.findByText('Custom Package for Mira Shah');
+
+    // Falls back to a single neutral label with no index prefix and no
+    // fabricated quantity, so nothing duplicates or reads as a bug.
+    expect(screen.getByText('Room')).toBeInTheDocument();
+    expect(screen.queryByText(/Room 1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/room(s)?\b/)).not.toBeInTheDocument();
   });
 
   it('shows scalar fallbacks without a badge for key-less legacy cruises', async () => {

@@ -438,4 +438,100 @@ describe('Add-on pricing snapshot', () => {
     const reloadedAgain = await client.get(`/api/quotations/${quotation.id}`);
     expect(reloadedAgain.body.data.versions[0].services[0].pricingSnapshot).toHaveLength(3);
   });
+
+  it('edits and deletes individual options without touching the master', async () => {
+    const client = await owner();
+    const masters = await setupMasters(client, 1000);
+    const addOn = (
+      await client.patch(`/api/masters/add-on-services/${masters.addOn.id}`, {
+        pricing: [
+          { label: 'Infant', price: 9, currency: 'INR' },
+          { label: 'Adult', price: 999, currency: 'INR' },
+          { label: 'Child', price: 99, currency: 'INR' },
+        ],
+      })
+    ).body.data;
+    const quotation = await createQuotation(client);
+
+    // Quotation-specific edit (relabel + reprice) then delete the Adult option.
+    const edited = addOn.pricing.map((entry: { id: string; label: string; price: number; currency: string }) =>
+      entry.label === 'Adult' ? { ...entry, label: 'Adult (twin)', price: 1099 } : entry,
+    );
+    const kept = edited.filter((entry: { label: string }) => entry.label !== 'Adult (twin)');
+
+    const saved = await client.patch(`/api/quotations/${quotation.id}/versions/${quotation.versionId}`, {
+      services: [
+        {
+          serviceType: 'OTHER_ADD_ON',
+          addOnServiceId: masters.addOn.id,
+          name: 'Visa Assistance',
+          quantity: 1,
+          sellingPrice: 999,
+          pricingBasisLabel: 'Adult',
+          pricingSnapshot: kept,
+          sequence: 1,
+        },
+      ],
+    });
+    expect(saved.status).toBe(200);
+
+    const reloaded = await client.get(`/api/quotations/${quotation.id}`);
+    expect(
+      reloaded.body.data.versions[0].services[0].pricingSnapshot.map(
+        (entry: { label: string }) => entry.label,
+      ),
+    ).toEqual(['Infant', 'Child']);
+
+    // The master record is untouched by the quotation-level deletes/edits.
+    const masterReloaded = await client.get(`/api/masters/add-on-services/${masters.addOn.id}`);
+    expect(
+      masterReloaded.body.data.pricing.map((entry: { label: string }) => entry.label),
+    ).toEqual(['Infant', 'Adult', 'Child']);
+  });
+
+  it('persists an explicitly emptied snapshot so deleted options never reappear on the public weblink', async () => {
+    const client = await owner();
+    const masters = await setupMasters(client, 1000);
+    const quotation = await createQuotation(client);
+
+    const saved = await client.patch(`/api/quotations/${quotation.id}/versions/${quotation.versionId}`, {
+      services: [
+        {
+          serviceType: 'OTHER_ADD_ON',
+          addOnServiceId: masters.addOn.id,
+          name: 'Visa Assistance',
+          quantity: 1,
+          sellingPrice: 999,
+          pricingBasisLabel: 'Adult',
+          pricingSnapshot: [],
+          sequence: 1,
+        },
+      ],
+    });
+    expect(saved.status).toBe(200);
+
+    // An explicit empty override must stay an empty ARRAY, never collapse to
+    // null (which would let the public weblink synthesize a legacy tile).
+    const reloaded = await client.get(`/api/quotations/${quotation.id}`);
+    expect(reloaded.body.data.versions[0].services[0].pricingSnapshot).toEqual([]);
+
+    await client.post(
+      `/api/quotations/${quotation.id}/versions/${quotation.versionId}/finalize`,
+    );
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
+      quotationVersionId: quotation.versionId,
+    });
+    const token = (
+      await db.quotation.findUniqueOrThrow({
+        where: { id: quotation.id },
+        select: { publicToken: true },
+      })
+    ).publicToken!;
+    const anon = createAuthClient(app);
+    const publicView = await anon.get(`/api/public/quotations/${token}`);
+    const svc = publicView.body.data.version.services.find(
+      (row: { serviceType: string }) => row.serviceType === 'OTHER_ADD_ON',
+    );
+    expect(svc.pricingSnapshot).toEqual([]);
+  });
 });

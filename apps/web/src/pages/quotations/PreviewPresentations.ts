@@ -31,8 +31,22 @@ import {
  * and nothing here saves, publishes, or persists anything.
  */
 
-/** How long resolved presentation URLs stay fresh (signed URLs expire). */
-export const PREVIEW_PRESENTATIONS_STALE_MS = 10 * 60 * 1000;
+/**
+ * Master-media download URLs are signed server-side and expire after 300s
+ * (`MASTER_MEDIA_PRESIGNED_URL_EXPIRY_SECONDS` / the per-master image
+ * download-url endpoints). Caching them past that point pinned the Live
+ * Weblink Preview to dead URLs: React Query still considered the result fresh
+ * and never re-minted, so every image-enabled section (hotel, sightseeing,
+ * cruise, vehicle, airline, destination hero) went broken until the quotation
+ * was reopened. Refresh a little before the signed URL expires — the same
+ * 4-minute freshness the master thumbnails already use — and re-mint on that
+ * cadence while the preview stays mounted, so a long-open preview never
+ * outlives its URLs.
+ */
+export const SIGNED_MEDIA_URL_TTL_MS = 5 * 60 * 1000;
+export const PREVIEW_PRESENTATIONS_STALE_MS = 4 * 60 * 1000;
+/** Re-mint signed presentation URLs at the freshness cadence while mounted. */
+export const PREVIEW_PRESENTATIONS_REFETCH_MS = PREVIEW_PRESENTATIONS_STALE_MS;
 
 export interface PreviewMasterLists {
   destinations: Destination[];
@@ -357,7 +371,7 @@ export function usePreviewPresentations(
 
   const hotelImages = useQueries({
     queries: hotelIds.map((hotelId) => ({
-      // Same key as the builder's per-row HotelPreview image query, so an
+      // Same image-URL query key as the builder's gallery hydration, so an
       // already-previewed hotel reuses its URL with no new request. Fires on
       // mount alongside the detail query (rather than waiting for it) so the
       // image resolves in the first round; hotels without images answer 404,
@@ -365,6 +379,7 @@ export function usePreviewPresentations(
       queryKey: ['masters', 'hotels', hotelId, 'quotation-preview'],
       queryFn: () => hotelImageUrl(hotelId),
       staleTime: PREVIEW_PRESENTATIONS_STALE_MS,
+      refetchInterval: PREVIEW_PRESENTATIONS_REFETCH_MS,
     })),
   });
   const hotelImageUrlsById: Record<string, string | undefined> = {};
@@ -392,6 +407,7 @@ export function usePreviewPresentations(
       queryFn: () => cruiseImageUrl(cruiseId),
       enabled: cruiseMastersById[cruiseId]?.hasImage === true,
       staleTime: PREVIEW_PRESENTATIONS_STALE_MS,
+      refetchInterval: PREVIEW_PRESENTATIONS_REFETCH_MS,
     })),
   });
   const vehicleImages = useQueries({
@@ -399,6 +415,7 @@ export function usePreviewPresentations(
       queryKey: ['masters', 'vehicles', vehicleId, 'preview-image'],
       queryFn: () => vehicleImageUrl(vehicleId),
       staleTime: PREVIEW_PRESENTATIONS_STALE_MS,
+      refetchInterval: PREVIEW_PRESENTATIONS_REFETCH_MS,
       enabled: vehicleMastersById[vehicleId]?.hasImage === true,
     })),
   });
@@ -413,8 +430,12 @@ export function usePreviewPresentations(
     if (url) vehicleImageUrlsById[vehicleId] = url;
   });
 
-  // Same batch hook (and cache key) the builder's sightseeing editor uses.
-  const sightseeingBatch = useSightseeingPresentations(sightseeingIds);
+  // Same batch hook (and cache key) the builder's sightseeing editor uses, but
+  // re-minted on the freshness cadence here so a long-open preview keeps its
+  // sightseeing images after the signed URLs would otherwise expire.
+  const sightseeingBatch = useSightseeingPresentations(sightseeingIds, {
+    refetchInterval: PREVIEW_PRESENTATIONS_REFETCH_MS,
+  });
 
   const airlineIds = flightAirlineIds(form?.flightDetails);
   const airlineMastersById = useMemo(() => {
@@ -428,6 +449,7 @@ export function usePreviewPresentations(
       queryFn: () => airlineLogoUrl(airlineId),
       enabled: airlineMastersById[airlineId]?.logoConfirmedAt != null,
       staleTime: PREVIEW_PRESENTATIONS_STALE_MS,
+      refetchInterval: PREVIEW_PRESENTATIONS_REFETCH_MS,
     })),
   });
   const airlineLogoUrlsById: Record<string, string | undefined> = {};
@@ -447,6 +469,7 @@ export function usePreviewPresentations(
     queryFn: () => destinationImageUrl(heroMasterId!),
     enabled: Boolean(heroMasterId),
     staleTime: PREVIEW_PRESENTATIONS_STALE_MS,
+    refetchInterval: PREVIEW_PRESENTATIONS_REFETCH_MS,
   });
 
   // Built fresh on every render (no memo on form-derived values): nested form

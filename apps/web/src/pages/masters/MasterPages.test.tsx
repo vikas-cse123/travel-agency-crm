@@ -313,6 +313,35 @@ describe('Phase 13A master pages', () => {
     );
   });
 
+  it('defaults Destination Master to 30 rows per page while other masters keep 10', async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) =>
+      String(request).includes('/lookups') ? response(lookups) : response(page([destination])),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const destinations = renderWithProviders(<DestinationsPage />);
+    await screen.findAllByText('Rajasthan Highlights');
+    const destinationUrls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/masters/destinations'));
+    expect(destinationUrls.some((url) => url.includes('pageSize=30'))).toBe(true);
+    expect(destinationUrls.some((url) => /[?&]pageSize=10\b/.test(url))).toBe(false);
+    destinations.unmount();
+
+    fetchMock.mockClear();
+    const citiesFetch = vi.fn(async (request: RequestInfo | URL) =>
+      String(request).includes('/lookups') ? response(lookups) : response(page([city])),
+    );
+    vi.stubGlobal('fetch', citiesFetch);
+    const cities = renderWithProviders(<CitiesPage />);
+    await screen.findAllByText('Jaipur');
+    const cityUrls = citiesFetch.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/masters/cities'));
+    expect(cityUrls.some((url) => url.includes('pageSize=10'))).toBe(true);
+    cities.unmount();
+  });
+
   it('renders ordered cities and switches sanitized policy tabs in destination details', async () => {
     vi.stubGlobal(
       'fetch',

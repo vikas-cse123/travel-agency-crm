@@ -116,6 +116,40 @@ export function toPublicSlug(value: string): string | null {
 }
 
 /**
+ * Friendly-name suffixes, in the exact priority order used when a quotation is
+ * created. A new quotation's weblink name is derived from the lead's name as
+ * `<name>` first, then `<name> - <suffix>`; no other pattern is ever generated.
+ */
+export const PUBLIC_SLUG_AUTO_SUFFIXES: readonly string[] = [
+  '',
+  ' - New',
+  ' - Updated',
+  ' - Revised',
+  ' - Final',
+];
+
+/**
+ * Ordered, de-duplicated friendly-slug candidates for a base name (the
+ * associated lead's customer name). Each suffix is normalized through the same
+ * canonical normalizer as manual names; empty, reserved and duplicate results
+ * are skipped so the caller always receives usable candidates in priority
+ * order.
+ */
+export function friendlySlugCandidates(baseName: string): string[] {
+  const base = normalizePublicSlug(baseName);
+  if (!base) return [];
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const suffix of PUBLIC_SLUG_AUTO_SUFFIXES) {
+    const slug = normalizePublicSlug(`${base}${suffix}`);
+    if (!slug || seen.has(slug) || isReservedPublicSlug(slug)) continue;
+    seen.add(slug);
+    candidates.push(slug);
+  }
+  return candidates;
+}
+
+/**
  * Weblink-name input for the CRM form. Only the raw bound is enforced here; the
  * canonical normalization, reserved-path and global-uniqueness checks run in
  * the quotations service so the precise "already in use" / "reserved" messages

@@ -316,6 +316,24 @@ suite('masters RichTextEditor (Hotel Description)', (initial: string) =>
 { name: /description/i, label: 'Description' },
 );
 
+/**
+ * Regression: bullet / numbered-list markers were partially clipped at the
+ * left edge of the policy editors. Markers are painted in the `list-inside`
+ * content box, so a wide (2+ digit) or otherwise long marker can never be
+ * cut off by an ancestor `overflow-hidden` wrapper. jsdom cannot verify
+ * painted clipping, so this asserts the utility classes driving that fix.
+ */
+describe('shared ui RichTextEditor list marker visibility', () => {
+  it('positions list markers inside the content box for ul and ol', () => {
+    render(<ControlledShared initial="<ul><li>Bullet</li></ul><ol><li>Number</li></ol>" />);
+    const editor = screen.getByRole('textbox', { name: /notes/i });
+    expect(editor.className).toContain('[&_ul]:list-inside');
+    expect(editor.className).toContain('[&_ol]:list-inside');
+    expect(editor.className).toContain('[&_ul]:list-disc');
+    expect(editor.className).toContain('[&_ol]:list-decimal');
+  });
+});
+
 describe('masters RichTextEditor numbered list (Terms & Conditions)', () => {
   const renderTerms = (initial: string) => render(<ControlledMasters initial={initial} />);
   const editorOf = () => screen.getByRole('textbox', { name: /description/i });

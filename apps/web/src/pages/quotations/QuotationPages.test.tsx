@@ -720,7 +720,7 @@ describe('Phase 8 quotation pages', () => {
   });
 
   it('calculates a live builder summary and hides costing without permission', async () => {
-    const draftVersion = {
+    const makeVersion = (pricingMode: string) => ({
       id: 'version-1',
       versionNumber: 1,
       title: 'Goa proposal',
@@ -740,7 +740,7 @@ describe('Phase 8 quotation pages', () => {
       finalAmount: '100',
       marginAmount: '50',
       marginPercentage: '50',
-      pricingMode: 'ITEMIZED',
+      pricingMode,
       notes: null,
       internalNotes: null,
       status: 'DRAFT',
@@ -771,21 +771,25 @@ describe('Phase 8 quotation pages', () => {
       inclusions: [],
       exclusions: [],
       terms: [],
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        response({
-          quotationNumber: 'QT-2026-000001',
-          customerName: 'Aarav Mehta',
-          adults: 1,
-          childrenWithBed: 0,
-          childrenWithoutBed: 0,
-          infants: 0,
-          versions: [draftVersion],
-        }),
-      ),
-    );
+    });
+    // The pricing mode is stored on the version (set on the Quotation Details
+    // page); the builder only renders according to it, so each render stubs the
+    // quotation with the mode under test.
+    const stubQuotation = (pricingMode: string) =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          response({
+            quotationNumber: 'QT-2026-000001',
+            customerName: 'Aarav Mehta',
+            adults: 1,
+            childrenWithBed: 0,
+            childrenWithoutBed: 0,
+            infants: 0,
+            versions: [makeVersion(pricingMode)],
+          }),
+        ),
+      );
     const renderBuilder = () =>
       renderWithProviders(
         <Routes>
@@ -796,16 +800,19 @@ describe('Phase 8 quotation pages', () => {
         </Routes>,
         { route: '/quotations/quotation-1/versions/version-1/edit' },
       );
-    const costView = renderBuilder();
+    // By Section: Hotel amount is visible.
+    stubQuotation('SECTION_WISE');
+    const sectionView = renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    // Hotel amount is only visible in By Section mode
-    await userEvent.click(screen.getByLabelText('By Section'));
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
     expect(await screen.findByLabelText('Hotel amount')).toBeEnabled();
     expect(screen.queryByLabelText('Hotel internal cost')).not.toBeInTheDocument();
-    // Switch back to By Traveler to test per-traveler pricing
-    await userEvent.click(screen.getByLabelText('By Traveler'));
-    await userEvent.click(screen.getByRole('button', { name: 'Summary & Pricing' }));
+    sectionView.unmount();
+    // By Traveler: per-passenger pricing from the Pricing tab.
+    stubQuotation('PER_PERSON');
+    const costView = renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await userEvent.click(screen.getByRole('button', { name: 'Pricing' }));
     // Per-passenger pricing: 1 adult × 110 = the package total.
     await userEvent.type(screen.getByLabelText('Per Adult Price'), '110');
     // The Total Package Price field, breakdown and the summary card all echo it.
@@ -814,11 +821,12 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getByLabelText('Net Amount')).toBeInTheDocument();
     costView.unmount();
     auth.permissions.delete('quotations.view_costing');
+    stubQuotation('PER_PERSON');
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
     expect(screen.queryByLabelText('Hotel internal cost')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Summary & Pricing' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Pricing' }));
     expect(screen.queryByLabelText('Net Amount')).not.toBeInTheDocument();
   });
 
@@ -2069,6 +2077,33 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getByAltText('Gallery 1')).toBeInTheDocument();
     expect(screen.getByText('1 / 9')).toBeInTheDocument();
 
+    // Touch swipe mirrors the arrows: left = next, right = previous, wrapping
+    // at the ends. It never opens the viewer mid-gesture.
+    const swipe = (from: HTMLElement, dx: number) => {
+      fireEvent.touchStart(from, { touches: [{ clientX: 200, clientY: 60 }] });
+      fireEvent.touchEnd(from, { changedTouches: [{ clientX: 200 + dx, clientY: 60 }] });
+    };
+    // Right-swipe on the first image wraps to the last.
+    swipe(screen.getByAltText('Gallery 1'), 120);
+    expect(screen.getByText('9 / 9')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Left-swipe wraps forward from the last image back to the first.
+    swipe(screen.getByAltText('Gallery 9'), -120);
+    expect(screen.getByText('1 / 9')).toBeInTheDocument();
+    // Left then right returns to the starting image.
+    swipe(screen.getByAltText('Gallery 1'), -120);
+    expect(screen.getByText('2 / 9')).toBeInTheDocument();
+    swipe(screen.getByAltText('Gallery 2'), 120);
+    expect(screen.getByText('1 / 9')).toBeInTheDocument();
+    // Vertical drags are ignored so natural page scrolling stays intact.
+    fireEvent.touchStart(screen.getByAltText('Gallery 1'), {
+      touches: [{ clientX: 120, clientY: 30 }],
+    });
+    fireEvent.touchEnd(screen.getByAltText('Gallery 1'), {
+      changedTouches: [{ clientX: 118, clientY: 170 }],
+    });
+    expect(screen.getByText('1 / 9')).toBeInTheDocument();
+
     // The gallery lives INSIDE the hotel card — no separate large gallery above
     // it, and no duplicated images on the page.
     const carouselImage = screen.getByAltText('Gallery 1');
@@ -2874,12 +2909,20 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getAllByText('Total Package Price').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/₹10,000/).length).toBeGreaterThan(0);
     // 2. The traveller price breakdown still shows.
-    expect(screen.getByText(/2 Adults × ₹5,000/)).toBeInTheDocument();
+    const breakdown = screen.getByTestId('traveler-price-breakdown');
+    expect(within(breakdown).getByText('Adults')).toBeInTheDocument();
+    expect(within(breakdown).getByText('2 × ₹5,000')).toBeInTheDocument();
     // 3. The optional add-ons summary text is gone.
     expect(screen.queryByText(/add-ons \(optional\)/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/optional add-ons/i)).not.toBeInTheDocument();
     // 4. The add-on amount no longer appears as a summary line under the price.
-    expect(screen.queryByText(/₹3,800/)).not.toBeInTheDocument();
+    // (The Additional Services card legitimately shows its own price, so scope
+    // this to the pricing summary and the package breakdown.)
+    const pricingSection = document.querySelector(
+      '[data-preview-section="pricing"]',
+    ) as HTMLElement;
+    expect(within(pricingSection).queryByText(/₹3,800/)).not.toBeInTheDocument();
+    expect(within(breakdown).queryByText(/₹3,800/)).not.toBeInTheDocument();
     // 5. Add-on services elsewhere on the weblink remain unaffected.
     expect(screen.getByRole('heading', { name: 'Additional Services' })).toBeInTheDocument();
     expect(screen.getByText('Travel Insurance')).toBeInTheDocument();
@@ -6735,6 +6778,78 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.queryByText('Default')).not.toBeInTheDocument();
   });
 
+  it('renders no pricing tiles for an add-on whose snapshot was explicitly emptied', async () => {
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'a@b.test',
+        phone: null,
+        website: null,
+        address: null,
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000002',
+        customerName: 'Mira Shah',
+        destinationSummary: 'Kerala',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Kerala Escape',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [
+          {
+            id: 's-addon',
+            serviceType: 'OTHER_ADD_ON',
+            addOnServiceId: 'addon-master-1',
+            name: 'Travel Insurance',
+            description: null,
+            dayNumber: null,
+            city: null,
+            quantity: '1',
+            unitSellingPrice: '999',
+            totalSellingPrice: '999',
+            sellingPrice: '999',
+            pricingBasisLabel: 'Adult',
+            taxCategory: null,
+            notes: null,
+            sequence: 1,
+            pricingSnapshot: [],
+          },
+        ],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+      },
+      downloadUrl: null,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => response(publicData)));
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Mira Shah');
+    expect(screen.getByRole('heading', { name: 'Travel Insurance' })).toBeInTheDocument();
+    // An explicitly emptied snapshot is authoritative: no tile, and no legacy
+    // synthesis from the unit price/basis (which would resurrect a deletion).
+    expect(screen.queryByText('₹999')).not.toBeInTheDocument();
+    expect(screen.queryByText('Adult')).not.toBeInTheDocument();
+  });
+
   it('renders add-on snapshot images in the Additional Services cards', async () => {
     const publicData = {
       company: {
@@ -6958,6 +7073,170 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.getByRole('heading', { name: 'Singapore Visa' })).toBeInTheDocument();
     // The unselected add-on row must NOT appear.
     expect(screen.queryByRole('heading', { name: 'other add on' })).not.toBeInTheDocument();
+  });
+
+  it('shows the whole add-on image (object-contain) and wraps overflowing description text', async () => {
+    const longWord = 'SupercalifragilisticexpialidociousWithoutAnyBreakOpportunity';
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'a@b.test',
+        phone: null,
+        website: null,
+        address: null,
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000002',
+        customerName: 'Mira Shah',
+        destinationSummary: 'Kerala',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Kerala Escape',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [
+          {
+            id: 's-visa-image',
+            serviceType: 'OTHER_ADD_ON',
+            addOnServiceId: 'master-visa',
+            name: 'Singapore Visa',
+            description: `<p>Standard processing ${longWord}</p>`,
+            images: [{ url: 'https://cdn.example.test/visa.jpg', alt: 'Visa' }],
+            dayNumber: null,
+            city: null,
+            quantity: '1',
+            unitSellingPrice: '1500',
+            totalSellingPrice: '1500',
+            sellingPrice: '1500',
+            taxCategory: null,
+            notes: null,
+            sequence: 1,
+          },
+        ],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+      },
+      downloadUrl: null,
+    };
+    const fetchMock = vi.fn(async () => response(publicData));
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Mira Shah');
+
+    const addonsSection = screen
+      .getByRole('heading', { name: 'Additional Services' })
+      .closest('section') as HTMLElement;
+    // #1: the add-on photo is letterboxed (object-contain) instead of cropped.
+    const image = within(addonsSection).getByAltText('Visa');
+    expect(image.className).toContain('object-contain');
+    expect(image.className).not.toContain('object-cover');
+    // #2: long unbroken description text is allowed to wrap.
+    const rich = within(addonsSection)
+      .getByText(new RegExp(longWord))
+      .closest('.weblink-rich-text') as HTMLElement;
+    expect(rich.className).toContain('[overflow-wrap:anywhere]');
+  });
+
+  it('wraps preformatted add-on description lines instead of clipping them', async () => {
+    const codeLine =
+      '- Do NOT change discovery, matching, B1, permissions, Room, playback, or dialer behavior.';
+    const publicData = {
+      company: {
+        name: 'Alpha Travel',
+        email: 'a@b.test',
+        phone: null,
+        website: null,
+        address: null,
+        primaryColor: '#2563eb',
+      },
+      quotation: {
+        quotationNumber: 'QT-2026-000003',
+        customerName: 'Mira Shah',
+        destinationSummary: 'Kerala',
+        travelStartDate: null,
+        travelEndDate: null,
+        adults: 2,
+        childrenWithBed: 0,
+        childrenWithoutBed: 0,
+        infants: 0,
+        rooms: 1,
+        validUntil: null,
+        status: 'VIEWED',
+      },
+      version: {
+        title: 'Kerala Escape',
+        versionNumber: 1,
+        currency: 'INR',
+        finalAmount: '100',
+        hotels: [],
+        services: [
+          {
+            id: 's-visa-code',
+            serviceType: 'OTHER_ADD_ON',
+            addOnServiceId: 'master-visa',
+            name: 'Singapore Visa',
+            description: `<pre><code>${codeLine}</code></pre>`,
+            images: [],
+            dayNumber: null,
+            city: null,
+            quantity: '1',
+            unitSellingPrice: '1500',
+            totalSellingPrice: '1500',
+            sellingPrice: '1500',
+            taxCategory: null,
+            notes: null,
+            sequence: 1,
+          },
+        ],
+        itinerary: [],
+        inclusions: [],
+        exclusions: [],
+        terms: [],
+      },
+      downloadUrl: null,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => response(publicData)));
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/public-token-value-with-at-least-32-characters' },
+    );
+    await screen.findByText('Custom Package for Mira Shah');
+
+    const addonsSection = screen
+      .getByRole('heading', { name: 'Additional Services' })
+      .closest('section') as HTMLElement;
+    const rich = within(addonsSection)
+      .getByText(codeLine)
+      .closest('.weblink-rich-text') as HTMLElement;
+    // The full line is rendered — never truncated to a single clipped row.
+    expect(rich).toHaveTextContent(codeLine);
+    expect(rich.querySelector('pre')).not.toBeNull();
+    // `pre`/`code` default to `white-space: pre` (no wrapping) and were the
+    // real overflow cause; they are now made wrappable so the line breaks
+    // inside the card instead of spilling past it.
+    expect(rich.className).toContain('[&_pre]:whitespace-pre-wrap');
+    expect(rich.className).toContain('[&_code]:whitespace-pre-wrap');
   });
 
   it('hides the whole Additional Services section when every add-on row is unselected', async () => {
@@ -10062,9 +10341,35 @@ const renderBuilderPage = () =>
     { route: '/quotations/quotation-1/versions/version-1/edit' },
   );
 
+/**
+ * Cruise cards open collapsed; expand each one so its fields are reachable.
+ * No-op outside the Cruise tab or when there is nothing (left) to expand.
+ */
+const expandCruiseStays = async () => {
+  // Keep expanding whichever cards are still collapsed (handles gaps and new
+  // rows added after the tab was opened). Re-queries every pass for fresh nodes.
+  for (let guard = 0; guard < 50; guard += 1) {
+    const [expand] = screen.queryAllByRole('button', { name: /^Expand cruise stay \d+$/ });
+    if (!expand) return;
+    await userEvent.click(expand);
+  }
+};
+
+/** Vehicle cards open collapsed; expand each one so its fields are reachable. */
+const expandVehicleCards = async () => {
+  for (let guard = 0; guard < 50; guard += 1) {
+    const [expand] = screen.queryAllByRole('button', { name: /^Expand vehicle \d+$/ });
+    if (!expand) return;
+    await userEvent.click(expand);
+  }
+};
+
 /** Activate a builder tab by its nav-button label (tabs mount only when active). */
-const openTab = async (name: string) =>
-  userEvent.click(await screen.findByRole('button', { name }));
+const openTab = async (name: string) => {
+  await userEvent.click(await screen.findByRole('button', { name }));
+  // Cruise cards default to collapsed, so expand them for field-level tests.
+  if (name === 'Cruise') await expandCruiseStays();
+};
 
 /** Open the sightseeing activity combobox and wait for an option label. */
 const openActivityPicker = async (picker: HTMLElement, label: string) => {
@@ -10144,8 +10449,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand meal plan for hotel stay 1' }));
 
     // Legacy row: one room allocation + one meal plan, restored as line 1.
     expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Deluxe Room');
@@ -10188,7 +10491,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     // Initial total follows the single allocation.
     expect(screen.getByLabelText('Hotel total rooms')).toHaveValue(2);
     expect(screen.queryByRole('button', { name: 'Reset total rooms to calculated total' })).not.toBeInTheDocument();
@@ -10223,7 +10525,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
     await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
@@ -10244,7 +10545,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     const first = renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
     await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
@@ -10311,7 +10611,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.type(screen.getByLabelText('Room 2 type master'), 'Executive Suite');
     await userEvent.clear(screen.getByLabelText('Room 2 number of rooms'));
@@ -10356,8 +10655,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
       .map((button) => button.closest('article') as HTMLElement);
     expect(stays).toHaveLength(2);
     const [firstStay, secondStay] = [stays[0]!, stays[1]!];
-    await userEvent.click(within(firstStay).getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
-    await userEvent.click(within(secondStay).getByRole('button', { name: 'Expand room configuration for hotel stay 2' }));
     // Stay 2 starts automatic (4) with no reset action.
     expect(within(secondStay).getByLabelText('Hotel total rooms')).toHaveValue(4);
     expect(
@@ -10397,7 +10694,6 @@ describe('Quotation Builder — multiple room allocations and meal plans per hot
     renderBuilderPage();
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Expand room configuration for hotel stay 1' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await userEvent.click(screen.getByRole('button', { name: 'Remove room 2' }));
     expect(screen.queryByLabelText('Room 2 type master')).toBeNull();
@@ -10686,7 +10982,7 @@ describe('Quotation Builder - destination default add-ons', () => {
     expect(rows[0]!.images).toEqual([{ masterImageId: 'm-img-1', alt: 'Visa Assistance image 1' }]);
   });
 
-  it('preserves every pricing option in the quotation snapshot', async () => {
+  it('preserves and allows editing every pricing option in the quotation snapshot', async () => {
     const addonWithPricing = {
       ...addOn,
       price: 3000,
@@ -10716,8 +11012,69 @@ describe('Quotation Builder - destination default add-ons', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Include Visa Assistance')).toBeChecked(),
     );
-    // The builder surfaces every option read-only; nothing is discarded.
-    expect(await screen.findByText(/Pricing options:/)).toHaveTextContent('Adult ₹6,000');
+    // The builder surfaces every option as an editable label + amount.
+    const adultLabel = await screen.findByLabelText('Visa Assistance pricing option 1 label');
+    expect(adultLabel).toHaveValue('Adult');
+    expect(screen.getByLabelText('Visa Assistance pricing option 1 amount')).toHaveValue(6000);
+    expect(screen.getByLabelText('Visa Assistance pricing option 2 label')).toHaveValue('Child');
+    expect(screen.getByLabelText('Visa Assistance pricing option 3 label')).toHaveValue('Per Group');
+    // Quotation-specific edit: relabel and reprice the adult option.
+    await userEvent.clear(adultLabel);
+    await userEvent.type(adultLabel, 'Adult twin');
+    const adultAmount = screen.getByLabelText('Visa Assistance pricing option 1 amount');
+    await userEvent.clear(adultAmount);
+    await userEvent.type(adultAmount, '6500');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const rows = (body.services as Array<Record<string, unknown>>).filter(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    expect(rows).toHaveLength(1);
+    // The section price is untouched; only the quotation-owned snapshot changes.
+    expect(rows[0]).toMatchObject({
+      addOnServiceId: 'aaaaaaa9-1111-4111-8111-111111111111',
+      name: 'Visa Assistance',
+      sellingPrice: 6000,
+      pricingBasisLabel: 'Adult',
+    });
+    expect(rows[0]!.pricingSnapshot).toEqual([
+      { id: 'opt-adult', label: 'Adult twin', price: 6500, currency: 'INR' },
+      { id: 'opt-child', label: 'Child', price: 4000, currency: 'INR' },
+      { id: 'opt-group', label: 'Per Group', price: 20000, currency: 'USD' },
+    ]);
+  });
+
+  it('lets an operator rename an add-on service for the quotation only', async () => {
+    const addonWithLinks = {
+      ...addOn,
+      hasImage: true,
+      images: [
+        { id: 'm-img-1', fileName: 'visa.png', mimeType: 'image/png', fileSize: 10, isPrimary: true },
+      ],
+      destinations: [{ id: 'dest-sg', name: 'Singapore', isDefault: true }],
+    };
+    const quotation = {
+      ...builderQuotation(),
+      query: {
+        id: 'lead-1',
+        queryNumber: 'QRY-1',
+        itinerary: [{ country: 'Singapore', destination: 'Singapore', nights: 3, sequence: 1 }],
+      },
+    };
+    const fetchMock = masterFetch(quotation, {
+      '/masters/destinations': page([{ id: 'dest-sg', name: 'Singapore' }]),
+      '/masters/add-on-services': page([addonWithLinks]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Include Visa Assistance')).toBeChecked(),
+    );
+    const nameInput = screen.getByLabelText('Visa Assistance service name');
+    expect(nameInput).toHaveValue('Visa Assistance');
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'Singapore Visa (Express)');
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     const body = await getSavedQuotationBody(fetchMock);
     const rows = (body.services as Array<Record<string, unknown>>).filter(
@@ -10726,15 +11083,109 @@ describe('Quotation Builder - destination default add-ons', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       addOnServiceId: 'aaaaaaa9-1111-4111-8111-111111111111',
-      name: 'Visa Assistance',
-      sellingPrice: 6000,
-      pricingBasisLabel: 'Adult',
+      name: 'Singapore Visa (Express)',
     });
-    expect(rows[0]!.pricingSnapshot).toEqual([
-      { id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' },
-      { id: 'opt-child', label: 'Child', price: 4000, currency: 'INR' },
-      { id: 'opt-group', label: 'Per Group', price: 20000, currency: 'USD' },
+  });
+
+  // Saved services carry the quotation-owned snapshot; reopening the builder
+  // must restore it (previously the version→form mapper dropped the field, so
+  // the weblink fell back to a single label-less amount on reopen/save).
+  const savedAddonService = (pricingSnapshot: unknown[]) => ({
+    id: 's-visa',
+    serviceType: 'OTHER_ADD_ON',
+    addOnServiceId: 'aaaaaaa9-1111-4111-8111-111111111111',
+    name: 'Visa Assistance',
+    description: null,
+    dayNumber: null,
+    city: null,
+    quantity: '1',
+    unitSellingPrice: '999',
+    totalSellingPrice: '999',
+    sellingPrice: '999',
+    pricingBasis: 'FIXED',
+    pricingBasisLabel: 'Adult',
+    pricingSnapshot,
+    taxCategory: null,
+    notes: null,
+    sequence: 1,
+    images: [],
+  });
+  const threeOptions = [
+    { id: 'opt-infant', label: 'Infant', price: 9, currency: 'INR' },
+    { id: 'opt-adult', label: 'Adult', price: 999, currency: 'INR' },
+    { id: 'opt-child', label: 'Child', price: 99, currency: 'INR' },
+  ];
+
+  it('restores saved add-on pricing options (with labels) when reopening and re-saving', async () => {
+    const quotation = builderQuotation({ services: [savedAddonService(threeOptions)] });
+    const fetchMock = masterFetch(quotation);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    // No prefill for a saved quotation: the stored snapshot is authoritative.
+    expect(await screen.findByLabelText('Visa Assistance pricing option 1 label')).toHaveValue(
+      'Infant',
+    );
+    expect(screen.getByLabelText('Visa Assistance pricing option 1 amount')).toHaveValue(9);
+    expect(screen.getByLabelText('Visa Assistance pricing option 2 label')).toHaveValue('Adult');
+    expect(screen.getByLabelText('Visa Assistance pricing option 3 label')).toHaveValue('Child');
+    // Re-saving an untouched row must not discard the snapshot or its labels.
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const row = (body.services as Array<Record<string, unknown>>).find(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    expect(row).toMatchObject({ pricingBasisLabel: 'Adult' });
+    expect((row!.pricingSnapshot as Array<{ label: string }>).map((entry) => entry.label)).toEqual([
+      'Infant',
+      'Adult',
+      'Child',
     ]);
+  });
+
+  it('deletes a single pricing option for the quotation only', async () => {
+    const quotation = builderQuotation({ services: [savedAddonService(threeOptions)] });
+    const fetchMock = masterFetch(quotation);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await screen.findByLabelText('Visa Assistance pricing option 2 label');
+    await userEvent.click(screen.getByLabelText('Remove Visa Assistance pricing option 2'));
+    // Adult is gone; Infant and Child remain, re-indexed in order.
+    expect(screen.getByLabelText('Visa Assistance pricing option 1 label')).toHaveValue('Infant');
+    expect(screen.getByLabelText('Visa Assistance pricing option 2 label')).toHaveValue('Child');
+    expect(
+      screen.queryByLabelText('Visa Assistance pricing option 3 label'),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const row = (body.services as Array<Record<string, unknown>>).find(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    expect((row!.pricingSnapshot as Array<{ label: string }>).map((entry) => entry.label)).toEqual([
+      'Infant',
+      'Child',
+    ]);
+  });
+
+  it('persists an empty snapshot when every pricing option is deleted', async () => {
+    const quotation = builderQuotation({ services: [savedAddonService(threeOptions)] });
+    const fetchMock = masterFetch(quotation);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await screen.findByLabelText('Visa Assistance pricing option 1 label');
+    for (let i = 0; i < threeOptions.length; i += 1) {
+      await userEvent.click(screen.getByLabelText('Remove Visa Assistance pricing option 1'));
+    }
+    // All options removed: the block disappears and nothing is re-synthesized.
+    expect(screen.queryByText('Pricing options')).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const row = (body.services as Array<Record<string, unknown>>).find(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    expect(row!.pricingSnapshot).toEqual([]);
   });
 
   it('does not resurrect a manually removed default on save', async () => {
@@ -10851,6 +11302,21 @@ describe('Quotation Builder - destination default add-ons', () => {
     await userEvent.click(await screen.findByLabelText('Include Visa Assistance'));
     expect(await screen.findByLabelText('Visa Assistance description')).toBeInTheDocument();
   });
+
+  it('wraps long add-on description lines in the rich-text editor', async () => {
+    vi.stubGlobal('fetch', masterFetch(builderQuotation()));
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await userEvent.click(await screen.findByLabelText('Include Visa Assistance'));
+    const editor = await screen.findByLabelText('Visa Assistance description');
+    // The editable surface must break long unbroken runs and preformatted
+    // (`pre`/`code`) content onto the next line instead of overflowing the
+    // editor box — both with and without the live preview open.
+    expect(editor.className).toContain('[overflow-wrap:anywhere]');
+    expect(editor.className).toContain('max-w-full');
+    expect(editor.className).toContain('[&_pre]:whitespace-pre-wrap');
+    expect(editor.className).toContain('[&_code]:whitespace-pre-wrap');
+  });
 });
 
 
@@ -10957,12 +11423,13 @@ describe.skip('Phase 14 master selectors', () => {
     await userEvent.type(idField, 'HTL-000123{enter}');
 
     // 2 + 3. The HTL bookmark loads through the existing logic and the saved
-    // snapshot populates the hotel form (name, city, nights, dates, times, rooms).
+    // snapshot populates the hotel form (name, nights, dates, times, rooms).
+    // City stays in saved data but has no visible field (like Remark).
     expect(await screen.findByText('✓ Loaded HTL-000123')).toBeInTheDocument();
     // Expand the imported (appended) hotel stay to edit its fields.
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
     expect(screen.getByLabelText('Hotel master')).toHaveValue('The Lalit Grand Palace Srinagar');
-    expect(screen.getByLabelText('Hotel city')).toHaveValue('Srinagar');
+    expect(screen.queryByLabelText('Hotel city')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('2');
     expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
     expect(screen.getByLabelText('Hotel check-out')).toHaveValue('12-09-2026');
@@ -11063,9 +11530,10 @@ describe.skip('Phase 14 master selectors', () => {
     // Expand the imported (appended) stay to edit its fields.
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
 
-    // 2. Every bookmark field populates the normal hotel stay row.
+    // 2. Every bookmark field populates the normal hotel stay row
+    // (city stays in data with no visible field).
     expect(screen.getByLabelText('Hotel master')).toHaveValue('Holiday Inn Lucknow Airport by IHG');
-    expect(screen.getByLabelText('Hotel city')).toHaveValue('Lucknow');
+    expect(screen.queryByLabelText('Hotel city')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
     expect(screen.getByLabelText('Hotel check-out')).toHaveValue('14-09-2026');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('4');
@@ -11185,7 +11653,7 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getAllByRole('button', { name: /Expand hotel stay 1/ })).toHaveLength(1);
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
     expect(screen.getByLabelText('Hotel master')).toHaveValue('Holiday Inn Lucknow Airport by IHG');
-    expect(screen.getByLabelText('Hotel city')).toHaveValue('Lucknow');
+    expect(screen.queryByLabelText('Hotel city')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
     expect(screen.getByLabelText('Hotel check-out')).toHaveValue('14-09-2026');
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('4');
@@ -11749,9 +12217,17 @@ describe.skip('Phase 14 master selectors', () => {
       await screen.findByRole('button', { name: 'Add hotel after stay 1' }),
     );
 
+    // The blank stay lands between the two existing stays: three collapsed
+    // cards in order (city has no visible field anymore, so order is read
+    // from the collapsed headers — the blank stay shows "Hotel Stay").
+    const toggles = screen.getAllByRole('button', { name: /^(Expand|Collapse) hotel stay \d+$/ });
+    expect(toggles).toHaveLength(3);
     expect(
-      screen.getAllByLabelText('Hotel city').map((input) => input.getAttribute('value')),
-    ).toEqual(['Delhi', 'Delhi', 'Goa']);
+      toggles.map(
+        (toggle) =>
+          (toggle.closest('article') as HTMLElement).querySelector('h4')?.textContent,
+      ),
+    ).toEqual(['Delhi Hotel', 'Hotel Stay', 'Goa Hotel']);
     expect(screen.queryByText('Add Hotel Stay')).not.toBeInTheDocument();
   });
 
@@ -11790,10 +12266,19 @@ describe.skip('Phase 14 master selectors', () => {
       await screen.findByRole('button', { name: 'Add hotel before stay 1' }),
     );
 
+    // The blank stay lands before the existing stays (city has no visible
+    // field anymore, so order is read from the collapsed headers).
+    const toggles = screen.getAllByRole('button', { name: /^(Expand|Collapse) hotel stay \d+$/ });
+    expect(toggles).toHaveLength(3);
     expect(
-      screen.getAllByLabelText('Hotel city').map((input) => input.getAttribute('value')),
-    ).toEqual(['Delhi', 'Delhi', 'Goa']);
+      toggles.map(
+        (toggle) =>
+          (toggle.closest('article') as HTMLElement).querySelector('h4')?.textContent,
+      ),
+    ).toEqual(['Hotel Stay', 'Delhi Hotel', 'Goa Hotel']);
 
+    // Expand the blank stay to name it, then save: insertion order survives.
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
     await userEvent.type(screen.getAllByLabelText('Hotel master')[0]!, 'Shah Palace Hotel');
     await waitFor(() =>
       expect(screen.getAllByLabelText('Hotel master')[0]).toHaveValue('Shah Palace Hotel'),
@@ -12217,10 +12702,15 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Hotel');
     await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
 
-    expect(await screen.findByLabelText('Hotel city')).toHaveValue('Baku');
-    expect(screen.getByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
+    expect(await screen.findByLabelText('Hotel check-in')).toHaveValue('10-09-2026');
     expect(screen.getByLabelText('Hotel check-out')).toHaveValue('13-09-2026');
-    expect(screen.getByLabelText('Room 1 number of rooms')).toHaveValue(2);
+    // No rooms seeding: an itinerary-prefilled stay starts with no room
+    // allocations (Total Rooms stays empty until rooms are added).
+    expect(screen.queryByLabelText('Room 1 number of rooms')).not.toBeInTheDocument();
+    expect((screen.getByLabelText('Hotel total rooms') as HTMLInputElement).value).toBe('');
+    // The itinerary destination still seeds the stay city in data, but the
+    // City field is removed from the builder UI.
+    expect(screen.queryByLabelText('Hotel city')).not.toBeInTheDocument();
     // Nights is read-only and derived from the stay dates (10 Sep → 13 Sep = 3).
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('3');
   });
@@ -12413,7 +12903,12 @@ describe.skip('Phase 14 master selectors', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Hotel master')).toHaveValue('Shah Palace Hotel'),
     );
-    expect(screen.getByLabelText('Hotel city')).toHaveValue('Baku');
+    // Master selection still stores the city in data (used for sorting and
+    // saves) with no visible City field in the builder UI.
+    expect(screen.queryByLabelText('Hotel city')).not.toBeInTheDocument();
+    // Room and meal lines start empty: add a room allocation first. Both
+    // sections are always visible, so no expansion click is needed.
+    await userEvent.click(screen.getByRole('button', { name: 'Add room' }));
     await waitFor(() => expect(screen.getByLabelText('Room 1 type master')).toBeEnabled());
 
     await userEvent.type(screen.getByLabelText('Room 1 type master'), 'Deluxe Room');
@@ -12883,6 +13378,7 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Cruise');
     // Enabling Cruise auto-creates the first entry.
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     expect(await screen.findByLabelText('Cruise room type master')).toBeDisabled();
 
     await userEvent.type(screen.getByLabelText('Cruise master'), 'Dream Genting');
@@ -12898,6 +13394,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.type(await screen.findByLabelText('Cruise master'), 'Dream Genting');
     await waitFor(() => expect(screen.getByLabelText('Cruise room type master')).toBeEnabled());
     await userEvent.type(screen.getByLabelText('Cruise room type master'), 'Interior');
@@ -12936,6 +13433,7 @@ describe.skip('Phase 14 master selectors', () => {
     // No entry before enabling.
     expect(screen.queryByLabelText('Cruise master')).not.toBeInTheDocument();
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     // Exactly one entry appears with the default Section Title.
     expect(await screen.findByLabelText('Cruise section title')).toHaveValue('Cruise Details');
     expect(screen.getAllByLabelText('Cruise master').length).toBe(1);
@@ -13087,6 +13585,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.type(await screen.findByLabelText('Cruise master'), 'Dream Genting');
     await waitFor(() => expect(screen.getByLabelText('Cruise room type master')).toBeEnabled());
     const input = screen.getByLabelText('Cruise room type master');
@@ -13107,6 +13606,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.type(await screen.findByLabelText('Cruise master'), 'Dream Genting');
     await waitFor(() => expect(screen.getByLabelText('Cruise room type master')).toBeEnabled());
     expect(screen.getByLabelText('Cruise room type master')).toHaveAttribute(
@@ -13219,12 +13719,14 @@ describe.skip('Phase 14 master selectors', () => {
     await openTab('Cruise');
     // Enabling Cruise creates an empty entry; saving is blocked while included.
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     expect(
       await screen.findByText(/services\.0\.name: String must contain at least 1 character/),
     ).toBeInTheDocument();
     // Unchecking Cruise clears the stale error and saves without cruise rows.
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     expect(screen.queryByText(/services\.0\.name/)).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     await waitFor(() => {
@@ -14601,7 +15103,7 @@ describe.skip('Phase 14 master selectors', () => {
       'Vehicle',
       'Add-on Services',
       'Inclusions & Exclusions',
-      'Summary & Pricing',
+      'Pricing',
     ];
     for (const label of expected) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
@@ -15610,7 +16112,8 @@ describe.skip('Phase 14 master selectors', () => {
     // Exactly one Hotel Stay row despite Singapore appearing twice
     expect(await screen.findAllByLabelText('Hotel master')).toHaveLength(1);
     expect(screen.getByLabelText('Hotel master')).toHaveValue('Aloft Singapore Novena by Marriott');
-    expect(screen.getByLabelText('Hotel city')).toHaveValue('Singapore');
+    // City stays in data (prefilled from the itinerary) with no visible field.
+    expect(screen.queryByLabelText('Hotel city')).not.toBeInTheDocument();
     // 6 total nights (2+2+2), not merged land nights (2+2=4)
     expect(screen.getByLabelText('Hotel nights')).toHaveValue('6');
     expect(screen.getByLabelText('Hotel check-in')).toHaveValue('14-08-2026');
@@ -17035,7 +17538,6 @@ describe('public quotation contact message helpers', () => {
 // The reference "Summary & Pricing" case used throughout: 2 Adults, 1 CWB,
 // 1 CWOB, 1 Infant at 10,000 / 2,000 / 1,000 / 7,000 → 30,000 total.
 const TAX_NOTE_OPTIONS = [
-  '-- No change (keep existing) --',
   'Do not show',
   'Inclusive of all taxes',
   'Inclusive of all taxes, excluding TCS',
@@ -17069,7 +17571,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
   it('computes the total, margin and breakdown live with no NaN', async () => {
     vi.stubGlobal('fetch', masterFetch(pricingBase()));
     renderBuilderPage();
-    await openTab('Summary & Pricing');
+    await openTab('Pricing');
     // Empty state first.
     expect(screen.getByText('Enter prices to see the breakdown.')).toBeInTheDocument();
     await fillReferencePrices();
@@ -17086,11 +17588,117 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
     expect(screen.getByText(/CWOB: 1 ×/)).toBeInTheDocument();
     expect(screen.getByText(/Infants: 1 ×/)).toBeInTheDocument();
     expect(screen.getByText(/Package Subtotal:/)).toBeInTheDocument();
-    // Traveller counts are read-only and driven by the quotation snapshot.
-    expect(screen.getByLabelText('Adults')).toHaveAttribute('readonly');
-    expect(screen.getByLabelText('Adults')).toHaveValue('2');
+    // Traveller counts are prefilled from the quotation snapshot but editable.
+    expect(screen.getByLabelText('Adults')).not.toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Adults')).toHaveValue(2);
+    expect(screen.getByLabelText('CWB')).toHaveValue(1);
+    expect(screen.getByLabelText('CWOB')).toHaveValue(1);
+    expect(screen.getByLabelText('Infants')).toHaveValue(1);
     expect(screen.getByLabelText('Total Package Price')).toHaveAttribute('readonly');
     expect(screen.getByLabelText('Margin')).toHaveAttribute('readonly');
+  });
+
+  it('recalculates the total, margin and breakdown when a traveller count is edited', async () => {
+    vi.stubGlobal('fetch', masterFetch(pricingBase()));
+    renderBuilderPage();
+    await openTab('Pricing');
+    await fillReferencePrices();
+    const total = screen.getByLabelText('Total Package Price') as HTMLInputElement;
+    await waitFor(() => expect(total.value).toContain('30,000'));
+
+    // Adults 2 → 3 adds one adult at 10,000.
+    const adults = screen.getByLabelText('Adults') as HTMLInputElement;
+    await userEvent.clear(adults);
+    await userEvent.type(adults, '3');
+    await waitFor(() => expect(total.value).toContain('40,000'));
+
+    // CWB 1 → 0 (−2,000) and CWOB 1 → 2 (+1,000) together leave 39,000.
+    const cwb = screen.getByLabelText('CWB') as HTMLInputElement;
+    await userEvent.clear(cwb);
+    await userEvent.type(cwb, '0');
+    const cwob = screen.getByLabelText('CWOB') as HTMLInputElement;
+    await userEvent.clear(cwob);
+    await userEvent.type(cwob, '2');
+    await waitFor(() => expect(total.value).toContain('39,000'));
+
+    // The breakdown follows the edited mix (a zero-count row is dropped).
+    expect(await screen.findByText(/Adults: 3 ×/)).toBeInTheDocument();
+    expect(screen.getByText(/CWOB: 2 ×/)).toBeInTheDocument();
+    expect(screen.queryByText(/CWB: /)).not.toBeInTheDocument();
+
+    // Margin = edited Total − Net Amount.
+    await userEvent.type(screen.getByLabelText('Net Amount'), '10000');
+    const margin = screen.getByLabelText('Margin') as HTMLInputElement;
+    await waitFor(() => expect(margin.value).toContain('29,000'));
+  });
+
+  it('clamps edited traveller counts to valid non-negative whole numbers', async () => {
+    vi.stubGlobal('fetch', masterFetch(pricingBase()));
+    renderBuilderPage();
+    await openTab('Pricing');
+    await fillReferencePrices();
+    const total = screen.getByLabelText('Total Package Price') as HTMLInputElement;
+    const adults = screen.getByLabelText('Adults') as HTMLInputElement;
+
+    // A negative Adults entry is clamped to the minimum of 1 for pricing.
+    fireEvent.change(adults, { target: { value: '-3' } });
+    await waitFor(() => expect(total.value).toContain('20,000'));
+    // Blurring normalises the field itself to the valid minimum.
+    fireEvent.blur(adults);
+    await waitFor(() => expect(adults).toHaveValue(1));
+
+    // A fractional entry floors to a whole number.
+    fireEvent.change(adults, { target: { value: '2.7' } });
+    await waitFor(() => expect(total.value).toContain('30,000'));
+    fireEvent.blur(adults);
+    await waitFor(() => expect(adults).toHaveValue(2));
+  });
+
+  it('persists an edited traveller mix with the quotation on save', async () => {
+    const fetchMock = masterFetch(pricingBase());
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Pricing');
+    const adults = screen.getByLabelText('Adults') as HTMLInputElement;
+    await userEvent.clear(adults);
+    await userEvent.type(adults, '4');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    // The quotation-level PATCH carries the new counts…
+    await waitFor(() => {
+      const countPatch = fetchMock.mock.calls.find(
+        ([input, options]) =>
+          options?.method === 'PATCH' &&
+          String(input).includes('/quotations/quotation-1') &&
+          !String(input).includes('/versions/'),
+      );
+      expect(countPatch).toBeDefined();
+      expect(JSON.parse(String(countPatch![1]!.body))).toMatchObject({ adults: 4 });
+    });
+    // …and is followed by the version save.
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, options]) =>
+            options?.method === 'PATCH' && String(input).includes('/versions/version-1'),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it('keeps manual count edits across tab switches and unrelated field changes', async () => {
+    vi.stubGlobal('fetch', masterFetch(pricingBase()));
+    renderBuilderPage();
+    await openTab('Pricing');
+    const adults = screen.getByLabelText('Adults') as HTMLInputElement;
+    await userEvent.clear(adults);
+    await userEvent.type(adults, '5');
+    // The Summary tab unmounts when another tab is active; the edit must survive.
+    await openTab('Hotel');
+    await openTab('Pricing');
+    expect(screen.getByLabelText('Adults')).toHaveValue(5);
+    // An unrelated form field (the per-adult price) must not reset the count.
+    await userEvent.type(screen.getByLabelText('Per Adult Price'), '10000');
+    expect(screen.getByLabelText('Adults')).toHaveValue(5);
   });
 
   it('hides breakdown categories whose traveller count is zero', async () => {
@@ -17105,7 +17713,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
       }),
     );
     renderBuilderPage();
-    await openTab('Summary & Pricing');
+    await openTab('Pricing');
     await userEvent.type(screen.getByLabelText('Per Adult Price'), '10000');
     expect(await screen.findByText(/Adults: 2 ×/)).toBeInTheDocument();
     expect(screen.queryByText(/CWB: /)).not.toBeInTheDocument();
@@ -17116,7 +17724,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
   it('renders the exact tax-note options and omits the removed pricing controls', async () => {
     vi.stubGlobal('fetch', masterFetch(pricingBase()));
     renderBuilderPage();
-    await openTab('Summary & Pricing');
+    await openTab('Pricing');
     const taxSelect = screen.getByLabelText('Tax note');
     expect(
       within(taxSelect)
@@ -17140,7 +17748,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
     );
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
-    await openTab('Summary & Pricing');
+    await openTab('Pricing');
     await userEvent.type(screen.getByLabelText('Initial amount for booking'), '2000');
     await userEvent.type(screen.getByLabelText('Payment link'), 'https://pay.example.com/abc');
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
@@ -17158,7 +17766,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
     const fetchMock = masterFetch(pricingBase({ taxNote: 'Inclusive of all taxes' }));
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
-    await openTab('Summary & Pricing');
+    await openTab('Pricing');
     await userEvent.selectOptions(screen.getByLabelText('Tax note'), 'Do not show');
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     await waitFor(() => {
@@ -17172,7 +17780,7 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
     const fetchMock = masterFetch(pricingBase());
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
-    await openTab('Summary & Pricing');
+    await openTab('Pricing');
     await userEvent.type(screen.getByLabelText('Payment link'), 'not-a-url');
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     expect((await screen.findAllByText(/valid URL starting with/i)).length).toBeGreaterThan(0);
@@ -17285,16 +17893,21 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
     expect(screen.getAllByText('Total Package Price').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/30,000/).length).toBeGreaterThan(0);
     expect(screen.getByText('Inclusive of all taxes, excluding TCS')).toBeInTheDocument();
-    expect(screen.getByText(/2 Adults ×/)).toBeInTheDocument();
-    expect(screen.getByText(/1 CWB ×/)).toBeInTheDocument();
-    expect(screen.getByText(/1 CWOB ×/)).toBeInTheDocument();
-    expect(screen.getByText(/1 Infant ×/)).toBeInTheDocument();
+    const breakdown = screen.getByTestId('traveler-price-breakdown');
+    expect(within(breakdown).getByText('Adults')).toBeInTheDocument();
+    expect(within(breakdown).getByText('2 × ₹10,000')).toBeInTheDocument();
+    expect(within(breakdown).getByText('Children with bed (CWB)')).toBeInTheDocument();
+    expect(within(breakdown).getByText('1 × ₹2,000')).toBeInTheDocument();
+    expect(within(breakdown).getByText('Children without bed (CWOB)')).toBeInTheDocument();
+    expect(within(breakdown).getByText('1 × ₹1,000')).toBeInTheDocument();
+    expect(within(breakdown).getByText('Infants')).toBeInTheDocument();
+    expect(within(breakdown).getByText('1 × ₹7,000')).toBeInTheDocument();
     // Internal profitability is never exposed publicly.
     expect(screen.queryByText(/Margin/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Net Amount/)).not.toBeInTheDocument();
   });
 
-  it('uses singular labels and hides zero-count categories publicly', async () => {
+  it('hides zero-count traveller categories publicly', async () => {
     renderPublic(
       publicPayload(
         { perChildWithBedPrice: '0', perChildWithoutBedPrice: '0' },
@@ -17302,10 +17915,13 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
       ),
     );
     await screen.findByText('Custom Package for Vikas Singh');
-    expect(screen.getByText(/1 Adult ×/)).toBeInTheDocument();
-    expect(screen.getByText(/1 Infant ×/)).toBeInTheDocument();
-    expect(screen.queryByText(/CWB ×/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/CWOB ×/)).not.toBeInTheDocument();
+    const breakdown = screen.getByTestId('traveler-price-breakdown');
+    expect(within(breakdown).getByText('Adults')).toBeInTheDocument();
+    expect(within(breakdown).getByText('1 × ₹10,000')).toBeInTheDocument();
+    expect(within(breakdown).getByText('Infants')).toBeInTheDocument();
+    expect(within(breakdown).getByText('1 × ₹7,000')).toBeInTheDocument();
+    expect(within(breakdown).queryByText('Children with bed (CWB)')).not.toBeInTheDocument();
+    expect(within(breakdown).queryByText('Children without bed (CWOB)')).not.toBeInTheDocument();
   });
 
   it('hides the tax note and never shows the control values publicly', async () => {
@@ -18300,18 +18916,21 @@ describe('Quotation Builder — Sightseeing Master gallery snapshot', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderBuilderPage();
     await openTab('Vehicle');
+    await userEvent.click(await screen.findByLabelText('Include Vehicle in Quotation'));
+    // Vehicle cards open collapsed: reveal the first card before selecting.
+    await expandVehicleCards();
 
-    await userEvent.selectOptions(await screen.findByLabelText('Vehicle type'), 'Standard MPV');
-    await userEvent.selectOptions(await screen.findByLabelText('Vehicle model'), galleryVehicle.id);
+    await userEvent.selectOptions(await screen.findByLabelText('Vehicle 1 type'), 'Standard MPV');
+    await userEvent.selectOptions(await screen.findByLabelText('Vehicle 1 model'), galleryVehicle.id);
     expect(
-      await screen.findByRole('button', { name: 'Remove vehicle image 1' }),
+      await screen.findByRole('button', { name: 'Remove vehicle-0 image 1' }),
     ).toBeInTheDocument();
 
     for (let remaining = 3; remaining > 0; remaining -= 1) {
-      await userEvent.click(screen.getByRole('button', { name: 'Remove vehicle image 1' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Remove vehicle-0 image 1' }));
     }
     expect(
-      screen.queryByRole('button', { name: 'Remove vehicle image 1' }),
+      screen.queryByRole('button', { name: 'Remove vehicle-0 image 1' }),
     ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
@@ -18349,6 +18968,7 @@ describe('Quotation Builder — Sightseeing Master gallery snapshot', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.type(await screen.findByLabelText('Cruise master'), galleryCruise.name);
 
     expect(
@@ -18400,6 +19020,7 @@ describe('Quotation Builder — Cruise Master description flow', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.type(await screen.findByLabelText('Cruise master'), 'Dream Genting');
 
     const editor = await screen.findByLabelText('Cruise description');
@@ -18444,6 +19065,7 @@ describe('Quotation Builder — Cruise Master description flow', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     await userEvent.type(await screen.findByLabelText('Cruise master'), longCruise.name);
 
     const editor = await screen.findByLabelText('Cruise description');
@@ -18472,10 +19094,12 @@ describe('Quotation Builder — Cruise Master description flow', () => {
     renderBuilderPage();
     await openTab('Cruise');
     await userEvent.click(screen.getByLabelText('Include Cruise in Quotation'));
+    await expandCruiseStays();
     fireEvent.change(await screen.findByLabelText('Cruise master'), {
       target: { value: cruise.name },
     });
     await userEvent.click(screen.getByRole('button', { name: /add cruise/i }));
+    await expandCruiseStays();
     fireEvent.change(screen.getAllByLabelText('Cruise master')[1]!, {
       target: { value: noDescriptionCruise.name },
     });

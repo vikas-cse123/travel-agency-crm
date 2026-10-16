@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
+import { fetchPublicToken } from './helpers/public-token.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { resetSystemCompanyIdCache } from '../src/modules/masters/master-visibility.js';
@@ -131,9 +132,9 @@ describe('draft preview vs finalize - By Section partially priced', () => {
     // Draft weblink should be allowed
     const link = await client.post(`/api/quotations/${q.id}/public-link`, { quotationVersionId: versionId });
     expect(link.status).toBe(200);
-    expect(link.body.data.url).toMatch(/\/q\//);
+    expect(link.body.data.url).toMatch(/\/(q\/[A-Za-z0-9_-]+|[a-z0-9-]+)$/);
     // Draft publicView must return 200 (browser flow) via token
-    const token = link.body.data.url.split('/q/')[1]?.split('/').pop()?.split('?')[0] ?? '';
+    const token = await fetchPublicToken(db, q.id);
     expect(token.length).toBeGreaterThan(10);
     const pub = await request(app).get(`/api/public/quotations/${token}`);
     expect(pub.status, JSON.stringify(pub.body)).toBe(200);
@@ -226,7 +227,7 @@ describe('draft preview vs finalize - By Section partially priced', () => {
     expect(pdf.status).toBe(200);
     const link2 = await client.post(`/api/quotations/${q.id}/public-link`, { quotationVersionId: versionId });
     expect(link2.status).toBe(200);
-    const token2 = link2.body.data.url.split('/q/')[1]?.split('/').pop()?.split('?')[0] ?? '';
+    const token2 = await fetchPublicToken(db, q.id);
     const pub2 = await request(app).get(`/api/public/quotations/${token2}`);
     expect(pub2.status, JSON.stringify(pub2.body)).toBe(200);
   });
@@ -248,7 +249,7 @@ describe('draft preview vs finalize - By Section partially priced', () => {
     // Preview should be allowed (weblink) and publicView for DRAFT must be 200
     const link = await client.post(`/api/quotations/${q.id}/public-link`, { quotationVersionId: versionId });
     expect(link.status).toBe(200);
-    const tokenDraft = link.body.data.url.split('/q/')[1]?.split('/').pop()?.split('?')[0] ?? '';
+    const tokenDraft = await fetchPublicToken(db, q.id);
     const pubDraft = await request(app).get(`/api/public/quotations/${tokenDraft}`);
     expect(pubDraft.status, JSON.stringify(pubDraft.body)).toBe(200);
     // Classic PDF preview should be allowed (now DRAFT)
@@ -264,8 +265,8 @@ describe('draft preview vs finalize - By Section partially priced', () => {
     });
     const finalize2 = await client.post(`/api/quotations/${q.id}/versions/${versionId}/finalize`);
     expect(finalize2.status).toBe(200);
-    const link2 = await client.post(`/api/quotations/${q.id}/public-link`, { quotationVersionId: versionId });
-    const token2 = link2.body.data.url.split('/q/')[1]?.split('/').pop()?.split('?')[0] ?? '';
+    await client.post(`/api/quotations/${q.id}/public-link`, { quotationVersionId: versionId });
+    const token2 = await fetchPublicToken(db, q.id);
     const pub2 = await request(app).get(`/api/public/quotations/${token2}`);
     expect(pub2.status).toBe(200);
   });

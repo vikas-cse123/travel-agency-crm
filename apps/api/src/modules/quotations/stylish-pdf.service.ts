@@ -133,6 +133,9 @@ type FlightSegment = {
 type FlightJourney = {
   fromCity?: string | null;
   toCity?: string | null;
+  /** Independently edited header route; falls back to fromCity/toCity when absent. */
+  routeFrom?: string | null;
+  routeTo?: string | null;
   segments?: FlightSegment[];
 };
 
@@ -1641,7 +1644,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
             doc
               .fillColor('#ffffff')
               .text(label, M, top + 10, { width: labelWidth, align: 'center', lineBreak: false });
-            const routeText = `${journey.fromCity || segment.from || '-'}  →  ${journey.toCity || segment.to || '-'}`;
+            const routeText = `${journey.routeFrom || journey.fromCity || segment.from || '-'}  →  ${journey.routeTo || journey.toCity || segment.to || '-'}`;
             const routeWidth = CONTENT_W - labelWidth - 28;
             doc.font('Body').fontSize(9);
             const routeFontSize = Math.max(

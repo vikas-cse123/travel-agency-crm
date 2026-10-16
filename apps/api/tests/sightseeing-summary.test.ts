@@ -94,7 +94,7 @@ describe('Sightseeing summary statistics', () => {
 
     // Marking one row as imaged is reflected in withImages only.
     await db.sightseeing.update({
-      where: { id: first[0] },
+      where: { id: first[0] as string },
       data: { imageObjectKey: 'companies/x/masters/img.jpg', imageConfirmedAt: new Date() },
     });
     const imaged = await client.get('/api/masters/sightseeing/summary');

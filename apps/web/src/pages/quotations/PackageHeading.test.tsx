@@ -335,8 +335,10 @@ describe('Builder metadata card removal', () => {
     expect(screen.queryByText('Lead Stage')).not.toBeInTheDocument();
     // Builder chrome is unchanged.
     expect(screen.getAllByRole('button', { name: 'Save quotation' }).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'Pricing Method' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Summary & Pricing' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Flight' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pricing' })).toBeInTheDocument();
+    // Pricing Method moved to the Quotation Details page.
+    expect(screen.queryByRole('button', { name: 'Pricing Method' })).not.toBeInTheDocument();
   });
 
   it('preserves the stored title and headings on save without visible inputs', async () => {

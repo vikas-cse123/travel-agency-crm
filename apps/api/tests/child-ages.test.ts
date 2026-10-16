@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
+import { fetchPublicToken } from './helpers/public-token.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { formatAgeList, formatInfantAgeList } from '@interscale/shared';
@@ -143,7 +144,7 @@ describe('child ages: lead → quotation → PDF + weblink', () => {
       quotationVersionId: version.id,
     });
     expect(link.status, JSON.stringify(link.body)).toBe(200);
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.status, JSON.stringify(publicView.body)).toBe(200);
     expect(publicView.body.data.quotation.childrenWithBedAges).toEqual([8, 10]);
@@ -165,7 +166,7 @@ describe('child ages: lead → quotation → PDF + weblink', () => {
       quotationVersionId: version.id,
     });
     expect(link.status).toBe(200);
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.body.data.quotation.childrenWithBedAges).toEqual(null);
     // The renderer omits the age line for null data (formatAgeList → null), so
@@ -184,10 +185,10 @@ describe('child ages: lead → quotation → PDF + weblink', () => {
     expect(patched.body.data.childrenWithBedAges).toEqual([9, 12]);
 
     await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-    const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+    await client.post(`/api/quotations/${quotation.id}/public-link`, {
       quotationVersionId: version.id,
     });
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.body.data.quotation.childrenWithBedAges).toEqual([9, 12]);
   });
@@ -252,7 +253,7 @@ describe('infant ages: months unit in PDF + weblink', () => {
       quotationVersionId: version.id,
     });
     expect(link.status).toBe(200);
-    const token = link.body.data.url.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     const publicView = await createAuthClient(app).get(`/api/public/quotations/${token}`);
     expect(publicView.status).toBe(200);
     expect(publicView.body.data.quotation.infantAges).toEqual([8]);

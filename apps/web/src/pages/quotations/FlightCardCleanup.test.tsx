@@ -318,3 +318,74 @@ describe('Flight information toggle and collapsible cards', () => {
     expect(screen.getByLabelText('Flight 2 bookmark ID')).toBeInTheDocument();
   });
 });
+
+describe('Flight segment field layout', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  const openFlightTab = async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await userEvent.click(screen.getByRole('button', { name: /^Flight/ }));
+  };
+
+  it('keeps the flight-level delete control icon-only with an accessible name', async () => {
+    await openFlightTab();
+    const remove = screen.getByRole('button', { name: 'Remove flight 1' });
+    // Icon only — the visible "Remove flight" text is gone.
+    expect(remove.textContent).toBe('');
+    expect(remove.querySelector('svg')).not.toBeNull();
+    expect(screen.queryByText('Remove flight')).not.toBeInTheDocument();
+    // Accessible name and a matching tooltip remain.
+    expect(remove).toHaveAttribute('aria-label', 'Remove flight 1');
+    expect(remove).toHaveAttribute('title', 'Remove flight 1');
+  });
+
+  it('gives From and To their own full-width rows', async () => {
+    await openFlightTab();
+    const from = document.querySelector('input[name$=".from"]') as HTMLInputElement | null;
+    const to = document.querySelector('input[name$=".to"]') as HTMLInputElement | null;
+    expect(from).not.toBeNull();
+    expect(to).not.toBeNull();
+    const fromLabel = from!.closest('label') as HTMLElement;
+    const toLabel = to!.closest('label') as HTMLElement;
+    // Both sit directly on the single-column segment body — not a shared grid.
+    expect(fromLabel.parentElement).toBe(toLabel.parentElement);
+    expect(fromLabel.parentElement!.className).toContain('space-y-3');
+    expect(fromLabel.parentElement!.className).not.toContain('grid');
+    expect(fromLabel.className).toContain('uppercase');
+    expect(toLabel.className).toContain('uppercase');
+  });
+
+  it('shows Departure Date+Time and Arrival Date+Time on separate aligned rows', async () => {
+    await openFlightTab();
+    const depDate = document.querySelector('input[name$=".departureDate"]') as HTMLInputElement;
+    const arrDate = document.querySelector('input[name$=".arrivalDate"]') as HTMLInputElement;
+    const depRow = depDate.closest('div.grid') as HTMLElement;
+    const arrRow = arrDate.closest('div.grid') as HTMLElement;
+    // Two distinct two-column rows; each holds exactly a date + a time field.
+    expect(depRow).not.toBeNull();
+    expect(arrRow).not.toBeNull();
+    expect(depRow).not.toBe(arrRow);
+    for (const row of [depRow, arrRow]) {
+      expect(row.className).toContain('md:grid-cols-2');
+      expect(row.children).toHaveLength(2);
+    }
+    const depInputs = depRow.querySelectorAll('input');
+    const arrInputs = arrRow.querySelectorAll('input');
+    expect(depInputs).toHaveLength(2);
+    expect(arrInputs).toHaveLength(2);
+    // The row's second input is its time picker (a labelled combobox).
+    expect(depInputs[1]).toHaveAttribute('aria-label', 'Departure Time');
+    expect(arrInputs[1]).toHaveAttribute('aria-label', 'Arrival Time');
+    // Aligned uppercase labels and equal input heights across both rows.
+    for (const input of [...depInputs, ...arrInputs]) {
+      expect((input.closest('label') as HTMLElement).className).toContain('uppercase');
+      expect(input.className).toContain('h-[38px]');
+    }
+  });
+});

@@ -15,7 +15,12 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { labelForLookup, PERMISSIONS, validateQuotationPricing } from '@interscale/shared';
+import {
+  labelForLookup,
+  PERMISSIONS,
+  resolveQuotationPricing,
+  validateQuotationPricing,
+} from '@interscale/shared';
 import { Button } from '@/components/ui/Button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/Tooltip';
 import { useAuth } from '@/features/auth/AuthProvider';
@@ -37,9 +42,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { quotationKeys } from '@/features/quotations/quotations.api';
 import { WeblinkVisitors } from '@/features/quotations/WeblinkVisitors';
 import { WhatsappSummaryDialog } from './WhatsappSummaryDialog';
+import { PricingMethodSelector, pricingModeLabel } from './PricingMethodSelector';
 import { resolveTravelDates } from '@/features/quotations/travel-dates';
 import { formatDateTime12Hour } from '@/utils/dateTime';
-import {
+import type {
   buildWhatsAppSummary,
 } from '@/features/quotations/whatsappSummary';
 
@@ -134,6 +140,9 @@ export function QuotationDetailsPage() {
   const [metaTitle, setMetaTitle] = useState('');
   const [metaPackage, setMetaPackage] = useState('');
   const [metaError, setMetaError] = useState('');
+  // Pricing method (moved here from the Quotation Builder). Saved to the
+  // current version immediately; the backend recomputes the final amount.
+  const [pricingMethodError, setPricingMethodError] = useState('');
   // Public weblink URL once provisioned, tagged with the version it belongs to.
   // Reset whenever the current version changes so Copy/Open always target the
   // currently displayed version (never a stale link from an earlier version).
@@ -187,6 +196,7 @@ export function QuotationDetailsPage() {
   useEffect(() => {
     setMetaEditing(false);
     setMetaError('');
+    setPricingMethodError('');
   }, [query.data?.id, query.data?.currentVersionId]);
 
   if (query.isLoading) return <div className="h-96 animate-pulse rounded-xl bg-card" />;
@@ -775,6 +785,66 @@ export function QuotationDetailsPage() {
           </div>
         </dl>
       </section>
+      {current && (
+        <section aria-label="Pricing Method" className="rounded-xl border bg-card p-5">
+          <div className="flex flex-wrap justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-semibold">Pricing Method</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {current.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE)
+                  ? 'How the final package price is calculated for this quotation.'
+                  : `Current method: ${pricingModeLabel(current.pricingMode)}. Finalized versions are read-only.`}
+              </p>
+            </div>
+          </div>
+          {current.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) ? (
+            <div className="mt-4">
+              <PricingMethodSelector
+                title={null}
+                value={current.pricingMode}
+                currency={current.currency || 'INR'}
+                disabled={updateMeta.isPending}
+                resolveGrandTotal={(mode) => {
+                  try {
+                    return resolveQuotationPricing({
+                      version: {
+                        ...(current as unknown as Record<string, unknown>),
+                        pricingMode: mode,
+                        finalAmount: 0,
+                      },
+                      quotation: q as unknown as Parameters<typeof resolveQuotationPricing>[0]['quotation'],
+                    }).grandTotal;
+                  } catch {
+                    return null;
+                  }
+                }}
+                onSelect={(mode) => {
+                  setPricingMethodError('');
+                  updateMeta.mutate(
+                    { pricingMode: mode },
+                    {
+                      onError: (error) =>
+                        setPricingMethodError(
+                          error instanceof Error && error.message
+                            ? error.message
+                            : 'Unable to save the pricing method. Please try again.',
+                        ),
+                    },
+                  );
+                }}
+              />
+              {pricingMethodError && (
+                <p role="alert" className="mt-2 text-sm text-red-700">
+                  {pricingMethodError}
+                </p>
+              )}
+              <p className="mt-2 text-xs text-slate-500">
+                Saved to this version immediately — the final amount updates automatically.
+              </p>
+            </div>
+          ) : null}
+        </section>
+      )}
 
       <WeblinkVisitors quotationId={quotationId} />
       <div className="grid gap-5 lg:grid-cols-3">

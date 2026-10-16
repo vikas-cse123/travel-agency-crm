@@ -7,6 +7,7 @@ import type {
   QuotationTemplateUpdate,
   QuotationUpdate,
   QuotationVersionUpdate,
+  WeblinkProfileConfig,
 } from '@interscale/shared';
 
 export interface PersonRef {
@@ -163,6 +164,9 @@ export interface FlightSegment {
 export interface FlightJourney {
   fromCity?: string | null;
   toCity?: string | null;
+  /** Independently editable header route; falls back to fromCity/toCity when absent. */
+  routeFrom?: string | null;
+  routeTo?: string | null;
   travelClass?: string | null;
   segments: FlightSegment[];
 }
@@ -256,6 +260,9 @@ export interface QuotationVersion {
   packageHeading: string | null;
   weblinkDurationText: string | null;
   weblinkProfileDestination: string | null;
+  // Per-item label/value/visibility overrides for the public weblink profile
+  // information card. Null/absent renders the fully automatic card.
+  weblinkProfile?: WeblinkProfileConfig | null;
   destinationSummary: string;
   travelStartDate: string | null;
   travelEndDate: string | null;
@@ -277,6 +284,8 @@ export interface QuotationVersion {
   perChildWithBedPrice: string;
   perChildWithoutBedPrice: string;
   perInfantPrice: string;
+  // Additional Price Items — flat package charges for By Traveler pricing.
+  packageCustomItems?: Array<{ id?: string; label: string; amount: number }> | null;
   taxNote: string | null;
   netAmount?: string;
   initialPaymentAmount: string;
@@ -332,6 +341,7 @@ export interface QuotationVersion {
   pricingHeading: string;
   pricingSubheading: string | null;
   pricingDisplayOrder: string[] | null;
+  pricingRowOrder?: string[] | null;
   finalizedAt: string | null;
   createdAt: string;
   createdBy: PersonRef;

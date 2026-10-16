@@ -19,7 +19,8 @@ import {
 /**
  * Position a scroll container at a preview section anchor once. Scrolls only
  * the given container (never the page or window); a small offset keeps the
- * heading clear of the container top. Missing sections fall back to the top.
+ * heading clear of the container top. A missing section leaves the current
+ * scroll position untouched — the reader is never yanked back to the top.
  * The container may be an inline scroll div or a preview iframe's scrolling
  * root — both expose the same query/scroll interface. Pure DOM helper,
  * exported for focused tests.
@@ -67,9 +68,10 @@ export function previewTargetKey(target: PreviewTarget | null | undefined): stri
 
 /**
  * Position a scroll container at a preview target once: the first matching
- * item candidate wins, else the section anchor, else the top (existing
- * fallback behavior). Scrolls only the given container (never the page or
- * window); a small offset keeps the heading clear of the container top.
+ * item candidate wins, else the section anchor; when neither exists for the
+ * current tab's data the scroll position is left untouched (never reset to the
+ * top). Scrolls only the given container (never the page or window); a small
+ * offset keeps the heading clear of the container top.
  * Pure DOM helper, exported for focused tests. See `scrollPreviewToSection`
  * for the root-scroller math notes (shared below).
  */
@@ -93,7 +95,10 @@ export function scrollPreviewToTarget(
       container.querySelector<HTMLElement>(`[data-preview-section="${target.section}"]`);
   }
   if (!anchor) {
-    container.scrollTop = 0;
+    // Neither the item candidate nor the section exists for this target: the
+    // tab's public section is genuinely absent (e.g. an incomplete hotel stay
+    // the weblink never renders). Leave the reader where they are instead of
+    // snapping the preview back to the top.
     return;
   }
   const doc = container.ownerDocument ?? null;
@@ -312,11 +317,12 @@ export function MobilePhonePreview({
   const targetKey = `${activeSection ?? ''}\n${(activeItems ?? []).join(',')}`;
 
   // Navigate inside the phone viewport when the requested target changes.
-  // One coordinated lookup (first matching item, else section, else top) and
-  // a single scroll: no section-then-item double jump. Scrolls only the frame
-  // (never the builder page or window); a missing or not-yet-rendered target
-  // retries briefly, then falls back gracefully. The iframe element itself is
-  // never recreated and form data is untouched.
+  // One coordinated lookup (first matching item, else section); a single scroll
+  // when the target renders. Scrolls only the frame (never the builder page or
+  // window); a not-yet-rendered target retries briefly, and a target that is
+  // genuinely absent for this tab leaves the scroll position untouched (never
+  // yanked back to the top). The iframe element itself is never recreated and
+  // form data is untouched.
   useEffect(() => {
     if (!mountNode || (activeSection == null && !(activeItems ?? []).length)) return;
     const target: PreviewTarget = { section: activeSection ?? null, items: activeItems ?? [] };

@@ -3778,6 +3778,11 @@ model QuotationVersion {
   /// overriding the generated destinations. Null for legacy versions, which
   /// keep the generated text. Display-only.
   weblinkProfileDestination    String?                @db.VarChar(500)
+  /// Per-item label/value/visibility overrides for the public weblink profile
+  /// information card (Weblink Display Settings). Nullable for backward
+  /// compatibility; null/absent keeps the fully automatic card. Display-only —
+  /// never a source of lead/business data.
+  weblinkProfile               Json?                  @db.Json
   destinationSummary           String                 @db.VarChar(500)
   travelStartDate              DateTime?              @db.Date
   travelEndDate                DateTime?              @db.Date
@@ -3805,6 +3810,13 @@ model QuotationVersion {
   perChildWithBedPrice         Decimal                @default(0) @db.Decimal(14, 2)
   perChildWithoutBedPrice      Decimal                @default(0) @db.Decimal(14, 2)
   perInfantPrice               Decimal                @default(0) @db.Decimal(14, 2)
+  /// Additional flat-price line items for By Traveler (PER_PERSON) pricing.
+  /// Ordered JSON array of { id?: string; label: string; amount: number } — each
+  /// amount is a fixed package charge, never multiplied by the traveler count.
+  packageCustomItems           Json?                  @db.Json
+  /// Builder-only By Traveler Price Breakdown row order (stable row ids:
+  /// traveler keys adults/cwb/cwob/infants plus custom item ids).
+  pricingRowOrder              Json?                  @db.Json
   taxNote                      String?                @db.VarChar(200)
   netAmount                    Decimal                @default(0) @db.Decimal(14, 2)
   initialPaymentAmount         Decimal                @default(0) @db.Decimal(14, 2)

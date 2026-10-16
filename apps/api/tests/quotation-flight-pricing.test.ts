@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
+import { fetchPublicToken } from './helpers/public-token.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { resetSystemCompanyIdCache } from '../src/modules/masters/master-visibility.js';
@@ -147,7 +148,7 @@ describe('Flight pricing breakdown - FIXED_TOTAL vs PER_TRAVELER', () => {
     });
     const link = await client.post(`/api/quotations/${q.id}/public-link`, { quotationVersionId: versionId });
     expect(link.status).toBe(200);
-    const token = link.body.data.url.split('/q/')[1]?.split('/').pop()?.split('?')[0] ?? '';
+    const token = await fetchPublicToken(db, q.id);
     const pub = await request(app).get(`/api/public/quotations/${token}`);
     expect(pub.status).toBe(200);
     const fd = pub.body.data.version.flightDetails;

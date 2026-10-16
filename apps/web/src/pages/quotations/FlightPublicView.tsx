@@ -21,7 +21,7 @@ export const sanitizeHtml = (html: string) =>
 export function RichHtml({ html }: { html: string }) {
   return (
     <div
-      className="weblink-rich-text rich-text-content text-sm leading-relaxed text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+      className="weblink-rich-text rich-text-content min-w-0 max-w-full text-sm leading-relaxed text-[#000000] [overflow-wrap:anywhere] [&_a]:text-blue-600 [&_a]:underline [&_code]:whitespace-pre-wrap [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5"
       dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
     />
   );
@@ -106,6 +106,23 @@ export function buildFlightLegs(flightDetails: unknown): FlightLeg[] {
   });
 }
 
+/**
+ * Display route for one journey: the independently edited header route when
+ * present, otherwise the journey endpoints (legacy quotations). Exported for
+ * focused tests; the builder header, live preview, and weblink all read
+ * through this single rule.
+ */
+export function journeyRoute(journey: {
+  routeFrom?: string | null;
+  routeTo?: string | null;
+  fromCity?: string | null;
+  toCity?: string | null;
+}): string {
+  return [journey.routeFrom ?? journey.fromCity, journey.routeTo ?? journey.toCity]
+    .filter(Boolean)
+    .join(' → ');
+}
+
 /** True when a segment carries anything the weblink would display. */
 export function flightSegmentHasData(segment: {
   airlineName?: string | null;
@@ -135,7 +152,7 @@ export function FlightJourneyView({
     (s) => s.airlineName || s.from || s.to || s.departureTime || s.flightNumber,
   );
   if (!segments.length) return null;
-  const route = [journey.fromCity, journey.toCity].filter(Boolean).join(' → ');
+  const route = journeyRoute(journey);
   return (
     <section className="overflow-hidden rounded-xl border shadow-sm">
       <div

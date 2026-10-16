@@ -259,24 +259,23 @@ describe('QuotationBuilder — policyValue', () => {
     expect(policyValue(undefined, '<p>Master text</p>')).toBe('<p>Master text</p>');
   });
 
-  it('returns master value when version is empty string', () => {
-    expect(policyValue('', '<p>Master text</p>')).toBe('<p>Master text</p>');
+  it('keeps cleared version (empty string) instead of restoring master', () => {
+    expect(policyValue('', '<p>Master text</p>')).toBe('');
   });
 
-  it('returns master value when version is editor-empty', () => {
-    expect(policyValue('<p></p>', '<p>Master text</p>')).toBe('<p>Master text</p>');
+  it('keeps editor-empty version instead of restoring master', () => {
+    expect(policyValue('<p></p>', '<p>Master text</p>')).toBe('<p></p>');
   });
 
   it('returns null when both values are null', () => {
     expect(policyValue(null, null)).toBeNull();
   });
 
-  it('returns empty master when version is empty and master is empty', () => {
-    // Both empty → master empty string preserved (not-false but not-meaningful).
+  it('keeps empty version when master is empty', () => {
     expect(policyValue('', '')).toBe('');
   });
 
-  it('returns null when version empty and master null', () => {
-    expect(policyValue('', null)).toBeNull();
+  it('keeps empty version when master is null', () => {
+    expect(policyValue('', null)).toBe('');
   });
 });

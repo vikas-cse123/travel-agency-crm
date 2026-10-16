@@ -5,6 +5,9 @@ import {
   buildHotelPresentations,
   buildVehiclePresentations,
   matchDestinationMasterId,
+  PREVIEW_PRESENTATIONS_REFETCH_MS,
+  PREVIEW_PRESENTATIONS_STALE_MS,
+  SIGNED_MEDIA_URL_TTL_MS,
 } from './PreviewPresentations';
 
 const destinations = [
@@ -13,6 +16,18 @@ const destinations = [
   { id: 'd-india', name: 'India', hasImage: false, images: [] },
   { id: 'd-bali', name: 'Bali', hasImage: true, images: [] },
 ] as never;
+
+describe('presentation signed-URL freshness', () => {
+  it('caches presentation URLs only until just before the signed URL expires', () => {
+    // The server signs master-media URLs for 300s; caching them for the old
+    // 10 minutes left the Live Weblink Preview pinned to dead URLs (no
+    // re-mint) until the quotation was reopened. Freshness must stay below
+    // the TTL.
+    expect(SIGNED_MEDIA_URL_TTL_MS).toBe(5 * 60 * 1000);
+    expect(PREVIEW_PRESENTATIONS_STALE_MS).toBeLessThan(SIGNED_MEDIA_URL_TTL_MS);
+    expect(PREVIEW_PRESENTATIONS_REFETCH_MS).toBeLessThan(SIGNED_MEDIA_URL_TTL_MS);
+  });
+});
 
 describe('matchDestinationMasterId (mirrors the server three-tier rule)', () => {
   it('prefers the whole destination summary over fragments', () => {

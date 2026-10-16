@@ -25,12 +25,17 @@ const flight = {
   outbound: {
     fromCity: 'DEL',
     toCity: 'GOI',
+    // Initialized header route (as hydration produces for saved quotations).
+    routeFrom: 'DEL',
+    routeTo: 'GOI',
     travelClass: 'Economy',
     segments: [segment('DEL', 'BOM', 'AI101'), segment('BOM', 'GOI', 'AI102')],
   },
   returnJourney: {
     fromCity: 'GOI',
     toCity: 'DEL',
+    routeFrom: 'GOI',
+    routeTo: 'DEL',
     travelClass: 'Economy',
     segments: [segment('GOI', 'DEL', 'AI102')],
   },
@@ -72,7 +77,7 @@ describe('Flight journey route editing', () => {
     capturedForm = null;
   });
 
-  it('edits the outbound origin and destination from the header', async () => {
+  it('edits the outbound route header without touching segments', async () => {
     renderRouteCard();
     expect(headerText('Outbound Journey')).toContain('DEL → GOI');
 
@@ -93,21 +98,25 @@ describe('Flight journey route editing', () => {
 
     // Header reflects the edit immediately.
     expect(headerText('Outbound Journey')).toContain('BLR → COK');
-    // First segment From and last segment To are mirrored.
+    // The independent route is stored; journey endpoints are untouched.
+    expect(capturedForm?.getValues('flightDetails.flights.0.outbound.routeFrom')).toBe('BLR');
+    expect(capturedForm?.getValues('flightDetails.flights.0.outbound.routeTo')).toBe('COK');
+    expect(capturedForm?.getValues('flightDetails.flights.0.outbound.fromCity')).toBe('DEL');
+    expect(capturedForm?.getValues('flightDetails.flights.0.outbound.toCity')).toBe('GOI');
+    // Segments are never rewritten by a header edit.
     const fromInputs = within(screen.getByRole('article', { name: 'Flight 1' })).getAllByLabelText(/^From/) as HTMLInputElement[];
     const toInputs = within(screen.getByRole('article', { name: 'Flight 1' })).getAllByLabelText(/^To/) as HTMLInputElement[];
-    expect(fromInputs[0]).toHaveValue('BLR');
-    expect(toInputs[1]).toHaveValue('COK');
-    // Intermediate connecting airports are untouched.
-    expect(fromInputs[1]).toHaveValue('BOM');
+    expect(fromInputs[0]).toHaveValue('DEL');
     expect(toInputs[0]).toHaveValue('BOM');
+    expect(fromInputs[1]).toHaveValue('BOM');
+    expect(toInputs[1]).toHaveValue('GOI');
     // Return journey is untouched.
     expect(headerText('Return Journey')).toContain('GOI → DEL');
     expect(fromInputs[2]).toHaveValue('GOI');
     expect(toInputs[2]).toHaveValue('DEL');
   });
 
-  it('edits the return origin and destination from the header', async () => {
+  it('edits the return route header without touching segments', async () => {
     renderRouteCard();
     await userEvent.click(screen.getByRole('button', { name: 'Edit Return Journey route' }));
     const origin = screen.getByLabelText('Flight 1 Return Journey origin') as HTMLInputElement;
@@ -124,13 +133,15 @@ describe('Flight journey route editing', () => {
     await userEvent.keyboard('{Enter}');
 
     expect(headerText('Return Journey')).toContain('HYD → MAA');
+    expect(capturedForm?.getValues('flightDetails.flights.0.returnJourney.routeFrom')).toBe('HYD');
+    expect(capturedForm?.getValues('flightDetails.flights.0.returnJourney.routeTo')).toBe('MAA');
     const card = within(screen.getByRole('article', { name: 'Flight 1' }));
     const fromInputs = card.getAllByLabelText(/^From/) as HTMLInputElement[];
     const toInputs = card.getAllByLabelText(/^To/) as HTMLInputElement[];
-    // Single-segment return journey: its only segment mirrors both ends.
-    expect(fromInputs[2]).toHaveValue('HYD');
-    expect(toInputs[2]).toHaveValue('MAA');
-    // Outbound is untouched, including intermediates and flight numbers.
+    // Single-segment return journey keeps its own segment values.
+    expect(fromInputs[2]).toHaveValue('GOI');
+    expect(toInputs[2]).toHaveValue('DEL');
+    // Outbound is untouched, including header, segments and flight numbers.
     expect(headerText('Outbound Journey')).toContain('DEL → GOI');
     expect(fromInputs[0]).toHaveValue('DEL');
     expect(toInputs[1]).toHaveValue('GOI');
@@ -157,7 +168,7 @@ describe('Flight journey route editing', () => {
     expect(capturedForm?.getValues('flightDetails.flights.0.outbound.fromCity')).toBe('DEL');
   });
 
-  it('saves the edit when focus leaves the fields', async () => {
+  it('saves the edit when focus leaves the fields without touching segments', async () => {
     renderRouteCard();
     await userEvent.click(screen.getByRole('button', { name: 'Edit Outbound Journey route' }));
     const origin = screen.getByLabelText('Flight 1 Outbound Journey origin') as HTMLInputElement;
@@ -168,19 +179,24 @@ describe('Flight journey route editing', () => {
     await userEvent.tab();
     expect(screen.queryByLabelText('Flight 1 Outbound Journey origin')).not.toBeInTheDocument();
     expect(headerText('Outbound Journey')).toContain('BLR → GOI');
+    const card = within(screen.getByRole('article', { name: 'Flight 1' }));
+    expect((card.getAllByLabelText(/^From/) as HTMLInputElement[])[0]).toHaveValue('DEL');
   });
 
-  it('updates the header when the first segment From is edited', async () => {
+  it('does not rewrite an initialized header when the first segment From is edited', async () => {
     renderRouteCard();
     const card = within(screen.getByRole('article', { name: 'Flight 1' }));
     const fromInputs = card.getAllByLabelText(/^From/) as HTMLInputElement[];
     await userEvent.clear(fromInputs[0]!);
     await userEvent.type(fromInputs[0]!, 'BLR');
-    expect(headerText('Outbound Journey')).toContain('BLR → GOI');
+    // The configured header keeps its independent value.
+    expect(headerText('Outbound Journey')).toContain('DEL → GOI');
+    expect(capturedForm?.getValues('flightDetails.flights.0.outbound.routeFrom')).toBe('DEL');
+    // Segment-level endpoint metadata still tracks the typed value.
     expect(capturedForm?.getValues('flightDetails.flights.0.outbound.fromCity')).toBe('BLR');
   });
 
-  it('updates the header when the last segment To is edited and ignores intermediates', async () => {
+  it('does not rewrite an initialized header when the last segment To is edited', async () => {
     renderRouteCard();
     const card = within(screen.getByRole('article', { name: 'Flight 1' }));
     const toInputs = card.getAllByLabelText(/^To/) as HTMLInputElement[];
@@ -191,10 +207,11 @@ describe('Flight journey route editing', () => {
     await userEvent.clear(fromInputs[1]!);
     await userEvent.type(fromInputs[1]!, 'YYY');
     expect(headerText('Outbound Journey')).toContain('DEL → GOI');
-    // Editing the last segment's To moves the destination.
+    // Editing the last segment's To updates endpoint metadata, not the header.
     await userEvent.clear(toInputs[1]!);
     await userEvent.type(toInputs[1]!, 'COK');
-    expect(headerText('Outbound Journey')).toContain('DEL → COK');
+    expect(headerText('Outbound Journey')).toContain('DEL → GOI');
+    expect(capturedForm?.getValues('flightDetails.flights.0.outbound.routeTo')).toBe('GOI');
     expect(capturedForm?.getValues('flightDetails.flights.0.outbound.toCity')).toBe('COK');
     // Intermediate values themselves are preserved verbatim.
     expect(toInputs[0]).toHaveValue('XXX');
@@ -217,7 +234,9 @@ describe('Flight journey route editing', () => {
       journeyType: 'ROUND_TRIP',
       outbound: {
         fromCity: 'DEL',
-        toCity: 'COK',
+        toCity: 'GOI',
+        routeFrom: 'DEL',
+        routeTo: 'COK',
         travelClass: 'Economy',
       },
       returnJourney: {
@@ -242,7 +261,7 @@ describe('Flight journey route editing', () => {
     });
     expect(outboundSegments[1]).toMatchObject({
       from: 'BOM',
-      to: 'COK',
+      to: 'GOI',
       flightNumber: 'AI102',
     });
     expect(

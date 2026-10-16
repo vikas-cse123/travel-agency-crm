@@ -4,7 +4,7 @@ import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
-import { normalizePublicSlug, isReservedPublicSlug } from '@interscale/shared';
+import { normalizePublicSlug, isReservedPublicSlug, friendlySlugCandidates } from '@interscale/shared';
 
 let app: Express;
 let db: PrismaClient;
@@ -51,10 +51,17 @@ async function finalizedQuotation(client: ReturnType<typeof createAuthClient>) {
   const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
   const version = quotation.versions[0];
   await client.post(`/api/quotations/${quotation.id}/versions/${version.id}/finalize`);
-  const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {
+  await client.post(`/api/quotations/${quotation.id}/public-link`, {
     quotationVersionId: version.id,
   });
-  const token = link.body.data.url.split('/q/')[1];
+  // The public link now prefers the auto-generated friendly slug, so the raw
+  // token is read from the database instead of the (friendly) link URL.
+  const token = (
+    await db.quotation.findUniqueOrThrow({
+      where: { id: quotation.id },
+      select: { publicToken: true },
+    })
+  ).publicToken!;
   return { client, lead, quotation, version, token };
 }
 
@@ -83,6 +90,99 @@ describe('public slug normalization', () => {
       expect(isReservedPublicSlug(reserved)).toBe(true);
     }
     expect(isReservedPublicSlug('mohan')).toBe(false);
+  });
+
+  it('builds the five auto friendly-name candidates in the exact priority order', () => {
+    expect(friendlySlugCandidates('Rahul Sharma')).toEqual([
+      'rahul-sharma',
+      'rahul-sharma-new',
+      'rahul-sharma-updated',
+      'rahul-sharma-revised',
+      'rahul-sharma-final',
+    ]);
+  });
+
+  it('normalizes the base name before adding each suffix', () => {
+    expect(friendlySlugCandidates('  Rahul   Sharma  ')[0]).toBe('rahul-sharma');
+    expect(friendlySlugCandidates('Rahul & Co.')[0]).toBe('rahul-co');
+  });
+
+  it('returns no candidates when the base name normalizes to nothing', () => {
+    expect(friendlySlugCandidates('...')).toEqual([]);
+    expect(friendlySlugCandidates('')).toEqual([]);
+  });
+
+  it('skips reserved base names but keeps the suffixed patterns', () => {
+    expect(friendlySlugCandidates('Pricing')).toEqual([
+      'pricing-new',
+      'pricing-updated',
+      'pricing-revised',
+      'pricing-final',
+    ]);
+  });
+});
+
+describe('automatic friendly-name generation on quotation create', () => {
+  const autoLead = (customerName: string) => ({ ...leadPayload(), customerName });
+
+  async function createQuotation(client: ReturnType<typeof createAuthClient>, customerName: string) {
+    const lead = (await client.post('/api/queries', autoLead(customerName))).body.data;
+    const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
+    return quotation.publicSlug as string | null;
+  }
+
+  it('assigns the five names in priority order and stops (NULL) once they are taken', async () => {
+    const client = await owner('auto-priority@alpha.test');
+    // Sequential creates for the same lead name walk the exact sequence.
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma');
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma-new');
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma-updated');
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma-revised');
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma-final');
+    // All five patterns are occupied: no sixth pattern and no duplicate.
+    expect(await createQuotation(client, 'Rahul Sharma')).toBeNull();
+    expect(await db.quotation.count({ where: { publicSlug: { startsWith: 'rahul-sharma' } } })).toBe(5);
+    expect(await db.quotation.count({ where: { publicSlug: 'rahul-sharma-final' } })).toBe(1);
+  });
+
+  it('uses the associated lead name as the base for each quotation', async () => {
+    const client = await owner('auto-leadname@alpha.test');
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma');
+    expect(await createQuotation(client, 'Priya Nair')).toBe('priya-nair');
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma-new');
+  });
+
+  it('never overwrites a manually customised name', async () => {
+    const client = await owner('auto-manual@alpha.test');
+    const lead = (await client.post('/api/queries', autoLead('Rahul Sharma'))).body.data;
+    const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
+    expect(quotation.publicSlug).toBe('rahul-sharma');
+    await client.patch(`/api/quotations/${quotation.id}/weblink-name`, {
+      publicSlug: 'Rahul Custom Trip',
+    });
+    // Re-reading the quotation (e.g. opening Settings) must not regenerate it.
+    const details = (await client.get(`/api/quotations/${quotation.id}`)).body.data;
+    expect(details.publicSlug).toBe('rahul-custom-trip');
+    // The freed base name is available to the next quotation again.
+    expect(await createQuotation(client, 'Rahul Sharma')).toBe('rahul-sharma');
+  });
+
+  it('assigns distinct names under concurrent creation without duplicates', async () => {
+    const client = await owner('auto-concurrent@alpha.test');
+    const slugs = await Promise.all(
+      Array.from({ length: 6 }, () => createQuotation(client, 'Rahul Sharma')),
+    );
+    const assigned = slugs.filter((slug): slug is string => slug !== null).sort();
+    expect(assigned).toEqual([
+      'rahul-sharma',
+      'rahul-sharma-final',
+      'rahul-sharma-new',
+      'rahul-sharma-revised',
+      'rahul-sharma-updated',
+    ]);
+    // Exactly one quotation fell back to no name; nothing was duplicated.
+    expect(slugs.filter((slug) => slug === null)).toHaveLength(1);
+    expect(new Set(assigned).size).toBe(assigned.length);
   });
 });
 
@@ -215,6 +315,8 @@ describe('friendly URL in weblink actions', () => {
 
   it('returns the token URL when the slug is NULL', async () => {
     const { client, quotation } = await finalizedQuotation(await owner('nulllink@alpha.test'));
+    // Clear the auto-generated friendly name to exercise the token fallback.
+    await client.patch(`/api/quotations/${quotation.id}/weblink-name`, { publicSlug: '' });
     const link = await client.post(`/api/quotations/${quotation.id}/public-link`, {});
     expect(link.status).toBe(200);
     expect(link.body.data.url).toContain('/q/');
@@ -247,7 +349,8 @@ describe('quotation create/save/edit stays intact', () => {
     const client = await owner('edit@alpha.test');
     const lead = (await client.post('/api/queries', leadPayload())).body.data;
     const quotation = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
-    expect(quotation.publicSlug).toBeNull();
+    // The friendly name is generated automatically from the lead's name.
+    expect(quotation.publicSlug).toBe('aarav-mehta');
     const updated = await client.patch(`/api/quotations/${quotation.id}`, {
       destinationSummary: 'Goa extended',
       rooms: 2,
@@ -363,10 +466,21 @@ describe('Leads list weblink URL', () => {
   });
 
   it('falls back to the token URL when publicSlug is NULL', async () => {
-    const { client, lead } = await finalizedQuotation(await owner('leadstoken@alpha.test'));
+    const { client, lead, quotation } = await finalizedQuotation(
+      await owner('leadstoken@alpha.test'),
+    );
+    // Clear the auto-generated friendly name to exercise the token fallback.
+    await client.patch(`/api/quotations/${quotation.id}/weblink-name`, { publicSlug: '' });
     const list = await client.get('/api/queries');
     const row = list.body.data.data.find((r: { id: string }) => r.id === lead.id);
     expect(row.weblink.publicUrl).toContain('/q/');
     expect(row.weblink.publicUrl).not.toContain('travelagencycrm.in/');
+  });
+
+  it('uses the auto-generated friendly URL for a brand-new quotation', async () => {
+    const { client, lead } = await finalizedQuotation(await owner('leadauto@alpha.test'));
+    const list = await client.get('/api/queries');
+    const row = list.body.data.data.find((r: { id: string }) => r.id === lead.id);
+    expect(row.weblink.publicUrl).toBe('https://travelagencycrm.in/aarav-mehta');
   });
 });

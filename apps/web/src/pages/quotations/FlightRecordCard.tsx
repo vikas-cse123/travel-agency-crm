@@ -71,9 +71,11 @@ export function FlightRecordCard({
     returnJourney: true,
   });
   // Inline route editor state per journey leg ({ from, to } draft) — null
-  // when not editing. Committing writes through to the journey's fromCity /
-  // toCity and its first segment's From / last segment's To (see below), so
-  // the header, segments, weblink, and PDF always share one source of truth.
+  // when not editing. The header route is an independent journey value
+  // (`routeFrom`/`routeTo`, falling back to `fromCity`/`toCity` while those
+  // are absent on legacy data): committing writes those two fields alone.
+  // Segments and fromCity/toCity are never touched by a header edit, and
+  // segment edits never rewrite an initialized header route.
   const [editingRoute, setEditingRoute] = useState<{
     leg: 'outbound' | 'returnJourney';
     from: string;
@@ -119,8 +121,10 @@ export function FlightRecordCard({
     const fromRegistration = form.register(fp(`${segBase}.from`));
     const toRegistration = form.register(fp(`${segBase}.to`));
     // Removing the last segment promotes the new last segment's To to the
-    // journey destination; removing any other segment cannot change either
-    // endpoint (index 0 has no remove control, so the origin is untouched).
+    // journey destination metadata (toCity); removing any other segment
+    // cannot change either endpoint (index 0 has no remove control, so the
+    // origin is untouched). The independent header route is never rewritten
+    // by segment removal.
     const removeSegment = (removeIndex: number) => {
       const count = arr.fields.length;
       arr.remove(removeIndex);
@@ -216,45 +220,49 @@ export function FlightRecordCard({
             </select>
           </label>
         </div>
+        {/* From and To each occupy their own full-width row. */}
+        <label className={labelCls}>
+          From <span className="text-red-500">*</span>
+          <input
+            className={`${field} mt-1`}
+            {...fromRegistration}
+            onChange={(event) => {
+              void fromRegistration.onChange(event);
+              // The first segment's From tracks the journey origin metadata
+              // (fromCity). The displayed header route is independent: once
+              // initialized it is never rewritten by segment edits.
+              if (isFirstSegment) {
+                form.setValue(
+                  fp(`${base}.${leg}.fromCity`),
+                  event.target.value as never,
+                  { shouldDirty: true },
+                );
+              }
+            }}
+          />
+        </label>
+        <label className={labelCls}>
+          To <span className="text-red-500">*</span>
+          <input
+            className={`${field} mt-1`}
+            {...toRegistration}
+            onChange={(event) => {
+              void toRegistration.onChange(event);
+              // The last segment's To tracks the journey destination
+              // metadata (toCity). The displayed header route is independent
+              // and never rewritten by segment edits.
+              if (isLastSegment) {
+                form.setValue(
+                  fp(`${base}.${leg}.toCity`),
+                  event.target.value as never,
+                  { shouldDirty: true },
+                );
+              }
+            }}
+          />
+        </label>
+        {/* Departure Date + Time on one row; Arrival Date + Time on the next. */}
         <div className="grid gap-3 md:grid-cols-2">
-          <label className={labelCls}>
-            From <span className="text-red-500">*</span>
-            <input
-              className={`${field} mt-1`}
-              {...fromRegistration}
-              onChange={(event) => {
-                void fromRegistration.onChange(event);
-                // The first segment's From is the journey origin.
-                if (isFirstSegment) {
-                  form.setValue(
-                    fp(`${base}.${leg}.fromCity`),
-                    event.target.value as never,
-                    { shouldDirty: true },
-                  );
-                }
-              }}
-            />
-          </label>
-          <label className={labelCls}>
-            To <span className="text-red-500">*</span>
-            <input
-              className={`${field} mt-1`}
-              {...toRegistration}
-              onChange={(event) => {
-                void toRegistration.onChange(event);
-                // The last segment's To is the journey destination.
-                if (isLastSegment) {
-                  form.setValue(
-                    fp(`${base}.${leg}.toCity`),
-                    event.target.value as never,
-                    { shouldDirty: true },
-                  );
-                }
-              }}
-            />
-          </label>
-        </div>
-        <div className="grid gap-3 md:grid-cols-4">
           <label className={labelCls}>
             Departure Date
             <input
@@ -279,6 +287,8 @@ export function FlightRecordCard({
               />
             </span>
           </label>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
           <label className={labelCls}>
             Arrival Date
             <input
@@ -303,15 +313,12 @@ export function FlightRecordCard({
               />
             </span>
           </label>
-          {invalidArrival && (
-            <p
-              role="alert"
-              className="flex items-center gap-1 text-xs font-medium text-amber-600 md:col-span-4"
-            >
-              <AlertTriangle className="h-3.5 w-3.5" /> Arrival time must be after departure time.
-            </p>
-          )}
         </div>
+        {invalidArrival && (
+          <p role="alert" className="flex items-center gap-1 text-xs font-medium text-amber-600">
+            <AlertTriangle className="h-3.5 w-3.5" /> Arrival time must be after departure time.
+          </p>
+        )}
         <div className="grid gap-3 md:grid-cols-3">
           <label className={labelCls}>
             <span className={calculatedLabel}>Duration</span>
@@ -367,33 +374,34 @@ export function FlightRecordCard({
     title: string,
   ) => {
     const journeyBase = `${base}.${leg}`;
-    const from = (form.watch(fp(`${journeyBase}.fromCity`)) as string) || '';
-    const to = (form.watch(fp(`${journeyBase}.toCity`)) as string) || '';
+    // Independent header route: initialized once from the journey endpoints,
+    // afterwards edited only through the pencil editor below. The fromCity /
+    // toCity fallback keeps legacy (route-less) journeys readable without
+    // ever overwriting a configured route.
+    const from =
+      ((form.watch(fp(`${journeyBase}.routeFrom`)) as string) ||
+      (form.watch(fp(`${journeyBase}.fromCity`)) as string) ||
+      '');
+    const to =
+      ((form.watch(fp(`${journeyBase}.routeTo`)) as string) ||
+      (form.watch(fp(`${journeyBase}.toCity`)) as string) ||
+      '');
     const isJourneyExpanded = expandedJourneys[leg] ?? true;
-    const segmentCount = arr.fields.length;
     const isEditingRoute = editingRoute?.leg === leg;
     const routeFieldLabel = (end: 'origin' | 'destination') =>
       `Flight ${flightIndex + 1} ${title} ${end}`;
     const openRouteEditor = () => setEditingRoute({ leg, from, to });
     const cancelRouteEdit = () => setEditingRoute(null);
-    // Committing writes the journey endpoints and mirrors them onto the
-    // first segment's From / last segment's To, so the header, the segment
-    // editors, the live preview, the weblink, and the PDF stay in sync from
-    // a single edit. Intermediate segments are never touched.
+    // Committing writes the independent journey route alone. Segments,
+    // fromCity/toCity, and every other flight field are left untouched.
     const commitRouteEdit = () => {
       if (!editingRoute || editingRoute.leg !== leg) return;
-      const nextFrom = editingRoute.from;
-      const nextTo = editingRoute.to;
-      form.setValue(fp(`${journeyBase}.fromCity`), nextFrom as never, { shouldDirty: true });
-      form.setValue(fp(`${journeyBase}.toCity`), nextTo as never, { shouldDirty: true });
-      if (segmentCount > 0) {
-        form.setValue(fp(`${journeyBase}.segments.0.from`), nextFrom as never, {
-          shouldDirty: true,
-        });
-        form.setValue(fp(`${journeyBase}.segments.${segmentCount - 1}.to`), nextTo as never, {
-          shouldDirty: true,
-        });
-      }
+      form.setValue(fp(`${journeyBase}.routeFrom`), editingRoute.from as never, {
+        shouldDirty: true,
+      });
+      form.setValue(fp(`${journeyBase}.routeTo`), editingRoute.to as never, {
+        shouldDirty: true,
+      });
       setEditingRoute(null);
     };
     return (
@@ -540,10 +548,11 @@ export function FlightRecordCard({
           size="sm"
           variant="ghost"
           aria-label={`Remove flight ${flightIndex + 1}`}
+          title={`Remove flight ${flightIndex + 1}`}
           onClick={() => onRemoveFlight(flightIndex)}
           className="text-red-600 hover:bg-red-50"
         >
-          <Trash2 className="h-4 w-4" /> Remove flight
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
       {/* Collapsing hides the body with CSS (rather than unmounting) so

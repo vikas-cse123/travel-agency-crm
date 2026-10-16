@@ -130,12 +130,18 @@ export function flightBookmarkToDetails(
     outbound: {
       fromCity: airportLabel(outboundFirst?.departure_airport),
       toCity: airportLabel(outboundLast?.arrival_airport),
+      // A bookmark import creates fresh journeys: the header route starts
+      // from the same endpoints, then lives independently of the segments.
+      routeFrom: airportLabel(outboundFirst?.departure_airport),
+      routeTo: airportLabel(outboundLast?.arrival_airport),
       travelClass: outboundFirst?.travel_class ?? 'Economy',
       segments: outbound,
     },
     returnJourney: {
       fromCity: airportLabel(returnFirst?.departure_airport),
       toCity: airportLabel(returnLast?.arrival_airport),
+      routeFrom: airportLabel(returnFirst?.departure_airport),
+      routeTo: airportLabel(returnLast?.arrival_airport),
       travelClass: returnFirst?.travel_class ?? outboundFirst?.travel_class ?? 'Economy',
       segments: returnJourney,
     },

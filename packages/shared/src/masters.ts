@@ -579,7 +579,11 @@ export function normalizePricingSnapshotEntries(value: unknown): AddOnServicePri
     if (typeof raw.id === 'string' && PRICING_UUID_RE.test(raw.id)) entry.id = raw.id;
     return [entry];
   });
-  return entries.length > 0 ? entries : null;
+  // An input ARRAY (even empty) is an explicit quotation-owned snapshot and
+  // must stay authoritative: returning null would let callers fall back to
+  // the master defaults and resurrect deliberately removed options. Only a
+  // non-array value (absent/null) maps to null (legacy fallback).
+  return entries;
 }
 
 const addOnServiceBaseSchema = z.object({

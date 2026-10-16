@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
 const TABS = [
-  { key: 'pricingMethod', label: 'Pricing Method' },
   { key: 'flight', label: 'Flight' },
   { key: 'hotel', label: 'Hotel' },
   { key: 'sightseeing', label: 'Sightseeing' },
@@ -37,7 +36,6 @@ describe('Pricing Breakdown visibility (By Traveler)', () => {
     const tabs = visibleTabsFor('PER_PERSON');
     const labels = tabs.map((t) => t.label);
     expect(labels).toEqual([
-      'Pricing Method',
       'Flight',
       'Hotel',
       'Sightseeing',

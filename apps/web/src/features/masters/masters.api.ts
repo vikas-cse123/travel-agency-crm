@@ -156,6 +156,9 @@ export interface MasterLookups {
 
 const MASTER_DEFAULT_PAGE_SIZE = '10';
 
+/** Destination Master lists 30 rows per page by default (others stay at 10). */
+const DESTINATION_DEFAULT_PAGE_SIZE = '30';
+
 /**
  * Per-request page size used when a UI needs the *complete* filtered result
  * set (e.g. the grouped Sightseeing Master list). This is the server's
@@ -167,9 +170,12 @@ const MASTER_FULL_PAGE_SIZE = 100;
 /** How many list pages may be in flight at once during a full fetch. */
 const MASTER_FULL_FETCH_CONCURRENCY = 5;
 
-function masterListQuery(params = new URLSearchParams()) {
+function masterListQuery(
+  params = new URLSearchParams(),
+  defaultPageSize: string = MASTER_DEFAULT_PAGE_SIZE,
+) {
   const next = new URLSearchParams(params);
-  if (!next.has('pageSize')) next.set('pageSize', MASTER_DEFAULT_PAGE_SIZE);
+  if (!next.has('pageSize')) next.set('pageSize', defaultPageSize);
   return next.toString();
 }
 
@@ -353,7 +359,7 @@ export function useDeleteCity() {
 }
 
 export function useDestinations(params = new URLSearchParams()) {
-  const query = masterListQuery(params);
+  const query = masterListQuery(params, DESTINATION_DEFAULT_PAGE_SIZE);
   return useQuery({
     queryKey: [...keys.destinations, query],
     queryFn: ({ signal }) =>
@@ -1358,8 +1364,16 @@ export async function sightseeingPresentations(ids: Array<string | null | undefi
   );
 }
 
-/** Resolve current display URLs for a set of sightseeing master ids in one request. */
-export function useSightseeingPresentations(ids: Array<string | null | undefined>) {
+/**
+ * Resolve current display URLs for a set of sightseeing master ids in one
+ * request. Callers that keep the result on screen for a long time (the Live
+ * Weblink Preview) pass `refetchInterval` so the short-lived signed URLs are
+ * re-minted before they expire; the builder editor leaves it unset.
+ */
+export function useSightseeingPresentations(
+  ids: Array<string | null | undefined>,
+  options?: { refetchInterval?: number },
+) {
   const unique = useMemo(() => [...new Set(ids.filter((id): id is string => Boolean(id)))], [ids]);
   const key = useMemo(() => [...unique].sort().join(','), [unique]);
   return useQuery({
@@ -1367,6 +1381,7 @@ export function useSightseeingPresentations(ids: Array<string | null | undefined
     queryFn: () => sightseeingPresentations(unique),
     enabled: unique.length > 0,
     staleTime: 60 * 1000,
+    ...(options?.refetchInterval ? { refetchInterval: options.refetchInterval } : {}),
   });
 }
 

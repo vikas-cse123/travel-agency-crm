@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
+import { fetchPublicToken } from './helpers/public-token.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { hashPassword } from '../src/utils/crypto.js';
@@ -662,10 +663,11 @@ describe('Phase 17 lead workflow parity', () => {
       isGenerated: true,
       externalViews: 0,
     });
-    expect(rowBefore.weblink.publicUrl).toContain('/q/');
+    // The friendly name is auto-generated from the lead name at creation time.
+    expect(rowBefore.weblink.publicUrl).toMatch(/\/aarav-mehta$/);
 
     // Record a view through the public endpoint.
-    const token = rowBefore.weblink.publicUrl.split('/q/')[1];
+    const token = await fetchPublicToken(db, quotation.id);
     await request(app)
       .get(`/api/public/quotations/${token}`)
       .set('X-Forwarded-For', '203.0.113.99');
@@ -677,7 +679,7 @@ describe('Phase 17 lead workflow parity', () => {
       isGenerated: true,
       externalViews: 1,
     });
-    expect(rowAfter.weblink.publicUrl).toContain(token);
+    expect(rowAfter.weblink.publicUrl).toMatch(/\/aarav-mehta$/);
   });
 
   it('prefers the ACTIVE custom domain hostname for the lead weblink URL', async () => {
@@ -700,9 +702,7 @@ describe('Phase 17 lead workflow parity', () => {
       quotationId: quotation.id,
       isGenerated: true,
     });
-    expect(row.weblink.publicUrl).toMatch(
-      /^https:\/\/quotation\.p17e\.test\/q\/[A-Za-z0-9_-]{32,}$/,
-    );
+    expect(row.weblink.publicUrl).toBe('https://quotation.p17e.test/aarav-mehta');
     expect(row.weblink.publicUrl).not.toContain('app.travelagencycrm.in');
   });
 
@@ -713,9 +713,7 @@ describe('Phase 17 lead workflow parity', () => {
 
     const list = await client.get('/api/queries');
     const row = list.body.data.data.find((r: { id: string }) => r.id === lead.id);
-    expect(row.weblink.publicUrl).toMatch(
-      new RegExp(`^${process.env.WEB_URL ?? 'http://localhost:5173'}/q/[A-Za-z0-9_-]{32,}$`),
-    );
+    expect(row.weblink.publicUrl).toBe('https://travelagencycrm.in/aarav-mehta');
   });
 
   it('suppresses conversion and shows the booking summary once converted', async () => {

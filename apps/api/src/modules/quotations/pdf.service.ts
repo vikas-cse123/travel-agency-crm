@@ -646,6 +646,9 @@ type FlightSegment = {
 type FlightJourney = {
   fromCity?: string | null;
   toCity?: string | null;
+  /** Independently edited header route; falls back to fromCity/toCity when absent. */
+  routeFrom?: string | null;
+  routeTo?: string | null;
   segments?: FlightSegment[];
 };
 const formatClock12Hour = (value: string) => {
@@ -2221,7 +2224,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
               .font('Bold')
               .fontSize(16)
               .text(leg.title, M + 16, y0 + 8);
-            const route = [leg.journey?.fromCity, leg.journey?.toCity].filter(Boolean).join(' > ');
+            const route = [leg.journey?.routeFrom ?? leg.journey?.fromCity, leg.journey?.routeTo ?? leg.journey?.toCity].filter(Boolean).join(' > ');
             if (route)
               doc
                 .font('Body')

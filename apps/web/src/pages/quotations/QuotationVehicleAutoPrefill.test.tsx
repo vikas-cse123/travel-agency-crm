@@ -21,6 +21,9 @@ const DEST = {
   singapore: { id: 'dest-singapore', name: 'Singapore', status: 'ACTIVE' },
   kashmir: { id: 'dest-kashmir', name: 'Kashmir', status: 'ACTIVE' },
   goa: { id: 'dest-goa', name: 'Goa', status: 'ACTIVE' },
+  // No master vehicle maps to New Zealand, so seeded rows are left untouched
+  // by auto-prefill — used to exercise card UI behavior in isolation.
+  nz: { id: 'dest-nz', name: 'New Zealand', status: 'ACTIVE' },
 } as const;
 
 type DestKey = keyof typeof DEST;
@@ -158,9 +161,7 @@ function makeQuotation(destinations: DestKey[], versionServices: unknown[] = [])
 }
 
 function stubApi(quotation: unknown) {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.includes('/quotations/quotation-1')) return response(quotation);
       if (url.includes('/masters/destinations')) return response(page(Object.values(DEST)));
@@ -183,13 +184,22 @@ function stubApi(quotation: unknown) {
       if (url.includes('/settings')) return response({ profile: { phone: '', email: '' } });
       if (url.includes('/destination-expert')) return response([]);
       return response(page([]));
-    }),
-  );
+    });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 async function openVehicleTab(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { name: 'Quotation builder' });
   await user.click(screen.getByRole('button', { name: /Vehicle/ }));
+}
+
+// Vehicle cards start collapsed, so their inner fields are not mounted until the
+// card is expanded. The collapsed header shows the mapped master name.
+async function expandAllVehicles(user: ReturnType<typeof userEvent.setup>) {
+  for (const button of screen.queryAllByRole('button', { name: /^Expand vehicle \d+$/ })) {
+    await user.click(button);
+  }
 }
 
 describe('Vehicle auto-prefill regression', () => {
@@ -217,11 +227,13 @@ describe('Vehicle auto-prefill regression', () => {
     await openVehicleTab(user);
 
     // The lead requested a vehicle, so the section is already included; the
-    // matching vehicles appear automatically once destination + vehicle data resolve.
+    // matching vehicles appear automatically once destination + vehicle data
+    // resolve. Cards start collapsed, so the mapped names show in the headers.
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Vehicle A')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Vehicle B')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle A')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle B')).toBeInTheDocument();
     });
+    await expandAllVehicles(user);
 
     // Exactly two populated vehicle rows — the seeded placeholder row was filled,
     // not left behind as a third "Select Vehicle Type / Select Vehicle Model" row.
@@ -257,10 +269,11 @@ describe('Vehicle auto-prefill regression', () => {
     await user.click(await screen.findByLabelText('Include Vehicle in Quotation'));
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Vehicle C')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Vehicle D')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle C')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle D')).toBeInTheDocument();
     });
-    expect(screen.queryByDisplayValue('Vehicle A')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vehicle A')).not.toBeInTheDocument();
+    await expandAllVehicles(user);
     expect(screen.getAllByLabelText(/Vehicle \d+ model/)).toHaveLength(2);
   });
 
@@ -279,9 +292,10 @@ describe('Vehicle auto-prefill regression', () => {
     await user.click(await screen.findByLabelText('Include Vehicle in Quotation'));
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Vehicle D')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Vehicle E')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle D')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle E')).toBeInTheDocument();
     });
+    await expandAllVehicles(user);
     expect(screen.getAllByDisplayValue('Vehicle D')).toHaveLength(1);
     expect(screen.getAllByLabelText(/Vehicle \d+ model/)).toHaveLength(2);
   });
@@ -301,12 +315,148 @@ describe('Vehicle auto-prefill regression', () => {
     await user.click(await screen.findByLabelText('Include Vehicle in Quotation'));
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Vehicle A')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Vehicle B')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Vehicle C')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Vehicle D')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle A')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle B')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle C')).toBeInTheDocument();
+      expect(screen.getByText('Vehicle D')).toBeInTheDocument();
     });
-    expect(screen.queryByDisplayValue('Vehicle E')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vehicle E')).not.toBeInTheDocument();
+    await expandAllVehicles(user);
     expect(screen.getAllByLabelText(/Vehicle \d+ model/)).toHaveLength(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Vehicle card accordion, collapsed header, reorder and delete — Hotel parity
+// ---------------------------------------------------------------------------
+
+const vehicleRow = (id: string, name: string, sequence: number) => ({
+  serviceType: 'VEHICLE_TRANSFER',
+  vehicleId: id || null,
+  name,
+  description: null,
+  dayNumber: null,
+  city: 'SUV',
+  quantity: '1',
+  unitSellingPrice: '0',
+  taxCategory: null,
+  notes: null,
+  images: [],
+  pdfImageUrl: null,
+  sequence,
+});
+
+function renderVehicleBuilder(destinations: DestKey[], rows: unknown[]) {
+  const fetchMock = stubApi(makeQuotation(destinations, rows));
+  renderWithProviders(
+    <Routes>
+      <Route path="/quotations/:quotationId/versions/:versionId/edit" element={<QuotationBuilderPage />} />
+    </Routes>,
+    { route: '/quotations/quotation-1/versions/version-1/edit' },
+  );
+  return fetchMock;
+}
+
+describe('Vehicle builder card behavior', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set([
+      'quotations.view',
+      'quotations.update',
+      'quotations.view_costing',
+      'master_vehicles.view',
+    ]);
+  });
+
+  it('starts every vehicle card collapsed, shows the saved name in the header and toggles independently', async () => {
+    const user = userEvent.setup();
+    renderVehicleBuilder(['nz'], [
+      vehicleRow('11111111-1111-4111-8111-111111111111', 'Vehicle One', 1),
+      vehicleRow('22222222-2222-4222-8222-222222222222', 'Vehicle Two', 2),
+    ]);
+    await openVehicleTab(user);
+
+    // Card bodies are not mounted while collapsed.
+    expect(screen.queryByLabelText('Vehicle 1 type')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Vehicle 2 type')).not.toBeInTheDocument();
+    // The saved vehicle names are shown in the collapsed headers.
+    expect(screen.getByRole('heading', { name: 'Vehicle One' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Vehicle Two' })).toBeInTheDocument();
+
+    // Expanding one card does not expand the other.
+    await user.click(screen.getByRole('button', { name: 'Expand vehicle 1' }));
+    expect(await screen.findByLabelText('Vehicle 1 type')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Vehicle 2 type')).not.toBeInTheDocument();
+
+    // Collapsing it again hides the body without touching values.
+    await user.click(screen.getByRole('button', { name: 'Collapse vehicle 1' }));
+    expect(screen.queryByLabelText('Vehicle 1 type')).not.toBeInTheDocument();
+  });
+
+  it('falls back to a generic header label when no vehicle is selected', async () => {
+    const user = userEvent.setup();
+    renderVehicleBuilder(['nz'], [vehicleRow('', '', 1)]);
+    await openVehicleTab(user);
+    expect(screen.getByRole('heading', { name: 'Vehicle' })).toBeInTheDocument();
+  });
+
+  it('reorders with the icon controls, disables the ends, and persists the new order on save', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderVehicleBuilder(['nz'], [
+      vehicleRow('11111111-1111-4111-8111-111111111111', 'Vehicle One', 1),
+      vehicleRow('22222222-2222-4222-8222-222222222222', 'Vehicle Two', 2),
+      vehicleRow('33333333-3333-4333-8333-333333333333', 'Vehicle Three', 3),
+    ]);
+    await openVehicleTab(user);
+
+    expect(screen.getByRole('button', { name: 'Move vehicle 1 up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move vehicle 3 down' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move vehicle 1 down' })).toBeEnabled();
+    // Text-based move buttons are not used.
+    expect(screen.queryByRole('button', { name: 'Move Up' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move Down' })).not.toBeInTheDocument();
+
+    const one = screen.getByRole('heading', { name: 'Vehicle One' });
+    const two = screen.getByRole('heading', { name: 'Vehicle Two' });
+    expect(one.compareDocumentPosition(two) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Move "Vehicle Two" up one position.
+    await user.click(screen.getByRole('button', { name: 'Move vehicle 2 up' }));
+    expect(
+      two.compareDocumentPosition(one) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
+    );
+    // The latest version PATCH (ignore any initial auto-save or traveler-count PATCH).
+    const versionPatches = fetchMock.mock.calls
+      .filter(([, options]) => options?.method === 'PATCH')
+      .map(([, options]) => JSON.parse(String(options!.body)))
+      .filter(
+        (body) =>
+          Array.isArray(body.services) &&
+          body.services.some((row: { serviceType?: string }) => row.serviceType === 'VEHICLE_TRANSFER'),
+      );
+    const saved = versionPatches[versionPatches.length - 1];
+    const names = saved.services.map((row: { name?: string }) => row.name);
+    expect(names).toEqual(['Vehicle Two', 'Vehicle One', 'Vehicle Three']);
+  });
+
+  it('removes a vehicle from an icon-only, labelled delete control', async () => {
+    const user = userEvent.setup();
+    renderVehicleBuilder(['nz'], [
+      vehicleRow('11111111-1111-4111-8111-111111111111', 'Vehicle One', 1),
+      vehicleRow('22222222-2222-4222-8222-222222222222', 'Vehicle Two', 2),
+    ]);
+    await openVehicleTab(user);
+
+    // The legacy text "Remove" button is gone.
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove vehicle 2' }));
+    expect(screen.queryByRole('heading', { name: 'Vehicle Two' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Vehicle One' })).toBeInTheDocument();
   });
 });

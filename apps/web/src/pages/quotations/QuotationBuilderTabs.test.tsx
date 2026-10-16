@@ -129,7 +129,7 @@ const renderBuilder = () =>
     { route: '/quotations/quotation-1/versions/version-1/edit' },
   );
 
-const tabButton = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) });
+const tabButton = (name: string) => screen.getByRole('button', { name });
 const underlineOf = (button: HTMLElement) =>
   button.querySelector('span[aria-hidden="true"]');
 
@@ -144,7 +144,7 @@ describe('Quotation Builder sub-tab styling', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    const active = tabButton('Pricing Method');
+    const active = tabButton('Flight');
     // Blue label, transparent background (no pill/fill). Class-level: jsdom
     // does not resolve Tailwind utilities into computed styles.
     expect(active.className).toContain('text-brand-600');
@@ -163,7 +163,7 @@ describe('Quotation Builder sub-tab styling', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    for (const name of ['Flight', 'Hotel', 'Summary & Pricing', 'Settings']) {
+    for (const name of ['Hotel', 'Pricing', 'Settings']) {
       const button = tabButton(name);
       expect(button.className).toContain('bg-transparent');
       expect(button.className).toContain('text-slate-600');
@@ -201,9 +201,7 @@ describe('Quotation Builder sub-tab styling', () => {
       const asterisk = tabButton(name).querySelector('span.text-red-500');
       expect(asterisk?.textContent).toBe('*');
     }
-    expect(
-      tabButton('Pricing Method').querySelector('span.text-red-500'),
-    ).toBeNull();
+    expect(tabButton('FAQs').querySelector('span.text-red-500')).toBeNull();
   });
 
   it('switching tabs moves the underline and preserves form values', async () => {
@@ -214,11 +212,11 @@ describe('Quotation Builder sub-tab styling', () => {
     // Underline follows the newly active tab.
     expect(underlineOf(tabButton('Hotel'))).not.toBeNull();
     expect(tabButton('Hotel').className).toContain('text-brand-600');
-    expect(underlineOf(tabButton('Pricing Method'))).toBeNull();
+    expect(underlineOf(tabButton('Flight'))).toBeNull();
     // Form state survives tab switches (hidden title value intact).
     expect(screen.getByDisplayValue('Goa proposal')).toBeInTheDocument();
-    await userEvent.click(tabButton('Pricing Method'));
-    expect(underlineOf(tabButton('Pricing Method'))).not.toBeNull();
+    await userEvent.click(tabButton('Flight'));
+    expect(underlineOf(tabButton('Flight'))).not.toBeNull();
     expect(screen.getByDisplayValue('Goa proposal')).toBeInTheDocument();
   });
 
@@ -226,7 +224,7 @@ describe('Quotation Builder sub-tab styling', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    const bar = tabButton('Pricing Method').parentElement!;
+    const bar = tabButton('Flight').parentElement!;
     expect(bar.className).toContain('overflow-x-auto');
     expect(tabButton('Hotel').className).toContain('whitespace-nowrap');
     // All expected labels render in order in one row.
@@ -235,7 +233,6 @@ describe('Quotation Builder sub-tab styling', () => {
     );
     expect(labels).toEqual(
       expect.arrayContaining([
-        'Pricing Method',
         'Flight',
         'Hotel',
         'Sightseeing',
@@ -244,7 +241,7 @@ describe('Quotation Builder sub-tab styling', () => {
         'Add-on Services',
         'Inclusions & Exclusions',
         'FAQs',
-        'Summary & Pricing',
+        'Pricing',
         'Settings',
       ]),
     );
@@ -254,7 +251,7 @@ describe('Quotation Builder sub-tab styling', () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     const { container } = renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    const bar = tabButton('Pricing Method').parentElement!;
+    const bar = tabButton('Flight').parentElement!;
     // Full-width white container: neutral border, rounded corners, no shadow.
     const card = bar.parentElement!;
     expect(card.className).toContain('rounded-xl');
@@ -285,7 +282,7 @@ describe('Quotation Builder sub-tab styling', () => {
     expect(screen.queryByRole('button', { name: 'Scroll tabs right' })).toBeNull();
 
     // Simulate an overflowing strip, scrolled to the start.
-    const bar = tabButton('Pricing Method').parentElement as HTMLElement;
+    const bar = tabButton('Flight').parentElement as HTMLElement;
     Object.defineProperty(bar, 'scrollWidth', { value: 1200, configurable: true });
     Object.defineProperty(bar, 'clientWidth', { value: 600, configurable: true });
     Object.defineProperty(bar, 'scrollLeft', { value: 0, configurable: true, writable: true });

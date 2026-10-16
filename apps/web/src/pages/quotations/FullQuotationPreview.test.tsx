@@ -395,14 +395,13 @@ describe('scrollPreviewToSection helper', () => {
     }
   });
 
-  it('falls back to the top for missing sections, null sections, and null containers', () => {
+  it('leaves the position untouched for missing sections, null sections, and null containers', () => {
     const container = document.createElement('div');
     container.scrollTop = 123;
     scrollPreviewToSection(container, 'cruise');
-    expect(container.scrollTop).toBe(0);
-    container.scrollTop = 123;
+    expect(container.scrollTop).toBe(123);
     scrollPreviewToSection(container, null);
-    expect(container.scrollTop).toBe(0);
+    expect(container.scrollTop).toBe(123);
     expect(() => scrollPreviewToSection(null, 'cruise')).not.toThrow();
   });
 });
@@ -462,7 +461,7 @@ describe('Pinned preview tab navigation', () => {
   it.each([
     ['Hotel', 'hotels'],
     ['FAQs', 'faqs'],
-    ['Summary & Pricing', 'pricing'],
+    ['Pricing', 'pricing'],
   ])('opens from %s at its %s anchor', async (tab, section) => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
@@ -517,7 +516,7 @@ describe('Pinned preview tab navigation', () => {
     expect(readSaved()).toBe(484);
   });
 
-  it('falls back to the top when the mapped section is hidden', async () => {
+  it('leaves the position untouched when the mapped section is hidden', async () => {
     vi.stubGlobal(
       'fetch',
       builderFetch(
@@ -534,12 +533,17 @@ describe('Pinned preview tab navigation', () => {
     );
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
-    await userEvent.click(await screen.findByRole('button', { name: /^Flight/ }));
     // preview open by default (no click needed)
     expect(screen.getByTestId('live-preview-panel')).toBeInTheDocument();
     const doc = await pinnedReady();
     expect(doc.querySelector('[data-preview-section="flights"]')).toBeNull();
-    expect(frameScroller(doc).scrollTop).toBe(0);
+    const scroller = frameScroller(doc) as HTMLElement;
+    scroller.scrollTop = 180;
+    // The mapped section is genuinely absent (no flights): the preview keeps
+    // its current position instead of snapping back to the top.
+    await userEvent.click(await screen.findByRole('button', { name: /^Flight/ }));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(scroller.scrollTop).toBe(180);
     // The rest of the quotation still renders.
     expect(
       within(doc.body as HTMLElement).getByText('Custom Package for Aarav Mehta'),
@@ -829,12 +833,54 @@ describe('Live preview in the builder', () => {
       'Daily breakfast',
       'Is pickup included?',
     ]) {
-      expect(within(body).getByText(text, { exact: false })).toBeInTheDocument();
+      // A value can legitimately appear more than once (e.g. the total price on
+      // the card and again in the By Traveler "Price Breakdown").
+      expect(within(body).getAllByText(text, { exact: false }).length).toBeGreaterThan(0);
     }
     // Agency branding appears in both the Contact Us card and the footer.
     expect(within(body).getAllByText('Alpha Travel', { exact: false }).length).toBeGreaterThan(
       0,
     );
+  });
+
+  it('renders the By Traveler package breakdown in the live preview, matching the total card', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const body = doc.body as HTMLElement;
+    // The shared renderer powers both this preview and the public weblink, so
+    // the breakdown must appear here too (2 adults × ₹25,000 = ₹50,000).
+    expect(within(body).getByRole('heading', { name: 'Price Breakdown' })).toBeInTheDocument();
+    expect(within(body).getByText('Adults')).toBeInTheDocument();
+    expect(within(body).getByText('2 × ₹25,000')).toBeInTheDocument();
+    // No discount/tax here, so the subtotal is not repeated as a second copy of
+    // the total; the prominent total line carries the amount on its own.
+    expect(within(body).queryByText('Package subtotal')).not.toBeInTheDocument();
+    expect(within(body).getAllByText('Total Package Price').length).toBeGreaterThanOrEqual(2);
+    // Card + the breakdown's prominent total echo the same authoritative amount.
+    expect(within(body).getAllByText('₹50,000').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders the discounted Total Package Price card in the live preview', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail({ discountAmount: '5000' })));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const body = doc.body as HTMLElement;
+    // 2 adults × ₹25,000 = ₹50,000, less a ₹5,000 discount → ₹45,000 payable.
+    // Same shared card as the public weblink, so the design matches exactly.
+    const finalPrice = within(body).getByTestId('total-final-price');
+    const card = finalPrice.closest('div.bg-emerald-600') as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByTestId('total-original-price')).toHaveTextContent(
+      '₹50,000',
+    );
+    expect(within(card as HTMLElement).getByTestId('total-discount-badge')).toHaveTextContent(
+      '₹5,000 OFF',
+    );
+    expect(finalPrice).toHaveTextContent('₹45,000');
+    expect(within(body).getByRole('link', { name: /Contact Now/ })).toBeInTheDocument();
   });
 
   it('reflects edited journey routes in the phone immediately without saving', async () => {
@@ -850,10 +896,10 @@ describe('Live preview in the builder', () => {
     await userEvent.clear(origin);
     await userEvent.type(origin, 'Mumbai');
     await userEvent.keyboard('{Enter}');
-    // Header and first segment stay synchronized.
+    // Header keeps its independent route; the segment is never rewritten.
     expect(screen.getByText('Mumbai → Goa')).toBeInTheDocument();
     const flightArticle = within(screen.getByRole('article', { name: 'Flight 1' }));
-    expect(flightArticle.getAllByLabelText(/^From/)[0]).toHaveValue('Mumbai');
+    expect(flightArticle.getAllByLabelText(/^From/)[0]).toHaveValue('DEL');
     // The pinned phone shows the edited route with no save.
     // preview open by default (no click needed)
     const doc = await pinnedReady();
@@ -1119,7 +1165,9 @@ describe('Persistent live weblink preview', () => {
       'Daily breakfast',
       'Is pickup included?',
     ]) {
-      expect(within(body).getByText(text, { exact: false })).toBeInTheDocument();
+      // A value can legitimately appear more than once (e.g. the total price on
+      // the card and again in the By Traveler "Price Breakdown").
+      expect(within(body).getAllByText(text, { exact: false }).length).toBeGreaterThan(0);
     }
     expect(within(body).getAllByText('Alpha Travel', { exact: false }).length).toBeGreaterThan(
       0,
@@ -1132,7 +1180,7 @@ describe('Persistent live weblink preview', () => {
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await enablePinned();
     await pinnedReady();
-    for (const tab of ['Hotel', 'FAQs', 'Summary & Pricing', 'Flight']) {
+    for (const tab of ['Hotel', 'FAQs', 'Pricing', 'Flight']) {
       await userEvent.click(await screen.findByRole('button', { name: tab }));
       const doc = pinnedDoc();
       expect(
@@ -1887,19 +1935,18 @@ describe('scrollPreviewToTarget helper', () => {
     }
   });
 
-  it('falls back to the section, then the top', () => {
+  it('falls back to the section, then leaves the position untouched', () => {
     const { container } = rig();
     try {
       // Missing item → section anchor: 500 - 100 - 16.
       scrollPreviewToTarget(container, { section: 'hotels', items: ['hotel:9'] });
       expect(container.scrollTop).toBe(384);
-      // Missing everything → top.
+      // Missing everything → the position is preserved (never reset to top).
       container.scrollTop = 123;
       scrollPreviewToTarget(container, { section: 'nope', items: ['missing'] });
-      expect(container.scrollTop).toBe(0);
-      container.scrollTop = 123;
+      expect(container.scrollTop).toBe(123);
       scrollPreviewToTarget(container, null);
-      expect(container.scrollTop).toBe(0);
+      expect(container.scrollTop).toBe(123);
       expect(() => scrollPreviewToTarget(null, { section: 'hotels', items: [] })).not.toThrow();
     } finally {
       container.remove();
@@ -2247,12 +2294,12 @@ describe('Preview item-level navigation', () => {
       .getByRole('button', { name: 'Collapse hotel stay 1' })
       .closest('article') as HTMLElement;
     pos.restub();
-    await userEvent.click(within(stayOne).getByRole('button', { name: 'Remove' }));
+    await userEvent.click(within(stayOne).getByRole('button', { name: 'Remove hotel stay 1' }));
     await vi.waitFor(() => expect(pos.readScroll()).toBe(84));
     expect(screen.getByTestId('pinned-preview-frame')).toBeInTheDocument();
   });
 
-  it('missing section falls back to the top', async () => {
+  it('missing section keeps the current scroll position', async () => {
     // No FAQs saved: the FAQs tab has no public section to show.
     vi.stubGlobal('fetch', builderFetch(detail({ faqs: [] })));
     renderBuilder();
@@ -2260,9 +2307,45 @@ describe('Preview item-level navigation', () => {
     const doc = await pinnedReady();
     expect(doc.querySelector('[data-preview-section="faqs"]')).toBeNull();
     const pos = stubPositions(doc);
+    (frameScroller(doc) as HTMLElement).scrollTop = 200;
     await userEvent.click(await screen.findByRole('button', { name: 'FAQs' }));
-    await vi.waitFor(() => expect(pos.readScroll()).toBe(0));
+    // The section is absent for this tab: no jump back to the top.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(pos.readScroll()).toBe(200);
     expect(screen.getByTestId('pinned-preview-frame')).toBeInTheDocument();
+  });
+
+  it('selecting the Hotel tab navigates to the Hotels section', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    expect(doc.querySelector('[data-preview-section="hotels"]')).not.toBeNull();
+    const pos = stubPositions(doc);
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    // Section anchor at 100 minus the 16px heading offset.
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(84));
+  });
+
+  it('Hotel tab with no named stay keeps the position and renders no section', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail({ hotels: [hotelNamed('', 1)] })));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    // A stay without a name is never rendered on the weblink (unchanged rules).
+    expect(doc.querySelector('[data-preview-section="hotels"]')).toBeNull();
+    expect(doc.querySelectorAll('[data-preview-item^="hotel:"]')).toHaveLength(0);
+    const pos = stubPositions(doc);
+    (frameScroller(doc) as HTMLElement).scrollTop = 240;
+    await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
+    // The Hotels section cannot be shown yet: keep the reader's position.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(pos.readScroll()).toBe(240);
+    // Nothing hotel-related is invented for the incomplete stay.
+    expect(doc.querySelectorAll('[data-preview-item^="hotel:"]')).toHaveLength(0);
+    expect(
+      within(doc.body as HTMLElement).getByText('Custom Package for Aarav Mehta'),
+    ).toBeInTheDocument();
   });
 
   it('iframe stays mounted across item navigation with no saves', async () => {

@@ -35,7 +35,6 @@ export const MARKUP_MODES = ['NONE', 'FIXED', 'PERCENTAGE'] as const;
 export const QUOTATION_TAX_NOTE_SENTINEL = '-- No change (keep existing) --';
 export const QUOTATION_TAX_NOTE_HIDDEN = 'Do not show';
 export const QUOTATION_TAX_NOTE_OPTIONS = [
-  QUOTATION_TAX_NOTE_SENTINEL,
   QUOTATION_TAX_NOTE_HIDDEN,
   'Inclusive of all taxes',
   'Inclusive of all taxes, excluding TCS',
@@ -968,6 +967,16 @@ export const flightSegmentSchema = z
 export const flightJourneySchema = z.object({
   fromCity: optionalText(120),
   toCity: optionalText(120),
+  /**
+   * Independently editable journey header route. Initialized once from the
+   * journey endpoints (never re-derived afterwards): the header displays
+   * `routeFrom → routeTo`, falling back to `fromCity → toCity` only while
+   * these are absent (legacy quotations). Editing the header writes these
+   * two fields alone — segments and fromCity/toCity are never touched — and
+   * editing segments never rewrites them.
+   */
+  routeFrom: optionalText(120),
+  routeTo: optionalText(120),
   travelClass: optionalText(40),
   segments: arrayFromNullish(flightSegmentSchema).pipe(z.array(flightSegmentSchema).max(20)),
 });
@@ -1358,6 +1367,116 @@ export const addOnDetailsSchema = z.object({
   sectionTitle: optionalText(200).default('Additional Services'),
 });
 
+/**
+ * Weblink profile card display customization (Weblink Display Settings).
+ *
+ * Purely presentational overrides for the customer-facing profile information
+ * card: an optional custom label, an optional custom value and a visibility
+ * flag per item, plus the composite "Prepared By" block. Blank/absent values
+ * always fall back to the automatically derived quotation/lead value. This is
+ * never written into lead data or any source record — it lives only on the
+ * quotation version as display configuration.
+ */
+export const WEBLINK_PROFILE_FIELD_IDS = [
+  'travelerName',
+  'travelDate',
+  'duration',
+  'travelers',
+  'cwbAges',
+  'cwobAges',
+  'infantAges',
+  'quotationId',
+  'destinations',
+] as const;
+export type WeblinkProfileFieldId = (typeof WEBLINK_PROFILE_FIELD_IDS)[number];
+
+/** Default customer-facing labels for the weblink profile card rows. */
+export const WEBLINK_PROFILE_FIELD_LABELS: Record<WeblinkProfileFieldId, string> = {
+  travelerName: 'Traveler Name',
+  travelDate: 'Travel Date',
+  duration: 'Duration',
+  travelers: 'Travelers',
+  cwbAges: 'CWB Ages',
+  cwobAges: 'CWOB Ages',
+  infantAges: 'Infant Ages',
+  quotationId: 'Quotation ID',
+  destinations: 'Destinations',
+};
+
+export const WEBLINK_PROFILE_PREPARED_BY_LABEL = 'Prepared By';
+
+export const weblinkProfileFieldConfigSchema = z.object({
+  /** Custom row label; blank falls back to the default label. */
+  label: optionalText(60),
+  /** Custom display value; blank falls back to the derived value. */
+  value: optionalText(300),
+  /** Hide this row from the weblink without deleting the underlying data. */
+  hidden: z.boolean().optional(),
+});
+
+export const weblinkProfilePreparedByConfigSchema = z.object({
+  label: optionalText(60),
+  name: optionalText(120),
+  phone: optionalText(60),
+  email: optionalText(160),
+  hidden: z.boolean().optional(),
+});
+
+export const weblinkProfileConfigSchema = z.object({
+  travelerName: weblinkProfileFieldConfigSchema.optional(),
+  travelDate: weblinkProfileFieldConfigSchema.optional(),
+  duration: weblinkProfileFieldConfigSchema.optional(),
+  travelers: weblinkProfileFieldConfigSchema.optional(),
+  cwbAges: weblinkProfileFieldConfigSchema.optional(),
+  cwobAges: weblinkProfileFieldConfigSchema.optional(),
+  infantAges: weblinkProfileFieldConfigSchema.optional(),
+  quotationId: weblinkProfileFieldConfigSchema.optional(),
+  destinations: weblinkProfileFieldConfigSchema.optional(),
+  preparedBy: weblinkProfilePreparedByConfigSchema.optional(),
+});
+export type WeblinkProfileConfig = z.infer<typeof weblinkProfileConfigSchema>;
+export type WeblinkProfileFieldConfig = z.infer<typeof weblinkProfileFieldConfigSchema>;
+export type WeblinkProfilePreparedByConfig = z.infer<typeof weblinkProfilePreparedByConfigSchema>;
+
+/**
+ * Sanitize a weblink profile config before persisting. Trims every value and
+ * drops empty entries so an untouched form stores `null` rather than a pile of
+ * blank objects. Purely display configuration — it never touches lead/business
+ * data.
+ */
+export function normalizeWeblinkProfileConfig(
+  input: WeblinkProfileConfig | null | undefined,
+): WeblinkProfileConfig | null {
+  if (!input) return null;
+  const out: WeblinkProfileConfig = {};
+  for (const id of WEBLINK_PROFILE_FIELD_IDS) {
+    const cfg = input[id];
+    if (!cfg) continue;
+    const next: WeblinkProfileFieldConfig = {};
+    const label = cfg.label?.trim();
+    const value = cfg.value?.trim();
+    if (label) next.label = label;
+    if (value) next.value = value;
+    if (cfg.hidden === true) next.hidden = true;
+    if (Object.keys(next).length > 0) out[id] = next;
+  }
+  const preparedBy = input.preparedBy;
+  if (preparedBy) {
+    const next: WeblinkProfilePreparedByConfig = {};
+    const label = preparedBy.label?.trim();
+    const name = preparedBy.name?.trim();
+    const phone = preparedBy.phone?.trim();
+    const email = preparedBy.email?.trim();
+    if (label) next.label = label;
+    if (name) next.name = name;
+    if (phone) next.phone = phone;
+    if (email) next.email = email;
+    if (preparedBy.hidden === true) next.hidden = true;
+    if (Object.keys(next).length > 0) out.preparedBy = next;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export const quotationVersionInputSchema = z
   .object({
     title: z.string().trim().min(2).max(200),
@@ -1371,6 +1490,9 @@ export const quotationVersionInputSchema = z
     // affects masters, itinerary, dates, pricing, or PDFs.
     weblinkDurationText: optionalText(200),
     weblinkProfileDestination: optionalText(500),
+    // Per-item label/value/visibility overrides for the weblink profile card.
+    // Null/absent keeps the fully automatic card. Display-only.
+    weblinkProfile: weblinkProfileConfigSchema.nullable().optional(),
     destinationSummary: z.string().trim().min(2).max(500),
     travelStartDate: optionalDate,
     travelEndDate: optionalDate,
@@ -1384,6 +1506,9 @@ export const quotationVersionInputSchema = z
     pricingHeading: optionalText(120).default('Price Breakdown'),
     pricingSubheading: optionalText(200),
     pricingDisplayOrder: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+    // Builder-only row order for the By Traveler Price Breakdown: stable row ids
+    // (traveler keys + custom item ids) in the order the user arranged them.
+    pricingRowOrder: z.array(z.string().trim().min(1).max(64)).max(80).optional(),
     markupMode: z.enum(MARKUP_MODES).default('NONE'),
     markupValue: money.default(0),
     taxRate: money.max(100).default(0),
@@ -1445,6 +1570,20 @@ export const quotationVersionInputSchema = z
           amount: money,
           description: optionalText(500),
           category: optionalText(50),
+        }),
+      )
+      .max(50)
+      .optional(),
+    // Additional Price Items — flat package charges for By Traveler pricing.
+    // Each item is a FIXED package amount (never multiplied by traveler count)
+    // and is added on top of the per-traveler subtotal.
+    packageCustomItems: z
+      .array(
+        z.object({
+          // Stable row identity so the builder can reorder items across saves.
+          id: z.string().trim().min(1).max(64).optional(),
+          label: z.string().trim().min(1).max(100),
+          amount: money,
         }),
       )
       .max(50)
@@ -2284,10 +2423,39 @@ export function calculateHotelRowTotal(
 }
 
 export interface TravelerPriceRow {
+  /** Stable row identity (traveler key or custom-item id) used for ordering. */
+  id: string;
   label: string;
   count: number;
   price: number;
   total: number;
+}
+
+/** Canonical ids of the four By Traveler breakdown rows, in default order. */
+export const TRAVELER_PRICING_ROW_IDS = ['adults', 'cwb', 'cwob', 'infants'] as const;
+
+/**
+ * Order Price Breakdown rows by a saved `pricingRowOrder`. Rows whose id is not
+ * listed keep their relative order and are placed after the listed ones. Pure
+ * and stable, so it is safe to call from both the builder and the renderer.
+ */
+export function orderPricingRows<T extends { id: string }>(
+  rows: T[],
+  order: readonly string[] | null | undefined,
+): T[] {
+  if (!Array.isArray(order) || order.length === 0) return rows;
+  const rank = new Map<string, number>();
+  order.forEach((id, index) => {
+    if (!rank.has(id)) rank.set(id, index);
+  });
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const rankA = rank.has(a.row.id) ? rank.get(a.row.id)! : Number.MAX_SAFE_INTEGER;
+      const rankB = rank.has(b.row.id) ? rank.get(b.row.id)! : Number.MAX_SAFE_INTEGER;
+      return rankA === rankB ? a.index - b.index : rankA - rankB;
+    })
+    .map((entry) => entry.row);
 }
 
 export interface QuotationPricing {
@@ -2313,6 +2481,15 @@ export interface QuotationPricing {
     rows: TravelerPriceRow[];
     subtotal: number;
   };
+  /** Additional fixed-price line items (By Traveler only). Each amount is a
+   *  flat package charge, never multiplied by the traveler count. Included in
+   *  `packageTotal`, `subtotal` and `grandTotal` when PER_PERSON is active. */
+  customItems: {
+    rows: Array<{ id: string; label: string; amount: number }>;
+    subtotal: number;
+  };
+  /** Saved builder row order for the By Traveler breakdown (empty = default). */
+  pricingRowOrder: string[];
   allocatedAmount: number;
   remainingAmount: number;
   overallocatedAmount: number;
@@ -2359,6 +2536,10 @@ export function resolveQuotationPricing(input: {
     visaGstPercent?: unknown;
     visaVfsCharge?: unknown;
     customCharges?: unknown;
+    // Additional Price Items — fixed package charges for By Traveler pricing.
+    packageCustomItems?: unknown;
+    // Builder-only By Traveler breakdown row order (stable row ids).
+    pricingRowOrder?: unknown;
     // Adjustment pipeline — applied ONCE to the active method's subtotal.
     discountAmount?: unknown;
     taxRate?: unknown;
@@ -2396,10 +2577,10 @@ export function resolveQuotationPricing(input: {
   const perCwob = toNumber(input.version.perChildWithoutBedPrice);
   const perInfant = toNumber(input.version.perInfantPrice);
   const travelerRows: TravelerPriceRow[] = [
-    { label: 'Adults', count: pax.adults, price: perAdult },
-    { label: 'CWB', count: pax.childrenWithBed, price: perCwb },
-    { label: 'CWOB', count: pax.childrenWithoutBed, price: perCwob },
-    { label: 'Infants', count: pax.infants, price: perInfant },
+    { id: 'adults', label: 'Adults', count: pax.adults, price: perAdult },
+    { id: 'cwb', label: 'CWB', count: pax.childrenWithBed, price: perCwb },
+    { id: 'cwob', label: 'CWOB', count: pax.childrenWithoutBed, price: perCwob },
+    { id: 'infants', label: 'Infants', count: pax.infants, price: perInfant },
   ]
     .map((row) => ({ ...row, total: Math.round(row.price * row.count * 100) / 100 }))
     .filter((row) => row.count > 0 && row.price > 0);
@@ -2411,9 +2592,55 @@ export function resolveQuotationPricing(input: {
         perInfant * pax.infants) *
         100,
     ) / 100;
+  // ---- Additional Price Items (By Traveler only) ---------------------------
+  // Fixed package charges entered in the Pricing tab, added on top of the
+  // per-traveler subtotal. Never multiplied by traveler counts. Only valid
+  // positive-amount rows contribute, so a blank/invalid/negative amount can
+  // never corrupt the total. Excluded from SECTION_WISE pricing entirely.
+  const packageCustomItemsRaw = (input.version.packageCustomItems ?? []) as Array<{
+    id?: unknown;
+    label?: unknown;
+    amount?: unknown;
+  }>;
+  const customItemRows =
+    pricingMode === 'SECTION_WISE'
+      ? []
+      : packageCustomItemsRaw
+          .filter(
+            (item) =>
+              item != null &&
+              typeof item.label === 'string' &&
+              item.label.trim().length > 0 &&
+              toNumber(item.amount) > 0,
+          )
+          .slice(0, 50)
+          .map((item, index) => ({
+            id:
+              typeof item.id === 'string' && item.id.trim()
+                ? item.id.trim().slice(0, 64)
+                : `custom-${index}`,
+            label: String(item.label).trim().slice(0, 100),
+            amount: Math.round(toNumber(item.amount) * 100) / 100,
+          }));
+  const customItemsSubtotal =
+    Math.round(customItemRows.reduce((sum, row) => sum + row.amount, 0) * 100) / 100;
+  // Builder-only By Traveler breakdown row order (stable row ids).
+  const pricingRowOrder = Array.isArray(input.version.pricingRowOrder)
+    ? (input.version.pricingRowOrder as unknown[])
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim().slice(0, 64))
+        .slice(0, 80)
+    : [];
   // Legacy quotations carry only a stored final total (no per-traveler
-  // rates); the stored amount is the package total in that case.
-  const packageTotal = travelerSubtotal > 0 ? travelerSubtotal : storedFinalAmount;
+  // rates); the stored amount is the package total in that case. Fixed custom
+  // items are part of the package total whenever the quotation is
+  // traveler-priced.
+  const packageTotal =
+    travelerSubtotal > 0
+      ? Math.round((travelerSubtotal + customItemsSubtotal) * 100) / 100
+      : customItemsSubtotal > 0
+        ? customItemsSubtotal
+        : storedFinalAmount;
 
   // ---- Section-wise pricing -------------------------------------------------
   const flightFixedAmount = calculateFlightTotal(input.version.flightDetails, pax);
@@ -2571,6 +2798,8 @@ export function resolveQuotationPricing(input: {
     taxAmount,
     grandTotal,
     travelerPricing: { rows: travelerRows, subtotal: travelerSubtotal },
+    customItems: { rows: customItemRows, subtotal: customItemsSubtotal },
+    pricingRowOrder,
     allocatedAmount,
     remainingAmount,
     overallocatedAmount,
@@ -2612,8 +2841,9 @@ export function validateQuotationPricing(input: {
   // traveler package total is configured. This must be the single source of
   // truth for PER_PERSON mode — do NOT fall through to section checks.
   if (pricing.pricingMode === 'PER_PERSON') {
-    if (pricing.travelerPricing.subtotal > 0) {
-      // Real per-traveler prices exist — the package total is authoritative.
+    if (pricing.travelerPricing.subtotal > 0 || pricing.customItems.subtotal > 0) {
+      // Real per-traveler prices (or fixed additional price items) exist — the
+      // package total is authoritative.
       return issues;
     }
     issues.push({
