@@ -1,6 +1,10 @@
 import { prisma } from '../../config/prisma.js';
 import { env } from '../../config/env.js';
-import { isReservedHostname, normalizeHostname } from '../../utils/hostname.js';
+import {
+  isReservedHostname,
+  normalizeHostname,
+  platformAliasHostnames,
+} from '../../utils/hostname.js';
 
 /**
  * Additional per-request domain context attached when the request hostname
@@ -63,9 +67,10 @@ export async function resolveCustomDomain(hostname: string): Promise<CustomDomai
   return null;
 }
 
-/** First-party platform hostnames (WEB_URL/API_URL/PUBLIC_SLUG_BASE_URL), lower-cased. */
+/** First-party platform hostnames (WEB_URL/API_URL/PUBLIC_SLUG_BASE_URL plus
+ * any configured PLATFORM_ALIAS_HOSTS), lower-cased. */
 function platformHostnames(): string[] {
-  return [env.WEB_URL, env.API_URL, env.PUBLIC_SLUG_BASE_URL]
+  const fromUrls = [env.WEB_URL, env.API_URL, env.PUBLIC_SLUG_BASE_URL]
     .map((url) => {
       try {
         return new URL(url).hostname.toLowerCase();
@@ -74,6 +79,7 @@ function platformHostnames(): string[] {
       }
     })
     .filter((host): host is string => Boolean(host));
+  return [...fromUrls, ...platformAliasHostnames()];
 }
 
 /** Whether a hostname is one of the platform's own hosts (incl. dev localhost

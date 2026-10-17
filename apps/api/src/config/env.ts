@@ -55,6 +55,13 @@ const envSchema = z.object({
   // CRM app host) because slugs resolve on the marketing root domain.
   PUBLIC_SLUG_BASE_URL: z.string().url().default('https://travelagencycrm.in'),
 
+  // Additional first-party hostnames that serve the SAME app deployment as
+  // WEB_URL (comma-separated), e.g. `demo.travelagencycrm.in`. Treated exactly
+  // like the configured platform hosts: trusted by request-host and origin
+  // validation and reserved so a customer custom domain can never claim them.
+  // Invalid entries are ignored at parse time rather than failing boot.
+  PLATFORM_ALIAS_HOSTS: z.string().default(''),
+
   DATABASE_URL: z
     .string()
     .min(1, 'DATABASE_URL is required')

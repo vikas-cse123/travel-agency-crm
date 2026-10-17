@@ -260,6 +260,10 @@ export class ApiStack extends Stack {
         API_PORT: '4000',
         API_URL: 'https://app.travelagencycrm.in',
         WEB_URL: 'https://app.travelagencycrm.in',
+        // Extra first-party hostnames serving the same deployment (trusted by
+        // request-host + origin validation). `demo.travelagencycrm.in` is the
+        // platform alias for the production CRM.
+        PLATFORM_ALIAS_HOSTS: config.platformAliasHosts,
         LOG_LEVEL: 'info',
         EMAIL_PROVIDER: 'smtp',
         STORAGE_PROVIDER: 's3',

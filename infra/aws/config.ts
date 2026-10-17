@@ -9,6 +9,8 @@
 export interface DeployConfig {
   /** Public application domain (CloudFront). */
   appDomain: string;
+  /** Additional first-party hostnames serving the same app (comma separated). */
+  platformAliasHosts: string;
   /** Origin-only domain used for CloudFront -> ALB HTTPS. */
   originDomain: string;
   /** Environment label. */
@@ -115,6 +117,7 @@ const certRegion = 'us-east-1';
 
 export const config: DeployConfig = {
   appDomain: 'app.travelagencycrm.in',
+  platformAliasHosts: process.env.PLATFORM_ALIAS_HOSTS ?? 'demo.travelagencycrm.in',
   originDomain: 'origin.app.travelagencycrm.in',
   environment: 'production',
   projectPrefix: 'interscale-travel-crm-prod',

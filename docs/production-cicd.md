@@ -9,6 +9,7 @@ GitHub Actions OIDC. No permanent AWS keys are stored in GitHub.
 - API: Node/Express container in ECS Fargate (`interscale-travel-crm-prod-api`)
 - Marketing website: Nginx static container in ECS Fargate (`interscale-travel-crm-prod-marketing`)
 - Public domain: `https://app.travelagencycrm.in` (ALB, no CloudFront)
+- Public domain (alias): `https://demo.travelagencycrm.in` (same ALB/deployment; trusted via `PLATFORM_ALIAS_HOSTS`)
 - Public marketing site: `https://travelagencycrm.in` (ALB, separate service)
 - Public API base: `https://app.travelagencycrm.in/api`
 
@@ -180,3 +181,30 @@ commit SHA, so any prior commit's image remains available in ECR.
 
 - GitHub → Actions → "Deploy Production" → `…` → "Disable workflow", or
 - rename/remove `.github/workflows/deploy-production.yml`.
+
+## 19. Platform alias hostnames
+
+An **alias hostname** serves the SAME app deployment, backend, database and user
+accounts as `WEB_URL` (the app is not duplicated). Configure it with the
+comma-separated `PLATFORM_ALIAS_HOSTS` env var on the API task:
+
+```
+PLATFORM_ALIAS_HOSTS=demo.travelagencycrm.in
+```
+
+Alias hosts are trusted by request-host validation and origin/CORS validation,
+and are reserved so a customer custom domain can never claim them. No wildcard
+or arbitrary-host trust is introduced. `demo.travelagencycrm.in` is the platform
+alias for the production CRM.
+
+Adding an alias requires (all additive, no downtime):
+
+1. A TLS certificate covering the hostname, attached to the shared HTTPS
+   listener via SNI (the existing app certificate is left untouched).
+2. A Route 53 A-alias record for the hostname pointing at the existing ALB.
+3. `PLATFORM_ALIAS_HOSTS` set on the API task (plus the code that reads it).
+
+Sessions are host-only (`SameSite=Lax`, no `Domain` attribute), so users sign in
+separately on each hostname; this is intentional and is never weakened to share
+sessions across hosts. Canonical URL generation (public quotation links) stays
+on `WEB_URL`/`PUBLIC_SLUG_BASE_URL` and is unchanged by an alias.

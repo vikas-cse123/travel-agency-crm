@@ -3,9 +3,32 @@ import { env } from '../config/env.js';
 const HOST_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
+ * Additional first-party platform hostnames supplied via `PLATFORM_ALIAS_HOSTS`
+ * (comma-separated). Each aliases the SAME app deployment as WEB_URL — e.g.
+ * `demo.travelagencycrm.in` alongside `app.travelagencycrm.in` — and is
+ * therefore trusted exactly like a configured platform host. Entries are
+ * normalized and validated; anything malformed (scheme, path, port, wildcard,
+ * IP, localhost) is dropped rather than failing boot.
+ */
+export function platformAliasHostnames(): string[] {
+  return parsePlatformAliasHosts(env.PLATFORM_ALIAS_HOSTS);
+}
+
+/** Parse a comma-separated alias-host list into valid, de-duplicated hostnames. */
+export function parsePlatformAliasHosts(raw: string | undefined): string[] {
+  const hosts: string[] = [];
+  for (const part of (raw ?? '').split(',')) {
+    const normalized = normalizeHostname(part);
+    if (normalized && !hosts.includes(normalized)) hosts.push(normalized);
+  }
+  return hosts;
+}
+
+/**
  * Reserved first-party platform hostnames that a custom domain can never
  * claim. Derived from the configured WEB_URL/API_URL hosts plus the project's
- * own production platform hostname as a safety net.
+ * own production platform hostname as a safety net, plus any configured
+ * platform alias hosts.
  */
 const RESERVED_PLATFORM_HOSTS = new Set<string>();
 
@@ -22,6 +45,9 @@ function reservedPlatformHosts(): Set<string> {
     }
     // The project's own production platform domain (app.travelagencycrm.in).
     RESERVED_PLATFORM_HOSTS.add('app.travelagencycrm.in');
+    for (const alias of platformAliasHostnames()) {
+      RESERVED_PLATFORM_HOSTS.add(alias);
+    }
   }
   return RESERVED_PLATFORM_HOSTS;
 }

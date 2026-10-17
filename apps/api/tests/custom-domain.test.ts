@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { CompanyStatus, PrismaClient } from '@prisma/client';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
-import { isReservedHostname, normalizeHostname } from '../src/utils/hostname.js';
+import {
+  isReservedHostname,
+  normalizeHostname,
+  parsePlatformAliasHosts,
+} from '../src/utils/hostname.js';
 import { resolveCustomDomain } from '../src/modules/custom-domains/custom-domain.service.js';
 import { assertCustomDomainTenant } from '../src/middleware/custom-domain.js';
 import { ForbiddenError } from '../src/utils/errors.js';
@@ -76,6 +80,29 @@ describe('isReservedHostname', () => {
 
   it('does not mark a customer hostname as reserved', () => {
     expect(isReservedHostname('crm.easytour.com')).toBe(false);
+  });
+});
+
+describe('parsePlatformAliasHosts', () => {
+  it('normalizes and returns valid alias hostnames', () => {
+    expect(parsePlatformAliasHosts('demo.travelagencycrm.in')).toEqual(['demo.travelagencycrm.in']);
+    expect(parsePlatformAliasHosts(' DEMO.TravelAgencyCRM.IN ')).toEqual([
+      'demo.travelagencycrm.in',
+    ]);
+  });
+
+  it('supports a comma-separated list and drops duplicates', () => {
+    expect(
+      parsePlatformAliasHosts('demo.travelagencycrm.in, demo.travelagencycrm.in,qa.example.com'),
+    ).toEqual(['demo.travelagencycrm.in', 'qa.example.com']);
+  });
+
+  it('drops malformed entries instead of failing', () => {
+    expect(parsePlatformAliasHosts('')).toEqual([]);
+    expect(parsePlatformAliasHosts('   ')).toEqual([]);
+    expect(
+      parsePlatformAliasHosts('https://demo.travelagencycrm.in/,localhost,*.example.com,10.0.0.1'),
+    ).toEqual(['demo.travelagencycrm.in']);
   });
 });
 
