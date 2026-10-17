@@ -117,10 +117,15 @@ export function PublicQuotationContact({
                 </a>
               </p>
             )}
-            {address && (
+            {gstin?.trim() && (
               <p className={infoRow}>
-                <MapPin className={icon} aria-hidden="true" />
-                <span>{address}</span>
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 inline-flex h-4 shrink-0 items-center rounded bg-emerald-600 px-1 text-[10px] font-bold leading-none text-white"
+                >
+                  GST
+                </span>
+                <span>{gstin.trim()}</span>
               </p>
             )}
             {mapsUrl && (
@@ -132,20 +137,15 @@ export function PublicQuotationContact({
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-blue-600 hover:underline"
                 >
-                  View on Google Maps
+                  Find us on Google Maps
                   <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                 </a>
               </p>
             )}
-            {gstin?.trim() && (
+            {address && (
               <p className={infoRow}>
-                <span
-                  aria-hidden="true"
-                  className="mt-0.5 inline-flex h-4 shrink-0 items-center rounded bg-emerald-600 px-1 text-[10px] font-bold leading-none text-white"
-                >
-                  GST
-                </span>
-                <span>{gstin.trim()}</span>
+                <MapPin className={icon} aria-hidden="true" />
+                <span>{address}</span>
               </p>
             )}
           </div>

@@ -8056,7 +8056,7 @@ describe('Phase 8 quotation pages', () => {
     );
   });
 
-  it('shows a View on Google Maps row below the address when the agency sets a link', async () => {
+  it('shows a Find us on Google Maps row above the address when the agency sets a link', async () => {
     const mapsUrl = 'https://maps.google.com/?q=Alambagh,Lucknow';
     const publicData = {
       company: {
@@ -8110,15 +8110,15 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
     await screen.findByText('Custom Package for Aarav Mehta');
-    const link = screen.getByRole('link', { name: /View on Google Maps/ });
-    // Directly below the address row, styled like the other contact rows.
+    const link = screen.getByRole('link', { name: /Find us on Google Maps/ });
+    // Directly above the address row, styled like the other contact rows.
     const rows = Array.from(
       link.closest('section')!.querySelectorAll(':scope p'),
     ).map((el) => el.textContent ?? '');
     const addressIndex = rows.findIndex((text) => text.includes('1 MG Road'));
-    const mapsIndex = rows.findIndex((text) => text.includes('View on Google Maps'));
+    const mapsIndex = rows.findIndex((text) => text.includes('Find us on Google Maps'));
     expect(addressIndex).toBeGreaterThanOrEqual(0);
-    expect(mapsIndex).toBe(addressIndex + 1);
+    expect(mapsIndex).toBe(addressIndex - 1);
     expect(link).toHaveAttribute('href', mapsUrl);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link.getAttribute('rel')).toContain('noreferrer');
@@ -8139,7 +8139,7 @@ describe('Phase 8 quotation pages', () => {
       { route: '/q/public-token-value-with-at-least-32-characters' },
     );
     await screen.findByText('Custom Package for Aarav Mehta');
-    expect(screen.queryByRole('link', { name: /View on Google Maps/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Find us on Google Maps/ })).not.toBeInTheDocument();
   });
 
   it('prefills WhatsApp and Email without duplicating a lead name already in the title', async () => {
@@ -8828,7 +8828,7 @@ describe('Phase 8 quotation pages', () => {
       leadName: 'Aarav Mehta',
     };
 
-    it('shows the GST badge with the number as the last information row', () => {
+    it('shows the GST badge with the number between email and the Maps/address rows', () => {
       renderWithProviders(<PublicQuotationContact {...contactProps} />);
       // Badge carries only "GST" (never "GSTIN"); the number is dynamic.
       expect(screen.getByText('GST', { exact: true })).toBeInTheDocument();
@@ -8842,7 +8842,7 @@ describe('Phase 8 quotation pages', () => {
       expect(badge.getAttribute('class')).toContain('bg-emerald-600');
       expect(badge.getAttribute('class')).toContain('text-white');
       expect(gstRow.querySelector('svg')).toBeNull();
-      // Order: contact person, phone, email, address, then GST last —
+      // Order: contact person, phone, email, GST, Maps link, then address —
       // immediately before the Call Now / WhatsApp buttons.
       const person = screen.getByText('Aditi Rao');
       const phone = screen.getByText('+91 90000 00000');
@@ -8853,8 +8853,8 @@ describe('Phase 8 quotation pages', () => {
         Boolean(node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
       expect(following(person, phone)).toBe(true);
       expect(following(phone, email)).toBe(true);
-      expect(following(email, address)).toBe(true);
-      expect(following(address, gst)).toBe(true);
+      expect(following(email, gst)).toBe(true);
+      expect(following(gst, address)).toBe(true);
       // Phone, email, buttons unchanged.
       expect(screen.getByText('Call Now')).toBeInTheDocument();
       expect(screen.getByText('WhatsApp')).toBeInTheDocument();
@@ -8882,7 +8882,7 @@ describe('Phase 8 quotation pages', () => {
       const section = screen.getByRole('heading', { name: 'Contact Us' }).closest('section')!;
       // Google Maps row uses the lucide folded-map outline (not the address
       // pin) with the same shared emerald icon classes.
-      const mapsLink = within(section).getByRole('link', { name: /View on Google Maps/ });
+      const mapsLink = within(section).getByRole('link', { name: /Find us on Google Maps/ });
       const mapsIcon = mapsLink.closest('p')!.querySelector('svg');
       const addressRow = within(section).getByText('1 MG Road, Bengaluru').closest('p')!;
       const addressIcon = addressRow.querySelector('svg');
@@ -8902,6 +8902,29 @@ describe('Phase 8 quotation pages', () => {
       expect(glyph!.querySelector('circle')).toBeNull();
       expect(glyph!.getAttribute('fill')).toBe('currentColor');
       expect(glyph!.getAttribute('viewBox')).toBe('0 0 24 24');
+    });
+
+    it('orders the rows as name, phone, email, GST, Maps link, then address', () => {
+      renderWithProviders(
+        <PublicQuotationContact
+          {...contactProps}
+          googleMapsUrl="https://maps.google.com/?q=Lucknow"
+        />,
+      );
+      const section = screen.getByRole('heading', { name: 'Contact Us' }).closest('section')!;
+      const rows = Array.from(section.querySelectorAll(':scope p')).map(
+        (el) => el.textContent ?? '',
+      );
+      const order = [
+        'Aditi Rao',
+        '+91 90000 00000',
+        'hello@alpha.test',
+        '29ABCDE1234F1Z5',
+        'Find us on Google Maps',
+        '1 MG Road, Bengaluru',
+      ].map((text) => rows.findIndex((row) => row.includes(text)));
+      expect(order.every((index) => index >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
     });
   });
 
