@@ -17,7 +17,7 @@ import {
 import { Link } from 'react-router-dom';
 import { SETTINGS_CURRENCIES } from '@interscale/shared';
 import { cn } from '@/utils/cn';
-import { insertNormalizedPaste, ensureBlankParagraphs } from '@/utils/richTextPaste';
+import { insertNormalizedPaste, ensureBlankParagraphs, wrapOrphanListItems } from '@/utils/richTextPaste';
 
 export const fieldClass =
   'mt-1 w-full rounded-lg border border-slate-300 bg-card px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100';
@@ -235,7 +235,9 @@ export function RichTextEditor({
     // Legacy blank paragraphs (`<p></p>`, `<p><span></span></p>`, `<p>&nbsp;</p>`)
     // become a real blank line so the editor matches the read-only detail view;
     // leading/trailing clipboard junk is trimmed. Interior blanks are kept.
-    const html = ensureBlankParagraphs(richTextToDisplayHtml(next), { trimEdges: true });
+    const html = ensureBlankParagraphs(wrapOrphanListItems(richTextToDisplayHtml(next)), {
+      trimEdges: true,
+    });
     if (editor.current.innerHTML !== html) editor.current.innerHTML = html;
     lastEmitted.current = next;
   }, [value]);
@@ -638,7 +640,9 @@ export function SafeRichText({
     <div
       className="rich-text-content prose prose-sm max-w-none text-slate-700"
       dangerouslySetInnerHTML={{
-        __html: ensureBlankParagraphs(richTextToDisplayHtml(html), { trimEdges: true }),
+        __html: ensureBlankParagraphs(wrapOrphanListItems(richTextToDisplayHtml(html)), {
+          trimEdges: true,
+        }),
       }}
     />
   );
@@ -667,7 +671,7 @@ export function RichTextPreview({
         WebkitLineClamp: lines,
         WebkitBoxOrient: 'vertical',
       }}
-      dangerouslySetInnerHTML={{ __html: richTextToDisplayHtml(html) }}
+      dangerouslySetInnerHTML={{ __html: wrapOrphanListItems(richTextToDisplayHtml(html)) }}
     />
   );
 }

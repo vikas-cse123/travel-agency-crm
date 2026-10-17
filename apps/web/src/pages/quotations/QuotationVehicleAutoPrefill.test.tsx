@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import { renderWithProviders } from '@/test/utils';
@@ -21,6 +21,9 @@ const DEST = {
   singapore: { id: 'dest-singapore', name: 'Singapore', status: 'ACTIVE' },
   kashmir: { id: 'dest-kashmir', name: 'Kashmir', status: 'ACTIVE' },
   goa: { id: 'dest-goa', name: 'Goa', status: 'ACTIVE' },
+  // No master vehicle maps to Dubai, so a Dubai quotation must still offer the
+  // Singapore/Goa vehicles for MANUAL selection while auto-prefilling nothing.
+  dubai: { id: 'dest-dubai', name: 'Dubai', status: 'ACTIVE' },
   // No master vehicle maps to New Zealand, so seeded rows are left untouched
   // by auto-prefill — used to exercise card UI behavior in isolation.
   nz: { id: 'dest-nz', name: 'New Zealand', status: 'ACTIVE' },
@@ -458,5 +461,113 @@ describe('Vehicle builder card behavior', () => {
     await user.click(screen.getByRole('button', { name: 'Remove vehicle 2' }));
     expect(screen.queryByRole('heading', { name: 'Vehicle Two' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Vehicle One' })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Destination-independent picker: every ACTIVE vehicle is offered regardless of
+// the destinations it is linked to; automatic prefill stays destination-specific.
+// ---------------------------------------------------------------------------
+
+describe('Vehicle selection — any destination', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set([
+      'quotations.view',
+      'quotations.update',
+      'quotations.view_costing',
+      'master_vehicles.view',
+    ]);
+  });
+
+  it('offers every active vehicle type/model from other destinations and fills details on selection (Dubai quotation)', async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubApi(makeQuotation(['dubai'], [seededVehicleRow]));
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/quotations/:quotationId/versions/:versionId/edit" element={<QuotationBuilderPage />} />
+      </Routes>,
+      { route: '/quotations/quotation-1/versions/version-1/edit' },
+    );
+
+    await openVehicleTab(user);
+    await expandAllVehicles(user);
+
+    // The dropdown is fed by the destination-independent active lookup: a
+    // status=ACTIVE request with NO destinationId.
+    const dropdownCall = fetchMock.mock.calls.find(([url]) => {
+      const value = String(url);
+      return value.includes('/masters/vehicles') && !value.includes('destinationId=');
+    });
+    expect(String(dropdownCall?.[0])).toContain('status=ACTIVE');
+
+    // All active types are offered, though none are linked to Dubai.
+    const typeSelect = screen.getByLabelText('Vehicle 1 type');
+    const typeTexts = within(typeSelect)
+      .getAllByRole('option')
+      .map((option) => option.textContent?.trim());
+    expect(typeTexts).toEqual(expect.arrayContaining(['SUV', 'Sedan', 'Van', 'MPV', 'Compact']));
+
+    // Nothing was linked to Dubai, so nothing was auto-prefilled: only the
+    // seeded placeholder row exists.
+    expect(screen.queryByRole('heading', { name: 'Vehicle A' })).not.toBeInTheDocument();
+
+    // Selecting a Singapore vehicle's type then model fills the row.
+    await user.selectOptions(typeSelect, 'SUV');
+    const modelSelect = screen.getByLabelText('Vehicle 1 model') as HTMLSelectElement;
+    const modelTexts = within(modelSelect)
+      .getAllByRole('option')
+      .map((option) => option.textContent?.trim());
+    expect(modelTexts).toContain('Vehicle A');
+
+    await user.selectOptions(modelSelect, 'v-a');
+    expect(modelSelect.value).toBe('v-a');
+    expect(screen.getByRole('heading', { name: 'Vehicle A' })).toBeInTheDocument();
+  });
+
+  it('shows a clear empty state instead of blank dropdowns when no active vehicles exist', async () => {
+    const user = userEvent.setup();
+    const quotation = makeQuotation(['dubai'], []);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/quotations/quotation-1')) return response(quotation);
+      if (url.includes('/masters/destinations')) return response(page(Object.values(DEST)));
+      if (url.includes('/masters/vehicles')) return response(page([]));
+      if (url.includes('/users')) return response(page([]));
+      if (url.includes('/settings')) return response({ profile: { phone: '', email: '' } });
+      if (url.includes('/destination-expert')) return response([]);
+      return response(page([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/quotations/:quotationId/versions/:versionId/edit" element={<QuotationBuilderPage />} />
+      </Routes>,
+      { route: '/quotations/quotation-1/versions/version-1/edit' },
+    );
+
+    await openVehicleTab(user);
+    await user.click(await screen.findByLabelText('Include Vehicle in Quotation'));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/No active vehicles are available/i);
+    expect(screen.queryByRole('button', { name: 'Add Vehicle' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Vehicle 1 type')).not.toBeInTheDocument();
+  });
+
+  it('keeps a reopened saved vehicle visible even when it is no longer in the active list', async () => {
+    const user = userEvent.setup();
+    const saved = {
+      ...vehicleRow('99999999-9999-4999-8999-999999999999', 'Ghost Van', 1),
+      city: 'Van',
+    };
+    renderVehicleBuilder(['dubai'], [saved]);
+    await openVehicleTab(user);
+
+    await user.click(screen.getByRole('button', { name: 'Expand vehicle 1' }));
+    const modelSelect = screen.getByLabelText('Vehicle 1 model') as HTMLSelectElement;
+    expect(modelSelect.value).toBe('99999999-9999-4999-8999-999999999999');
+    expect(within(modelSelect).getByRole('option', { name: 'Ghost Van' })).toBeInTheDocument();
   });
 });

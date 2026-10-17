@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
 import { scrollToTop } from './scroll';
 
@@ -14,27 +14,41 @@ const SCROLL_THRESHOLD = 0.4;
  * above the threshold. Smooth-scrolls to the top on click. Uses the quotation
  * green theme with a soft rounded-square shape and a subtle shadow. Positioning
  * is fixed, so it never causes layout shift.
+ *
+ * The same component is portalled into the live-preview phone iframe, where the
+ * scrolling container is the frame's own document. It therefore drives the
+ * window that actually owns its DOM (`ownerDocument.defaultView`) — the frame
+ * window in the preview, the top window on the real weblink — instead of the
+ * global `window`, so it becomes visible and scrolls the right container in
+ * both places.
  */
 export function BackToTop() {
   const [visible, setVisible] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
+    const win = buttonRef.current?.ownerDocument?.defaultView ?? window;
+    const doc = win.document;
     const onScroll = () => {
-      const doc = document.documentElement;
-      const scrollable = doc.scrollHeight - doc.clientHeight;
-      const ratio = scrollable > 0 ? window.scrollY / scrollable : 0;
+      const root = doc.documentElement;
+      const scrollable = root.scrollHeight - root.clientHeight;
+      const ratio = scrollable > 0 ? win.scrollY / scrollable : 0;
       setVisible(ratio >= SCROLL_THRESHOLD);
     };
     onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    win.addEventListener('scroll', onScroll, { passive: true });
+    return () => win.removeEventListener('scroll', onScroll);
   }, []);
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       aria-label="Back to top"
-      onClick={scrollToTop}
+      onClick={() => {
+        const win = buttonRef.current?.ownerDocument?.defaultView ?? window;
+        scrollToTop(win);
+      }}
       className={[
         'fixed z-40 flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg transition-all duration-300',
         'right-4 bottom-4 sm:right-6 sm:bottom-6',

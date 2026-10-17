@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { renderWithProviders } from '@/test/utils';
 import { buildDestinationPolicyPrefill, policyValue } from './QuotationBuilderPage';
@@ -138,6 +138,25 @@ describe('Child Policy - Weblink', () => {
     ]);
   });
 
+  it('renders plain policy lines without automatic bullet points', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetch('<p>Infants under 2 travel free.</p><p>Age proof required at check-in.</p>'),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/test-token-plain-policy' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    const panel = document.getElementById('policy-panel-child');
+    expect(panel?.textContent).toContain('Infants under 2 travel free.');
+    expect(panel?.textContent).toContain('Age proof required at check-in.');
+    // The public weblink must not invent list markup for ordinary lines.
+    expect(panel?.querySelector('ul, ol, li')).toBeNull();
+  });
+
   it('hides the Child Policy section when empty', async () => {
     vi.stubGlobal('fetch', mockFetch(null));
     renderWithProviders(
@@ -183,5 +202,74 @@ describe('Child Policy - destination prefill', () => {
     const prefill = buildDestinationPolicyPrefill([destination('Singapore', null)], ['Singapore']);
     expect(prefill.childPolicy).toBeUndefined();
     expect(policyValue(null, prefill.childPolicy)).toBeNull();
+  });
+});
+
+/**
+ * Legacy/imported masters store bare `<li>` siblings with no `<ul>`/`<ol>`
+ * container. The public weblink must still render them as one real bullet list
+ * (never as orphan items the browser happens to mark), identically for every
+ * policy field, and must not invent bullets for ordinary paragraphs.
+ */
+describe('Policy lists - public weblink', () => {
+  const BARE_LIST = '<li>Night Safari admission.</li><li>Bird Paradise admission.</li>';
+  const fields = [
+    ['inclusionsHtml', 'inclusions', 'Inclusions'],
+    ['exclusionsHtml', 'exclusions', 'Exclusions'],
+    ['childPolicy', 'child', 'Child Policy'],
+    ['paymentPolicies', 'payment', 'Payment Policies'],
+    ['cancellationPolicies', 'cancellation', 'Cancellation Policies'],
+    ['bookingTerms', 'booking', 'Booking Terms'],
+  ] as const;
+
+  it('wraps orphan list items into a real list for every policy field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(null, Object.fromEntries(fields.map(([field]) => [field, BARE_LIST]))),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/test-token-policy-lists' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    // Only one accordion panel is open at a time; open each in turn.
+    for (const [, key, label] of fields) {
+      if (!document.getElementById(`policy-panel-${key}`)) {
+        fireEvent.click(screen.getByRole('button', { name: label }));
+      }
+      const panel = document.getElementById(`policy-panel-${key}`);
+      expect(panel, `${label} panel`).not.toBeNull();
+      const list = panel!.querySelector('ul');
+      expect(list, `${label} should render a real <ul>`).not.toBeNull();
+      expect(Array.from(list!.querySelectorAll('li')).map((li) => li.textContent)).toEqual([
+        'Night Safari admission.',
+        'Bird Paradise admission.',
+      ]);
+      // No orphan list item survives outside a list container.
+      expect(
+        Array.from(panel!.querySelectorAll('li')).every((li) => li.parentElement?.tagName === 'UL'),
+      ).toBe(true);
+    }
+  });
+
+  it('does not invent bullets for plain policy paragraphs', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(null, {
+        inclusionsHtml: '<p>Daily breakfast.</p><p>Airport transfers.</p>',
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/q/:token" element={<PublicQuotationPage />} />
+      </Routes>,
+      { route: '/q/test-token-plain-paragraphs' },
+    );
+    await screen.findByText('Custom Package for Aarav Mehta');
+    const panel = document.getElementById('policy-panel-inclusions');
+    expect(panel?.textContent).toContain('Daily breakfast.');
+    expect(panel?.querySelector('ul, ol, li')).toBeNull();
   });
 });

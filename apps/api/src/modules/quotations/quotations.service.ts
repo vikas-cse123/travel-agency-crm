@@ -37,6 +37,7 @@ import { prisma } from '../../config/prisma.js';
 import { env } from '../../config/env.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../utils/errors.js';
 import { generateSecureToken, hashToken } from '../../utils/crypto.js';
+import { mintStaffViewToken, verifyStaffViewToken } from './staff-view-token.js';
 import { geolocateIp, parseUserAgent } from './weblink-enrichment.js';
 import { resolvePagination } from '../../utils/pagination.js';
 import { permissionsService } from '../auth/permissions.service.js';
@@ -109,6 +110,31 @@ export function normalizeWeblinkIp(value: string | null | undefined): string {
   if (!raw) return '0.0.0.0';
   if (raw.startsWith('::ffff:')) return raw.slice(7);
   return raw;
+}
+
+/**
+ * Whether a weblink load should be classified HOME. True only when the request
+ * is a verified session of the owning company, OR it carries a valid signed
+ * staff-view signal bound to this company and quotation. Anonymous visitors,
+ * users of another company, and tampered/expired signals all resolve to
+ * EXTERNAL. Never throws.
+ */
+function isHomeWeblinkView(
+  authCompanyId: string | null | undefined,
+  staffViewToken: string | null | undefined,
+  quotation: { id: string; companyId: string },
+): boolean {
+  if (authCompanyId && authCompanyId === quotation.companyId) return true;
+  return verifyStaffViewToken(staffViewToken ?? null, {
+    companyId: quotation.companyId,
+    quotationId: quotation.id,
+  });
+}
+
+/** Append the signed staff-view signal to a public URL as `?stv=`/`&stv=`. */
+function withStaffViewToken(url: string, token: string): string {
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}stv=${encodeURIComponent(token)}`;
 }
 
 /** One aggregated visitor row in the weblink analytics response. */
@@ -4252,6 +4278,7 @@ export const quotationsService = {
     versionId: string | undefined,
     expiresAt: Date | null | undefined,
     context: RequestContext,
+    options: { staffView?: boolean } = {},
   ) {
     const quotation = await getQuotation(auth, id);
     const selected = versionId
@@ -4259,6 +4286,17 @@ export const quotationsService = {
       : (quotation.versions.find((version) => version.id === quotation.currentVersionId) ??
         quotation.versions[0]);
     if (!selected) throw new ConflictError('Quotation version not found.');
+    // A short-lived, company+quotation-bound staff-view signal, minted only when
+    // the caller explicitly asks for it (the CRM "Open/Preview Weblink" action).
+    // The ordinary `url` — what is copied/shared with customers — is never
+    // altered by it.
+    const buildStaffViewUrl = (url: string): string | null =>
+      options.staffView
+        ? withStaffViewToken(
+            url,
+            mintStaffViewToken({ userId: auth.userId, companyId: auth.companyId, quotationId: id }),
+          )
+        : null;
     // A normal Open Weblink (no explicit versionId) always targets the CURRENT
     // (latest) version. Keep publicVersionId in sync so the shared token serves
     // the latest customer-facing content, even when a token already exists.
@@ -4270,10 +4308,13 @@ export const quotationsService = {
           data: { publicVersionId: selected.id },
         });
       }
+      const url = quotation.publicSlug
+        ? `${await friendlyPublicSlugBaseUrl(auth.companyId)}/${quotation.publicSlug}`
+        : `${await preferredPublicAppBaseUrl(auth.companyId)}/q/${quotation.publicToken}`;
+      const staffViewUrl = buildStaffViewUrl(url);
       return {
-        url: quotation.publicSlug
-          ? `${await friendlyPublicSlugBaseUrl(auth.companyId)}/${quotation.publicSlug}`
-          : `${await preferredPublicAppBaseUrl(auth.companyId)}/q/${quotation.publicToken}`,
+        url,
+        ...(staffViewUrl ? { staffViewUrl } : {}),
         expiresAt: quotation.publicTokenExpiresAt,
         versionId: quotation.publicVersionId ?? selected.id,
         reused: true,
@@ -4297,10 +4338,13 @@ export const quotationsService = {
         }),
       }),
     ]);
+    const url = quotation.publicSlug
+      ? `${await friendlyPublicSlugBaseUrl(auth.companyId)}/${quotation.publicSlug}`
+      : `${await preferredPublicAppBaseUrl(auth.companyId)}/q/${token}`;
+    const staffViewUrl = buildStaffViewUrl(url);
     return {
-      url: quotation.publicSlug
-        ? `${await friendlyPublicSlugBaseUrl(auth.companyId)}/${quotation.publicSlug}`
-        : `${await preferredPublicAppBaseUrl(auth.companyId)}/q/${token}`,
+      url,
+      ...(staffViewUrl ? { staffViewUrl } : {}),
       expiresAt: expiresAt ?? quotation.validUntil,
       versionId: selected.id,
       reused: false,
@@ -4462,6 +4506,7 @@ export const quotationsService = {
       userAgent?: string | null;
       ip?: string | null;
       authCompanyId?: string | null;
+      staffViewToken?: string | null;
       customDomainCompanyId?: string | null;
     },
   ) {
@@ -4484,6 +4529,7 @@ export const quotationsService = {
       userAgent?: string | null;
       ip?: string | null;
       authCompanyId?: string | null;
+      staffViewToken?: string | null;
       customDomainCompanyId?: string | null;
     },
   ) {
@@ -4565,6 +4611,7 @@ export const quotationsService = {
       userAgent?: string | null;
       ip?: string | null;
       authCompanyId?: string | null;
+      staffViewToken?: string | null;
       customDomainCompanyId?: string | null;
     },
   ) {    // When the request arrives through an ACTIVE custom domain, the quotation
@@ -4608,20 +4655,29 @@ export const quotationsService = {
           : []),
       ]);
       // Record an aggregated weblink view for this successful public load. A
-      // same-tenant authenticated session is classified as HOME; every other
-      // valid visitor is EXTERNAL. Atomic upsert: one row per quotation+IP.
+      // same-company authenticated session (or a valid signed staff-view signal,
+      // for cross-host staff visits) is classified as HOME; every other valid
+      // visitor is EXTERNAL. Classification is promote-only: a HOME visit
+      // upgrades an existing EXTERNAL row, and an EXTERNAL visit never demotes a
+      // HOME row. Atomic upsert: one row per quotation+IP.
+      const homeView = isHomeWeblinkView(
+        options?.authCompanyId,
+        options?.staffViewToken,
+        quotation,
+      );
+      const ipAddress = normalizeWeblinkIp(options?.ip);
       await prisma.quotationWeblinkView.upsert({
         where: {
           quotationId_ipAddress: {
             quotationId: quotation.id,
-            ipAddress: normalizeWeblinkIp(options?.ip),
+            ipAddress,
           },
         },
         create: {
           companyId: quotation.companyId,
           quotationId: quotation.id,
-          ipAddress: normalizeWeblinkIp(options?.ip),
-          type: options?.authCompanyId === quotation.companyId ? 'HOME' : 'EXTERNAL',
+          ipAddress,
+          type: homeView ? 'HOME' : 'EXTERNAL',
           viewCount: 1,
           firstViewedAt: now,
           lastViewedAt: now,
@@ -4629,6 +4685,8 @@ export const quotationsService = {
         update: {
           viewCount: { increment: 1 },
           lastViewedAt: now,
+          // Promote-only: only a HOME visit may change the stored type.
+          ...(homeView ? { type: 'HOME' as const } : {}),
         },
       });
     }
@@ -4845,6 +4903,7 @@ export const quotationsService = {
       userAgent?: string | null;
       ip?: string | null;
       authCompanyId?: string | null;
+      staffViewToken?: string | null;
       customDomainCompanyId?: string | null;
     },
   ) {
@@ -4863,6 +4922,7 @@ export const quotationsService = {
       userAgent?: string | null;
       ip?: string | null;
       authCompanyId?: string | null;
+      staffViewToken?: string | null;
       customDomainCompanyId?: string | null;
     },
   ) {
@@ -4884,6 +4944,7 @@ export const quotationsService = {
       userAgent?: string | null;
       ip?: string | null;
       authCompanyId?: string | null;
+      staffViewToken?: string | null;
       customDomainCompanyId?: string | null;
     },
   ) {
@@ -4893,10 +4954,22 @@ export const quotationsService = {
     if (/bot|crawler|spider|preview|headless|health/i.test(ua)) return { ok: false };
 
     // Visitor telemetry is collected for real (external) clients only. A HOME
-    // view — a signed-in team member of the same company opening the weblink —
-    // is not profiled (and we skip the geolocation lookup for it).
-    const type = meta.authCompanyId === quotation.companyId ? 'HOME' : 'EXTERNAL';
-    if (type === 'HOME') return { ok: false, skipped: 'home' as const };
+    // view — a signed-in team member of the same company (or a valid signed
+    // staff-view signal) opening the weblink — is not profiled. It never
+    // creates a row (publicView owns that) and never demotes an existing row;
+    // it can only promote an EXTERNAL row to HOME for this quotation+IP.
+    const homeView = isHomeWeblinkView(meta.authCompanyId, meta.staffViewToken, quotation);
+    if (homeView) {
+      await prisma.quotationWeblinkView.updateMany({
+        where: {
+          quotationId: quotation.id,
+          ipAddress: normalizeWeblinkIp(meta.ip),
+        },
+        data: { type: 'HOME' },
+      });
+      return { ok: false, skipped: 'home' as const };
+    }
+    const type = 'EXTERNAL' as const;
 
     const parsed = parseUserAgent(ua);
     const geo = await geolocateIp(meta.ip);

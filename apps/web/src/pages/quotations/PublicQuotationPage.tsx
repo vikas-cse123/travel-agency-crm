@@ -80,6 +80,7 @@ import { QuotationLightbox } from './QuotationLightbox';
 import { activeScrollSpyId, prefersReducedMotion } from './scroll';
 import { serviceCardIcon, type ServiceCard } from './serviceCards';
 import { formatPublicQuotationNumber } from './quotationContact';
+import { hotelPresentationKey } from './PreviewPresentations';
 import {
   formatAddonOptionPrice,
   normalizeAddonPricingSnapshot,
@@ -1808,9 +1809,16 @@ export function PublicQuotationPage() {
   // Both render this same page; only the API endpoint differs.
   const isSlug = Boolean(slug);
   const identifier = isSlug ? slug : token;
-  const publicPath = isSlug
-    ? `/api/public/quotations/by-slug/${encodeURIComponent(slug)}`
-    : `/api/public/quotations/${encodeURIComponent(token)}`;
+  // Optional short-lived staff-view signal minted by the CRM when a signed-in
+  // employee opens the weblink from this (possibly cross-domain) public host.
+  // It only affects HOME/EXTERNAL analytics classification; customer links
+  // never carry it.
+  const staffViewToken = new URLSearchParams(window.location.search).get('stv') ?? undefined;
+  const publicPath =
+    (isSlug
+      ? `/api/public/quotations/by-slug/${encodeURIComponent(slug)}`
+      : `/api/public/quotations/${encodeURIComponent(token)}`) +
+    (staffViewToken ? `?stv=${encodeURIComponent(staffViewToken)}` : '');
   const [data, setData] = useState<PublicQuotation | null>(null);
   const [error, setError] = useState('');
   // Company logo becomes the browser-tab favicon once the quotation loads;
@@ -1915,6 +1923,9 @@ export function PublicQuotationPage() {
         utmMedium: utm('utm_medium'),
         utmCampaign: utm('utm_campaign'),
         visitorId,
+        // Forward the signed staff-view signal so the server can promote this
+        // visit to HOME. Omitted for ordinary customer links.
+        staffViewToken,
         // Omit scroll entirely when the page never needed scrolling.
         maxScrollDepth: wasScrollable ? maxScroll : undefined,
         timeOnPageSeconds: activeSeconds(),
@@ -1962,7 +1973,7 @@ export function PublicQuotationPage() {
       if (document.visibilityState === 'visible') activeMs += Date.now() - lastResume;
       send(true);
     };
-  }, [token, slug, isSlug]);
+  }, [token, slug, isSlug, staffViewToken]);
   if (error)
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
@@ -2400,43 +2411,51 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 )}
               </div>
             </div>
-            <div className="relative flex flex-col justify-center overflow-hidden rounded-2xl bg-emerald-600 bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-700 p-6 text-white shadow-lg">
-              <div className="relative">
-                <p className="text-sm font-medium uppercase tracking-wide text-white/85">
+            <div className="relative flex flex-col overflow-hidden rounded-2xl bg-emerald-600 bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-700 p-6 text-white shadow-lg">
+              <div className="relative flex flex-1 flex-col gap-4">
+                <p className="text-center text-sm font-medium uppercase tracking-wide text-white/85">
                   {pricing.pricingMode === 'SECTION_WISE'
                     ? 'Quotation Total'
                     : 'Total Package Price'}
                 </p>
-                {hasDiscount && (
-                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span
-                      data-testid="total-original-price"
-                      className="text-lg font-semibold text-white/60 line-through decoration-white/50 decoration-2"
-                    >
-                      {fmt(originalTotal)}
-                    </span>
-                    <span
-                      data-testid="total-discount-badge"
-                      className="inline-flex items-center gap-1 rounded-full bg-amber-200 px-3 py-1 text-sm font-bold text-emerald-900 shadow-sm"
-                    >
-                      <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-                      {fmt(pricing.discountAmount)} OFF
-                    </span>
-                  </div>
-                )}
-                <p
-                  data-testid="total-final-price"
-                  className="mt-1 text-4xl font-extrabold tracking-tight"
-                >
-                  {fmt(displayTotal)}
-                </p>
-                {taxNoteText && (
-                  <p className="mt-1 text-xs italic text-white/80">{taxNoteText}</p>
-                )}
+                {/* The pricing group (struck-through original price + discount
+                    badge on one row, then the final price beneath) is centred
+                    as a whole in the space between the heading and the button.
+                    Symmetric gaps keep that centring exact and the vertical
+                    rhythm consistent as the card stretches to match the profile
+                    card on wider layouts. */}
+                <div className="flex flex-1 flex-col items-center justify-center gap-1">
+                  {hasDiscount && (
+                    <div className="flex items-center gap-x-3">
+                      <span
+                        data-testid="total-original-price"
+                        className="whitespace-nowrap text-lg font-semibold text-white/60 line-through decoration-white/50 decoration-2"
+                      >
+                        {fmt(originalTotal)}
+                      </span>
+                      <span
+                        data-testid="total-discount-badge"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-200 px-3 py-1 text-sm font-bold text-emerald-900 shadow-sm"
+                      >
+                        <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+                        {fmt(pricing.discountAmount)} OFF
+                      </span>
+                    </div>
+                  )}
+                  <p
+                    data-testid="total-final-price"
+                    className="text-center text-4xl font-extrabold tracking-tight"
+                  >
+                    {fmt(displayTotal)}
+                  </p>
+                  {taxNoteText && (
+                    <p className="text-center text-xs italic text-white/80">{taxNoteText}</p>
+                  )}
+                </div>
                 {company.phone && (
                   <a
                     href={`tel:${company.phone}`}
-                    className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 font-semibold text-[#000000] shadow-sm transition-colors hover:bg-slate-50"
+                    className="flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 font-semibold text-[#000000] shadow-sm transition-colors hover:bg-slate-50"
                   >
                     <Phone className="h-4 w-4" /> Contact Now
                   </a>
@@ -2638,7 +2657,14 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 <SectionTitle>{publicHotelSectionTitle(v.hotelDetails?.sectionTitle)}</SectionTitle>
                 <div className="grid gap-5">
                   {visibleHotels.map(({ hotel, sourceIndex }, hotelIndex) => {
-                    const presentation = data.hotelPresentations?.[hotel.id];
+                    // Resolve the stay's master presentation by row id when
+                    // saved, else by master id for a not-yet-saved stay, so the
+                    // unsaved preview shows the same stars/score/address/review
+                    // link the weblink shows after saving. See `hotelPresentationKey`.
+                    const presentationKey = hotelPresentationKey(hotel);
+                    const presentation = presentationKey
+                      ? data.hotelPresentations?.[presentationKey]
+                      : undefined;
                     const perStayImages = quotationGalleryImages(hotel.images);
                     const sectionImages = quotationGalleryImages(v.hotelDetails?.images);
                     const perStaySnapshotPresent =
@@ -2661,7 +2687,10 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                       // Stable internal anchor for live-preview deep-linking
                       // (see `namedHotels` above). Never user-visible.
                       <article
-                        key={hotel.id}
+                        // Saved stays keep their persisted id (stable across
+                        // reorder); a not-yet-saved stay has none, so fall back
+                        // to its stable source position to stay unique.
+                        key={hotel.id ?? `hotel-${sourceIndex}`}
                         data-preview-item={`hotel:${sourceIndex}`}
                         className="overflow-hidden rounded-xl border bg-card shadow-sm sm:grid sm:grid-cols-[42%_1fr]"
                       >
@@ -2698,7 +2727,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                                 </div>
                               )}
                             </div>
-                            {reviewUrl && (
+                            {reviewUrl ? (
                               <a
                                 href={reviewUrl}
                                 target="_blank"
@@ -2712,7 +2741,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                                   </span>
                                 )}
                               </a>
-                            )}
+                            ) : null}
                           </div>
 
                           {presentation?.address?.trim() && (

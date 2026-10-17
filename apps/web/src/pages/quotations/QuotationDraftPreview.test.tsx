@@ -175,7 +175,7 @@ describe('draft preview weblink', () => {
     window.open = originalOpen;
   });
 
-  it('shows non-blocking draft pricing banner but does not block preview buttons', async () => {
+  it('shows no draft pricing banner but keeps preview buttons enabled', async () => {
     const fetchMock = masterFetch(draftQuotation());
     vi.stubGlobal('fetch', fetchMock);
     renderWithProviders(
@@ -185,9 +185,10 @@ describe('draft preview weblink', () => {
       { route: '/quotations/quotation-1' },
     );
     await screen.findByRole('heading', { name: /Aarav Mehta/ });
-    // New UX: newly created draft does not show the large warning immediately
+    // New UX: newly created draft does not show the large warning immediately,
+    // and the subtle "pricing not yet configured" hint was removed entirely.
     expect(screen.queryByText(/Draft pricing is incomplete/)).not.toBeInTheDocument();
-    expect(await screen.findByText(/Draft — pricing not yet configured/)).toBeInTheDocument();
+    expect(screen.queryByText(/Draft — pricing not yet configured/)).not.toBeInTheDocument();
     // Preview buttons must still be visible and enabled for draft
     expect(screen.getByRole('button', { name: /Generate PDF/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Preview Weblink/ })).toBeInTheDocument();

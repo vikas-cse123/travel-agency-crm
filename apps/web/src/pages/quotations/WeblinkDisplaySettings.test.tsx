@@ -231,7 +231,7 @@ describe('Weblink Display Settings', () => {
     renderBuilder();
     await screen.findByRole('heading', { name: 'Quotation builder' });
     await openSettings();
-    expect(screen.getByText('Weblink Display Settings')).toBeInTheDocument();
+    expect(screen.getByText('Hero & Display Settings')).toBeInTheDocument();
     expect(screen.getByLabelText('Main Heading')).toHaveValue('');
     expect(screen.getByLabelText('Main Heading')).toHaveAttribute('placeholder', 'Singapore');
     expect(screen.getByLabelText('Duration Text')).toHaveValue('');

@@ -2,14 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Copy,
-  Download,
   Pencil,
   ExternalLink,
   FileText,
   Image as ImageIcon,
-  MessageCircle,
   Plus,
-  Send,
   Sparkles,
   TicketCheck,
   Trash2,
@@ -25,7 +22,6 @@ import { Button } from '@/components/ui/Button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/Tooltip';
 import { useAuth } from '@/features/auth/AuthProvider';
 import {
-  uploadQuotationAttachment,
   useApproveStylishPage1,
   useConfirmStylishPage1,
   useGenerateQuotationPdf,
@@ -35,6 +31,7 @@ import {
   useSendQuotation,
   useStylishPage1,
   useUpdateQuotationVersion,
+  type PublicLinkPayload,
   type StylishPage1Slot,
 } from '@/features/quotations/quotations.api';
 import { apiClient } from '@/api/client';
@@ -43,21 +40,10 @@ import { quotationKeys } from '@/features/quotations/quotations.api';
 import { WeblinkVisitors } from '@/features/quotations/WeblinkVisitors';
 import { WhatsappSummaryDialog } from './WhatsappSummaryDialog';
 import { PricingMethodSelector, pricingModeLabel } from './PricingMethodSelector';
-import { resolveTravelDates } from '@/features/quotations/travel-dates';
 import { formatDateTime12Hour } from '@/utils/dateTime';
 import type {
   buildWhatsAppSummary,
 } from '@/features/quotations/whatsappSummary';
-
-/** Trigger a normal browser download for a generated document URL. */
-function downloadPdf(url: string, fileName?: string) {
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  if (fileName) anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-}
 
 const field = 'w-full rounded-lg border border-slate-300 bg-card px-3 py-2 text-sm';
 export function QuotationDetailsPage() {
@@ -86,8 +72,6 @@ export function QuotationDetailsPage() {
   const [email, setEmail] = useState('');
   const [includePdf, setIncludePdf] = useState(true);
   const [includePublicLink, setIncludePublicLink] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState('');
   const [pdfError, setPdfError] = useState('');
   const [actionError, setActionError] = useState('');
   // Visible confirmation after a successful finalize (the status flip also
@@ -147,6 +131,11 @@ export function QuotationDetailsPage() {
   // Reset whenever the current version changes so Copy/Open always target the
   // currently displayed version (never a stale link from an earlier version).
   const [publicLinkUrl, setPublicLinkUrl] = useState<string | null>(null);
+  // Staff-preview variant of the weblink: the same URL plus a short-lived
+  // signed staff-view signal, so a signed-in employee opening the link from the
+  // branded/custom domain is classified HOME rather than as a customer visit.
+  // Never used for the shared "Copy Weblink URL" value.
+  const [publicStaffViewUrl, setPublicStaffViewUrl] = useState<string | null>(null);
   const [publicLinkVersionId, setPublicLinkVersionId] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -160,19 +149,23 @@ export function QuotationDetailsPage() {
       data?.versions.find((version) => version.id === data.currentVersionId) ?? data?.versions[0];
     if (!current) {
       setPublicLinkUrl(null);
+      setPublicStaffViewUrl(null);
       setPublicLinkVersionId(null);
       return;
     }
     if (publicLinkVersionId === current.id && publicLinkUrl) return;
     setPublicLinkUrl(null);
+    setPublicStaffViewUrl(null);
     setPublicLinkVersionId(null);
     action.mutate(
-      { path: 'public-link', body: { quotationVersionId: current.id } },
+      { path: 'public-link', body: { quotationVersionId: current.id, staffView: true } },
       {
         onSuccess: (result) => {
-          const url = (result as { url?: string }).url ?? null;
+          const payload = result as PublicLinkPayload;
+          const url = payload.url ?? null;
           if (url) {
             setPublicLinkUrl(url);
+            setPublicStaffViewUrl(payload.staffViewUrl ?? null);
             setPublicLinkVersionId(current.id);
           }
         },
@@ -204,16 +197,6 @@ export function QuotationDetailsPage() {
     return <div className="rounded-xl bg-card p-12 text-center">Quotation unavailable.</div>;
   const q = query.data;
   const current = q.versions.find((version) => version.id === q.currentVersionId) ?? q.versions[0];
-  // Documents panel shows only the current version's generated PDF plus
-  // manually uploaded attachments. Generated PDFs carry their version in
-  // `quotationVersionId`, so older versions' PDFs are excluded by that
-  // reliable metadata (never by filename) while nothing is deleted from
-  // storage or the database.
-  const visibleDocuments = q.documents.filter(
-    (document) =>
-      document.documentType !== 'QUOTATION_PDF' ||
-      (current != null && document.quotationVersionId === current.id),
-  );
   const pricingIssues = (() => {
     if (!current) return [] as ReturnType<typeof validateQuotationPricing>;
     try {
@@ -228,8 +211,6 @@ export function QuotationDetailsPage() {
   // Only show the large incomplete-pricing warning after the user has tried to finalize.
   // Before that, a newly created draft with no pricing is a normal Draft.
   const isDraftIncomplete = current?.status === 'DRAFT' && hasAttemptedFinalize && pricingIssues.length > 0;
-  const showSubtleDraftHint =
-    current?.status === 'DRAFT' && !hasAttemptedFinalize && pricingIssues.length > 0;
   const money = (value: string, currency: string) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(Number(value));
   const createRevision = () => {
@@ -286,32 +267,49 @@ export function QuotationDetailsPage() {
     );
   };
   /** Provision the public weblink for the current version; stores the URL for
-   *  both Copy Weblink URL and Open Weblink. Returns the cached URL only when
-   *  it still belongs to the current version. */
-  const ensurePublicLink = (): Promise<string | null> =>
+   *  both Copy Weblink URL and Open Weblink. Returns the cached URLs only when
+   *  they still belong to the current version. `staffView` asks the server for
+   *  the signed staff-preview variant (used by Open/Preview only). */
+  const ensurePublicLink = (
+    options: { staffView?: boolean } = {},
+  ): Promise<{ url: string; staffViewUrl: string | null } | null> =>
     new Promise((resolve) => {
       if (!current) return resolve(null);
-      if (publicLinkUrl && publicLinkVersionId === current.id) return resolve(publicLinkUrl);
+      if (
+        publicLinkUrl &&
+        publicLinkVersionId === current.id &&
+        (!options.staffView || publicStaffViewUrl)
+      ) {
+        return resolve({ url: publicLinkUrl, staffViewUrl: publicStaffViewUrl });
+      }
       action.mutate(
-        { path: 'public-link', body: { quotationVersionId: current.id } },
+        {
+          path: 'public-link',
+          body: {
+            quotationVersionId: current.id,
+            ...(options.staffView ? { staffView: true } : {}),
+          },
+        },
         {
           onSuccess: (result) => {
-            const url = (result as { url?: string }).url ?? null;
+            const payload = result as PublicLinkPayload;
+            const url = payload.url ?? null;
             if (url) {
               setPublicLinkUrl(url);
+              setPublicStaffViewUrl(payload.staffViewUrl ?? null);
               setPublicLinkVersionId(current.id);
             }
-            resolve(url);
+            resolve(url ? { url, staffViewUrl: payload.staffViewUrl ?? null } : null);
           },
           onError: () => resolve(null),
         },
       );
     });
   const copyPublicLink = async () => {
-    const url = await ensurePublicLink();
-    if (!url) return;
+    const link = await ensurePublicLink();
+    if (!link) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(link.url);
       setLinkCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setLinkCopied(false), 1800);
@@ -410,19 +408,8 @@ export function QuotationDetailsPage() {
           <div className="min-w-0">
             <p className="text-sm text-slate-500">Customer quotations / {q.quotationNumber}</p>
             <h1 className="break-words text-2xl font-semibold">
-              {q.customerName} · {q.destinationSummary}
+              {q.customerName}
             </h1>
-            {/* Saved quotation title (actual version title) with its package
-                heading. Blank headings fall back to "Custom Package for [Lead]",
-                mirroring the public weblink hero. */}
-            {current && (
-              <p className="mt-1 break-words text-lg font-semibold text-slate-900">
-                {current.title}
-              </p>
-            )}
-            <p className="mt-0.5 break-words text-sm text-slate-500">
-              {current?.packageHeading?.trim() || `Custom Package for ${q.customerName.trim()}`}
-            </p>
             {current?.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) && (
               metaEditing ? (
                 <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -552,17 +539,6 @@ export function QuotationDetailsPage() {
               Create revision
             </Button>
           )}
-          {current?.status === 'FINALIZED' && hasPermission(PERMISSIONS.QUOTATIONS_SEND) && (
-            <Button
-              onClick={() => {
-                setEmail(q.customerEmail ?? '');
-                setSendOpen(true);
-              }}
-            >
-              <Send className="h-4 w-4" />
-              Send
-            </Button>
-          )}
           {hasPermission(PERMISSIONS.QUOTATIONS_DELETE) && (
             <Button
               variant="secondary"
@@ -618,19 +594,8 @@ export function QuotationDetailsPage() {
           )}
         </div>
       )}
-      {showSubtleDraftHint && (
-        <div
-          role="note"
-          aria-label="Draft pricing not yet configured"
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600"
-        >
-          <span className="h-2 w-2 rounded-full bg-amber-400" aria-hidden="true" />
-          Draft — pricing not yet configured. Preview is available.
-        </div>
-      )}
       <section className="grid gap-3 sm:grid-cols-2">
         {[
-          ['Current version', current ? `v${current.versionNumber}` : '—'],
           ['Final amount', current ? money(current.finalAmount, current.currency) : '—'],
         ].map(([label, value]) => (
           <article key={label} className="rounded-xl border bg-card p-4">
@@ -700,11 +665,11 @@ export function QuotationDetailsPage() {
             {current && (
               <a
                 className="w-full sm:w-auto"
-                href={publicLinkUrl ?? undefined}
+                href={publicStaffViewUrl ?? publicLinkUrl ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(event) => {
-                  if (publicLinkUrl) return;
+                  if (publicStaffViewUrl ?? publicLinkUrl) return;
                   event.preventDefault();
                   const win = window.open('about:blank', '_blank');
                   if (!win) return;
@@ -712,8 +677,8 @@ export function QuotationDetailsPage() {
                   win.document.title = 'Opening preview…';
                   win.document.body.innerHTML =
                     '<p style="font:16px system-ui;padding:32px">Opening preview…</p>';
-                  void ensurePublicLink().then((url) => {
-                    if (url) win.location.replace(url);
+                  void ensurePublicLink({ staffView: true }).then((link) => {
+                    if (link) win.location.replace(link.staffViewUrl ?? link.url);
                     else win.close();
                   });
                 }}
@@ -733,7 +698,14 @@ export function QuotationDetailsPage() {
                       variant="secondary"
                       onClick={() => void openWhatsappSummary()}
                     >
-                      <MessageCircle className="h-4 w-4" />
+                      <img
+                        src="/whatsapp-logo-green.png"
+                        alt=""
+                        aria-hidden="true"
+                        width={16}
+                        height={16}
+                        className="h-4 w-4 shrink-0 object-contain"
+                      />
                       WhatsApp Message
                     </Button>
                   </TooltipTrigger>
@@ -748,42 +720,6 @@ export function QuotationDetailsPage() {
             {pdfError}
           </p>
         )}
-        <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="min-w-0">
-            <dt className="text-xs text-slate-500">Contact</dt>
-            {/* A long address must wrap rather than push the card wider. */}
-            <dd className="break-words">
-              {q.customerEmail || '—'}
-              <br />
-              {q.customerPhone}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-slate-500">Travel dates</dt>
-            <dd>
-              {resolveTravelDates({
-                start: q.travelStartDate,
-                end: q.travelEndDate,
-                // Canonical trip duration from the itinerary day numbers (only
-                // meaningful when the itinerary has more than one day). A
-                // Day-1-only itinerary must not hide a real multi-night stay,
-                // so the hotel-night total is always offered as the fallback.
-                totalDays: current?.itinerary.length
-                  ? Math.max(...current.itinerary.map((day) => day.dayNumber))
-                  : undefined,
-                nights:
-                  current?.hotels.reduce((sum, hotel) => sum + (hotel.nights ?? 0), 0) || undefined,
-              }).label || '—'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-slate-500">Travellers</dt>
-            <dd>
-              {q.adults} adults · {q.childrenWithBed + q.childrenWithoutBed} children · {q.infants}{' '}
-              infants
-            </dd>
-          </div>
-        </dl>
       </section>
       {current && (
         <section aria-label="Pricing Method" className="rounded-xl border bg-card p-5">
@@ -847,103 +783,6 @@ export function QuotationDetailsPage() {
       )}
 
       <WeblinkVisitors quotationId={quotationId} />
-      <div className="grid gap-5 lg:grid-cols-3">
-        <section className="rounded-xl border bg-card p-5 lg:col-span-2">
-          <h2 className="font-semibold">Version history</h2>
-          <div className="mt-3 divide-y">
-            {q.versions.map((version) => (
-              <article
-                key={version.id}
-                className="flex flex-wrap items-center justify-between gap-3 py-3"
-              >
-                <div>
-                  <strong>Version {version.versionNumber}</strong>
-                  <p className="text-xs text-slate-500">
-                    {labelForLookup(version.status)} · {formatDateTime12Hour(version.createdAt)} ·{' '}
-                    {version.createdBy.fullName}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <span className="font-semibold">
-                    {money(version.finalAmount, version.currency)}
-                  </span>
-                  {hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => action.mutate({ path: `versions/${version.id}/duplicate` })}
-                    >
-                      <Copy className="h-4 w-4" />
-                      Duplicate
-                    </Button>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-        <section className="rounded-xl border bg-card p-5">
-          <h2 className="font-semibold">Documents</h2>
-          {hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) && (
-            <label className="mt-3 block cursor-pointer rounded-lg border border-dashed p-3 text-center text-sm text-slate-600">
-              {uploading ? 'Uploading…' : 'Add PDF or image attachment'}
-              <input
-                className="sr-only"
-                type="file"
-                accept="application/pdf,image/jpeg,image/png,image/webp"
-                disabled={uploading}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  setUploading(true);
-                  setUploadError('');
-                  void uploadQuotationAttachment(q.id, file)
-                    .then(() => query.refetch())
-                    .catch((reason: unknown) =>
-                      setUploadError(reason instanceof Error ? reason.message : 'Upload failed.'),
-                    )
-                    .finally(() => setUploading(false));
-                }}
-              />
-            </label>
-          )}
-          {uploadError && <p className="mt-2 text-xs text-red-700">{uploadError}</p>}
-          <div className="mt-3 space-y-3">
-            {visibleDocuments.length ? (
-              visibleDocuments.map((document) => (
-                <article key={document.id} className="rounded-lg bg-slate-50 p-3">
-                  <p className="truncate text-sm font-medium">{document.fileName}</p>
-                  <p className="text-xs text-slate-500">
-                    {labelForLookup(document.documentType)} ·{' '}
-                    {(document.fileSize / 1024).toFixed(1)} KB · {labelForLookup(document.status)}
-                  </p>
-                  {document.status === 'AVAILABLE' && (
-                    <Button
-                      className="mt-2"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        action.mutate(
-                          { path: `documents/${document.id}/download-url`, method: 'get' },
-                          {
-                            onSuccess: (result) =>
-                              downloadPdf((result as { url: string }).url, document.fileName),
-                          },
-                        )
-                      }
-                    >
-                      <Download className="h-4 w-4" />
-                      Download
-                    </Button>
-                  )}
-                </article>
-              ))
-            ) : (
-              <p className="text-sm text-slate-500">No generated documents.</p>
-            )}
-          </div>
-        </section>
-      </div>
       <section className="rounded-xl border bg-card p-5">
         <h2 className="font-semibold">Activity timeline</h2>
         <div className="mt-3 space-y-3">
@@ -1329,3 +1168,4 @@ export function QuotationDetailsPage() {
     </div>
   );
 }
+

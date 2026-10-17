@@ -270,7 +270,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // Vouchers (extensible group: Hotel today, Flight/Transfer/Activity later)
   // -------------------------------------------------------------------------
   {
-    label: 'Hotel',
+    label: 'Hotel Vouchers',
     to: '/hotel-vouchers',
     icon: ReceiptText,
     available: true,

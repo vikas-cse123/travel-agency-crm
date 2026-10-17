@@ -552,6 +552,20 @@ export function useCreateQuotation() {
     },
   });
 }
+/**
+ * Result of provisioning a public weblink. `url` is the customer-facing link;
+ * `staffViewUrl` (present only when the request opted in with `staffView: true`)
+ * is the same link plus a short-lived signed signal that marks the visit HOME,
+ * used for the CRM's own Open/Preview actions.
+ */
+export interface PublicLinkPayload {
+  url: string;
+  staffViewUrl?: string;
+  expiresAt?: string | null;
+  versionId?: string;
+  reused?: boolean;
+}
+
 export function useQuotationAction(id: string) {
   const client = useQueryClient();
   const refresh = () => {

@@ -4,6 +4,7 @@ import {
   buildCruisePresentations,
   buildHotelPresentations,
   buildVehiclePresentations,
+  hotelPresentationKey,
   matchDestinationMasterId,
   PREVIEW_PRESENTATIONS_REFETCH_MS,
   PREVIEW_PRESENTATIONS_STALE_MS,
@@ -105,6 +106,63 @@ describe('buildHotelPresentations (mirrors the server mapping)', () => {
     const result = buildHotelPresentations(rows, { 'hotel-m1': hotelDetail }, {});
     expect(Object.keys(result)).toEqual(['hotel-1']);
     expect(result['hotel-1']!.imageUrl).toBeNull();
+  });
+
+  it('keys a not-yet-saved stay (no row id) by its master id so it resolves before Save', () => {
+    // A stay linked to a master has `hotelId` but no persisted row id until the
+    // first Save; the master-derived fields must resolve anyway.
+    const rows = [{ hotelId: 'hotel-m1', city: 'Kuta' }];
+    const result = buildHotelPresentations(rows, { 'hotel-m1': hotelDetail }, {});
+    expect(result).toEqual({
+      'hotel-m1': {
+        imageUrl: null,
+        starCategory: 5,
+        starRating: '4.6',
+        address: 'Jalan Kartika Plaza, Kuta',
+        reviewLink: 'https://maps.google.com/?cid=anvaya',
+        checkInTime: '14:00',
+        checkOutTime: '12:00',
+        destination: 'Bali',
+        country: 'Indonesia',
+      },
+    });
+  });
+
+  it('produces identical fields for the saved (row id) and unsaved (master id) stay', () => {
+    const saved = buildHotelPresentations(
+      [{ id: 'hotel-1', hotelId: 'hotel-m1', city: 'Kuta' }],
+      { 'hotel-m1': hotelDetail },
+      {},
+    );
+    const unsaved = buildHotelPresentations(
+      [{ hotelId: 'hotel-m1', city: 'Kuta' }],
+      { 'hotel-m1': hotelDetail },
+      {},
+    );
+    expect(Object.keys(saved)).toEqual(['hotel-1']);
+    expect(Object.keys(unsaved)).toEqual(['hotel-m1']);
+    expect(Object.values(saved)[0]).toEqual(Object.values(unsaved)[0]);
+  });
+
+  it('omits a stay that references no master (nothing invented before Save)', () => {
+    const result = buildHotelPresentations([{ city: 'Ubud' }], { 'hotel-m1': hotelDetail }, {});
+    expect(result).toEqual({});
+  });
+});
+
+describe('hotelPresentationKey (shared by the preview and the renderer)', () => {
+  it('prefers the persisted row id, else the master id', () => {
+    expect(hotelPresentationKey({ id: 'hotel-1', hotelId: 'hotel-m1' })).toBe('hotel-1');
+    expect(hotelPresentationKey({ id: null, hotelId: 'hotel-m1' })).toBe('hotel-m1');
+    expect(hotelPresentationKey({ hotelId: 'hotel-m1' })).toBe('hotel-m1');
+    // Whitespace-only ids are treated as absent.
+    expect(hotelPresentationKey({ id: '   ', hotelId: 'hotel-m1' })).toBe('hotel-m1');
+  });
+
+  it('returns null when the row references nothing', () => {
+    expect(hotelPresentationKey({})).toBeNull();
+    expect(hotelPresentationKey({ id: null, hotelId: null })).toBeNull();
+    expect(hotelPresentationKey({ id: '' })).toBeNull();
   });
 });
 

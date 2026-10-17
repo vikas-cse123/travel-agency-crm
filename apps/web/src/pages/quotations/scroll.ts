@@ -22,9 +22,9 @@ export function scrollToSectionId(id: string): void {
   el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
 }
 
-/** Smoothly scroll the window back to the very top. */
-export function scrollToTop(): void {
-  window.scrollTo({
+/** Smoothly scroll the given window (defaults to the current page) back to the very top. */
+export function scrollToTop(win: Window = window): void {
+  win.scrollTo({
     top: 0,
     behavior: prefersReducedMotion() ? 'auto' : 'smooth',
   });

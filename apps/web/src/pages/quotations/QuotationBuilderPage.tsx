@@ -42,13 +42,13 @@ import {
   isPublicTaxNote,
   orderPricingRows,
   TRAVELER_PRICING_ROW_IDS,
-  validateQuotationPricing,
   DEFAULT_WEBLINK_SECTION_ORDER,
   resolveWeblinkSectionOrder,
   normalizePublicSlug,
   isReservedPublicSlug,
   WEBLINK_PROFILE_FIELD_IDS,
   WEBLINK_PROFILE_FIELD_LABELS,
+  MAX_ADD_ON_PRICING_ENTRIES,
   normalizeWeblinkProfileConfig,
   type LiveSearchBookmark,
   type QuotationCruiseRoomLine,
@@ -463,6 +463,14 @@ const WEBLINK_SECTION_LABELS: Record<string, string> = {
   policies: 'Policies',
   faqs: 'FAQs',
 };
+
+// Visa and Destination Expert are temporarily hidden in the builder UI, so they
+// are excluded from the Weblink Section Order editor. Their ids stay in the
+// shared section-order data and public/PDF renderers (existing quotations keep
+// working); the editor only hides them and preserves their saved slots.
+const HIDDEN_WEBLINK_SECTION_IDS = new Set<string>(['visa', 'destinationExpert']);
+const visibleWeblinkSectionOrder = (order: readonly string[]) =>
+  order.filter((id) => !HIDDEN_WEBLINK_SECTION_IDS.has(id));
 
 /**
  * Lead-requested services → quotation tab keys. The Lead's selected services are
@@ -2555,6 +2563,14 @@ export function QuotationBuilderPage() {
   // and mobile; a single `livePreviewPinned` boolean is the only open/close
   // state (no separate pane switch).
   const [livePreviewPinned, setLivePreviewPinned] = useState(true);
+  // Per-click navigation signal for the live preview. The preview must follow
+  // EVERY tab selection, including re-clicking the already-active tab (React
+  // bails out of a same-value `setActiveTab`, which would otherwise leave the
+  // resolved preview target — and therefore the scroll — unchanged). This
+  // counter increments on each tab click so the preview re-navigates even when
+  // the section value is identical; plain edits never touch it, so typing can
+  // never yank the reader's scroll position.
+  const [previewNavRequest, setPreviewNavRequest] = useState(0);
   const form = useForm<QuotationVersionInput>({
     resolver: async (values, context, options) => {
       // When a section is excluded, its rows must not be required. Hotel rows
@@ -4449,39 +4465,10 @@ export function QuotationBuilderPage() {
       : hasPackagePrice
         ? livePricing.grandTotal
         : estimate.final;
-  // Authoritative pricing-completeness issues (single shared validator, the
-  // same one the backend enforces at finalization).
-  const pricingIssues = validateQuotationPricing({
-    version: {
-      pricingMode: form.watch('pricingMode'),
-      finalAmount: packageTotal > 0 ? packageTotal : 0,
-      currency,
-      flightDetails: form.watch('flightDetails'),
-      hotelDetails: form.watch('hotelDetails'),
-      hotels: form.watch('hotels'),
-      sightseeingDetails: form.watch('sightseeingDetails'),
-      services: form.watch('services'),
-      includeVisa: form.watch('includeVisa'),
-      visaAmount: form.watch('visaAmount'),
-      visaServiceCharge: form.watch('visaServiceCharge'),
-      visaGstPercent: form.watch('visaGstPercent'),
-      visaVfsCharge: form.watch('visaVfsCharge'),
-      discountAmount: form.watch('discountAmount'),
-      taxRate: form.watch('taxRate'),
-      perAdultPrice: form.watch('perAdultPrice'),
-      perChildWithBedPrice: form.watch('perChildWithBedPrice'),
-      perChildWithoutBedPrice: form.watch('perChildWithoutBedPrice'),
-      perInfantPrice: form.watch('perInfantPrice'),
-      packageCustomItems: form.watch('packageCustomItems'),
-    },
-    quotation: {
-      adults: pax.adults,
-      childrenWithBed: pax.cwb,
-      childrenWithoutBed: pax.cwob,
-      infants: pax.infants,
-      currency,
-    },
-  });
+  // Authoritative pricing-completeness validation is enforced by the backend
+  // on finalization; the builder previously mirrored it in a read-only
+  // "Pricing Validation" warning box, which has been removed.
+
   const validationMessageFor = (path: string, message: string) => {
     const serviceMatch = path.match(/^services\.(\d+)\.(.+)$/);
     if (serviceMatch) {
@@ -4922,7 +4909,12 @@ export function QuotationBuilderPage() {
           .map((_, index) => index)
           .filter((index) => watchedServices?.[index]?.serviceType === 'VEHICLE_TRANSFER');
         if (!vehicleIndexes.length) {
-          services.append(newVehicleServiceRow(services.fields.length + 1));
+          // Seed a blank row only when there is something to pick. With no
+          // active vehicles the section shows its empty state instead of a
+          // blank picker (and nothing is auto-prefilled for the destination).
+          if ((vehicleMasters.data?.data ?? []).length > 0) {
+            services.append(newVehicleServiceRow(services.fields.length + 1));
+          }
         } else {
           const primaryIndex = vehicleIndexes[0]!;
           const current = watchedServices?.[primaryIndex]?.taxCategory;
@@ -5101,6 +5093,12 @@ export function QuotationBuilderPage() {
       .map((row, index) => ({ row, index }))
       .filter(({ index }) => watchedServices?.[index]?.serviceType === 'VEHICLE_TRANSFER');
     const masters = vehicleMasters.data?.data ?? [];
+    // The vehicle picker is deliberately destination-independent: every ACTIVE
+    // vehicle the tenant can see is offered, whatever destinations it is linked
+    // to (destination linkage drives the automatic prefill only, never the
+    // dropdown options). `masters` therefore holds the full active catalogue.
+    const vehiclesLoading = vehicleMasters.isPending;
+    const hasActiveVehicles = masters.length > 0;
     const primaryIndex = vehicleRows[0]?.index;
     const primary = primaryIndex !== undefined ? (watchedServices?.[primaryIndex] as unknown as QuotationVersionInput['services'][number] | undefined) : undefined;
     const isVehicleSectionWise = (form.watch('pricingMode') as string) === 'SECTION_WISE';
@@ -5141,16 +5139,30 @@ export function QuotationBuilderPage() {
                 </span>
               </div>
             )}
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => services.append(newVehicleServiceRow(services.fields.length + 1))}
+            {hasActiveVehicles && (
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => services.append(newVehicleServiceRow(services.fields.length + 1))}
+                >
+                  <Plus className="h-4 w-4" /> Add Vehicle
+                </Button>
+              </div>
+            )}
+            {!vehiclesLoading && !hasActiveVehicles && (
+              // No selectable vehicles at all: explain it instead of rendering
+              // blank pickers. Existing saved rows (if any) still render below.
+              <p
+                role="status"
+                className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-slate-500"
               >
-                <Plus className="h-4 w-4" /> Add Vehicle
-              </Button>
-            </div>
-            {vehicleRows.length === 0 && (
+                No active vehicles are available for your company yet. Add vehicles in{' '}
+                <span className="font-medium text-slate-700">Masters → Vehicles</span> to select them
+                here.
+              </p>
+            )}
+            {vehicleRows.length === 0 && hasActiveVehicles && (
               <p className="rounded-lg border border-dashed p-6 text-center text-sm text-slate-500">
                 No vehicle added yet. Add the first vehicle below.
               </p>
@@ -5181,6 +5193,15 @@ export function QuotationBuilderPage() {
                   )
                   .sort((a, b) => a.localeCompare(b));
                 const models = vehicleType ? masters.filter((m) => m.vehicleType === vehicleType) : [];
+                // A reopened row keeps its saved vehicle visible even when that
+                // master is no longer in the active list (e.g. it was
+                // deactivated), so the selection never silently blanks. Inactive
+                // masters are never added to the selectable list — only this
+                // already-saved value is echoed back.
+                const currentModelOption =
+                  vehicleId && !models.some((m) => m.id === vehicleId)
+                    ? { id: vehicleId, name: vehicleName || 'Selected vehicle' }
+                    : null;
                 return (
                   <article
                     key={row.id}
@@ -5381,6 +5402,9 @@ export function QuotationBuilderPage() {
                               className={`${field} mt-1 disabled:bg-slate-100`}
                             >
                               <option value="">Select Vehicle Model</option>
+                              {currentModelOption && (
+                                <option value={currentModelOption.id}>{currentModelOption.name}</option>
+                              )}
                               {models.map((m) => (
                                 <option key={m.id} value={m.id}>
                                   {m.name}
@@ -6767,6 +6791,21 @@ export function QuotationBuilderPage() {
         { shouldDirty: true },
       );
     };
+    // Append a brand-new quotation-owned pricing option (blank label/price) to
+    // THIS quotation only. Writing the snapshot materializes it as authoritative
+    // so the master record and every other quotation stay untouched.
+    const addPricingOption = (index: number, options: AddOnServicePricingEntry[]) => {
+      if (options.length >= MAX_ADD_ON_PRICING_ENTRIES) return;
+      const next = [
+        ...options,
+        { id: crypto.randomUUID(), label: '', price: null, currency },
+      ];
+      form.setValue(
+        `services.${index}.pricingSnapshot` as 'services.0.pricingSnapshot',
+        next as never,
+        { shouldDirty: true },
+      );
+    };
     return (
       <div className="space-y-4">
         <label className="flex items-center gap-2 text-sm font-medium">
@@ -6781,9 +6820,6 @@ export function QuotationBuilderPage() {
         </label>
         {form.watch('addOnDetails.include') !== false && (
           <>
-            <p className="text-sm text-slate-600">
-              {isAddonSectionWise ? 'Select additional services — pricing entered per service below:' : 'Select additional services to include (pricing entered centrally in Summary & Pricing):'}
-            </p>
             {masters.length === 0 ? (
               <p className="rounded-lg border px-4 py-8 text-center text-slate-500">
                 {addOnMasters.isPending
@@ -6914,6 +6950,18 @@ export function QuotationBuilderPage() {
                               </div>
                             </div>
                           )}
+                          <div className="min-w-0">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              aria-label={`Add pricing option for ${master.name}`}
+                              disabled={options.length >= MAX_ADD_ON_PRICING_ENTRIES}
+                              onClick={() => addPricingOption(index, options)}
+                            >
+                              <Plus className="h-4 w-4" /> Add Pricing Option
+                            </Button>
+                          </div>
                           {isAddonSectionWise && (
                             <div className="grid min-w-0 gap-3 sm:grid-cols-3">
                               <label className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -7269,7 +7317,10 @@ export function QuotationBuilderPage() {
                 type="button"
                 aria-label={tab.label}
                 data-active-tab={activeTab === tab.key ? 'true' : undefined}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  setPreviewNavRequest((request) => request + 1);
+                }}
                 className={cn(
                   // Transparent tabs, blue text plus a 3px rounded underline
                   // for the active tab only. The transparent bottom border
@@ -8222,29 +8273,37 @@ export function QuotationBuilderPage() {
                             {(() => {
                               const rowId = item.id ?? `custom-${index}`;
                               const position = orderablePricingRowIds.indexOf(rowId);
+                              const moveLabel = item.label?.trim() || `item ${index + 1}`;
+                              // Same shared compact button as the row's Delete
+                              // button (h-8) so both arrows match its height and
+                              // line up with the Label/Amount input row.
                               return (
                                 <>
-                                  <button
+                                  <Button
                                     type="button"
-                                    aria-label={`Move ${item.label?.trim() || `item ${index + 1}`} up`}
+                                    size="sm"
+                                    variant="secondary"
+                                    aria-label={`Move ${moveLabel} up`}
+                                    title={`Move ${moveLabel} up`}
                                     disabled={position <= 0}
                                     onClick={() => movePricingRow(rowId, -1)}
-                                    className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40"
                                   >
-                                    ↑
-                                  </button>
-                                  <button
+                                    <ArrowUp className="h-4 w-4" />
+                                  </Button>
+                                  <Button
                                     type="button"
-                                    aria-label={`Move ${item.label?.trim() || `item ${index + 1}`} down`}
+                                    size="sm"
+                                    variant="secondary"
+                                    aria-label={`Move ${moveLabel} down`}
+                                    title={`Move ${moveLabel} down`}
                                     disabled={
                                       position < 0 ||
                                       position >= orderablePricingRowIds.length - 1
                                     }
                                     onClick={() => movePricingRow(rowId, 1)}
-                                    className="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-40"
                                   >
-                                    ↓
-                                  </button>
+                                    <ArrowDown className="h-4 w-4" />
+                                  </Button>
                                 </>
                               );
                             })()}
@@ -8598,24 +8657,6 @@ export function QuotationBuilderPage() {
               </div>
             </section>
 
-            {/* Pricing completeness — same validator the backend enforces on
-                finalization. Errors block finalize/send; warnings advise. */}
-            {pricingIssues.length > 0 && (
-              <section className="rounded-xl border border-amber-300 bg-amber-50 p-5">
-                <h3 className="text-base font-semibold text-amber-800">Pricing Validation</h3>
-                <ul className="mt-2 space-y-1 text-sm text-amber-800">
-                  {pricingIssues.map((issue, index) => (
-                    <li key={index} className="flex gap-2">
-                      <span className="font-semibold uppercase">
-                        {issue.severity === 'ERROR' ? 'Error:' : 'Warning:'}
-                      </span>
-                      <span>{issue.message}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
             <section className="rounded-xl border p-5">
               <h3 className="text-lg font-semibold text-slate-800">Initial Payment Details</h3>
               <div className="mt-3 grid gap-4 md:grid-cols-2">
@@ -8904,90 +8945,93 @@ export function QuotationBuilderPage() {
         {(activeTab === 'setting' || activeTab === 'destinationExpert') && (
           <div className="space-y-4">
             {activeTab === 'setting' && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 sm:px-5">
-                <h2 className="text-base font-semibold text-slate-900">Quotation Settings</h2>
-                <p className="mt-0.5 text-sm text-slate-500">
-                  Manage the public weblink and final quotation review.
-                </p>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Quotation Settings</h2>
               </div>
             )}
 
             <div className="grid items-start gap-4">
               {activeTab === 'setting' && <div className="space-y-4">
-                {/* Weblink Settings */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <h3 className="text-sm font-semibold text-slate-900">Weblink Settings</h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Control how customers navigate the public quotation.
-                  </p>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600"
-                        checked={form.watch('showQuickNav') ?? true}
-                        disabled={weblinkSettings.isPending}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          form.setValue('showQuickNav', checked, { shouldDirty: true });
-                          if (version) {
-                            weblinkSettings.mutate({
-                              versionId: version.id,
-                              showQuickNav: checked,
-                            });
+                {/* A + B. Weblink navigation and name — one cohesive card. */}
+                <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="p-4 sm:p-5">
+                    <h3 className="text-sm font-semibold text-slate-900">Weblink Navigation</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Control how customers move around the public quotation.
+                    </p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm transition-colors hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600"
+                          checked={form.watch('showQuickNav') ?? true}
+                          disabled={weblinkSettings.isPending}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            form.setValue('showQuickNav', checked, { shouldDirty: true });
+                            if (version) {
+                              weblinkSettings.mutate({
+                                versionId: version.id,
+                                showQuickNav: checked,
+                              });
+                            }
+                          }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-medium text-slate-800">
+                            Show Quick Navigation
+                          </span>
+                          <span className="mt-0.5 block text-xs text-slate-500">
+                            Let customers jump between weblink sections.
+                          </span>
+                        </span>
+                      </label>
+                      <label
+                        className={`flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm transition-colors ${
+                          (form.watch('showQuickNav') ?? true)
+                            ? 'cursor-pointer hover:bg-slate-50'
+                            : 'cursor-not-allowed opacity-60'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600"
+                          checked={form.watch('quickNavSticky') ?? true}
+                          disabled={
+                            !(form.watch('showQuickNav') ?? true) || weblinkSettings.isPending
                           }
-                        }}
-                      />
-                      <span>
-                        <span className="block font-medium text-slate-800">
-                          Show Quick Navigation
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            form.setValue('quickNavSticky', checked, { shouldDirty: true });
+                            if (version) {
+                              weblinkSettings.mutate({
+                                versionId: version.id,
+                                quickNavSticky: checked,
+                              });
+                            }
+                          }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-medium text-slate-800">
+                            Keep navigation sticky
+                          </span>
+                          <span className="mt-0.5 block text-xs text-slate-500">
+                            Keep shortcuts visible while scrolling.
+                          </span>
                         </span>
-                        <span className="mt-0.5 block text-xs leading-4 text-slate-500">
-                          Let customers jump between weblink sections.
-                        </span>
-                      </span>
-                    </label>
-                    <label
-                      className={`flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-sm ${
-                        (form.watch('showQuickNav') ?? true) ? 'text-slate-700' : 'text-slate-400'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600"
-                        checked={form.watch('quickNavSticky') ?? true}
-                        disabled={
-                          !(form.watch('showQuickNav') ?? true) || weblinkSettings.isPending
-                        }
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          form.setValue('quickNavSticky', checked, { shouldDirty: true });
-                          if (version) {
-                            weblinkSettings.mutate({
-                              versionId: version.id,
-                              quickNavSticky: checked,
-                            });
-                          }
-                        }}
-                      />
-                      <span>
-                        <span className="block font-medium">Keep navigation sticky</span>
-                        <span className="mt-0.5 block text-xs leading-4 opacity-75">
-                          Keep shortcuts visible while scrolling.
-                        </span>
-                      </span>
-                    </label>
+                      </label>
+                    </div>
                   </div>
-                  <div className="mt-4 border-t border-slate-100 pt-4">
-                    <label htmlFor="weblink-name" className="text-sm font-semibold text-slate-800">
-                      Weblink Name
-                    </label>
+
+                  <div className="border-t border-slate-100 p-4 sm:p-5">
+                    <h3 className="text-sm font-semibold text-slate-900">Weblink Name</h3>
                     <p className="mt-0.5 text-xs text-slate-500">
                       Create a short, memorable name for the customer link.
                     </p>
-                    <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         id="weblink-name"
+                        aria-label="Weblink Name"
                         className={`${field} min-w-0 flex-1`}
                         type="text"
                         placeholder="e.g. Mohan"
@@ -9005,20 +9049,21 @@ export function QuotationBuilderPage() {
                       <Button
                         size="sm"
                         variant="secondary"
+                        className="sm:shrink-0"
                         disabled={weblinkName.isPending}
                         onClick={() => void saveWeblinkName()}
                       >
                         Save name
                       </Button>
                     </div>
-                    <div className="mt-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">
-                      <span className="font-medium text-slate-700">Friendly link:</span>{' '}
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      <span className="font-medium text-slate-700">Friendly link:</span>
                       {weblinkNamePreview ? (
                         <span className="break-all font-medium text-brand-600 underline decoration-brand-300 underline-offset-2">
                           {weblinkNamePreview}
                         </span>
                       ) : (
-                        '—'
+                        <span className="text-slate-400">—</span>
                       )}
                     </div>
                     {weblinkNameError && (
@@ -9027,16 +9072,20 @@ export function QuotationBuilderPage() {
                       </p>
                     )}
                   </div>
-                </div>
+                </section>
 
-                {/* Weblink Display Settings — per-version hero/profile overrides. */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <h3 className="text-sm font-semibold text-slate-900">Weblink Display Settings</h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Customize the customer-facing weblink hero and profile card for this
-                    version. Blank fields use the automatic values.
-                  </p>
-                  <div className="mt-4 space-y-4">
+                {/* C + D. Hero/display overrides and profile card — one card. */}
+                <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-100 p-4 sm:p-5">
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Hero &amp; Display Settings
+                    </h3>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Customize the customer-facing weblink hero and profile card for this
+                      version. Blank fields use the automatic values.
+                    </p>
+                  </div>
+                  <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
                     {(
                       [
                         {
@@ -9072,26 +9121,30 @@ export function QuotationBuilderPage() {
                       const current = (form.watch(item.path) ?? '') as string;
                       const inputId = `weblink-display-${item.path}`;
                       return (
-                        <div key={item.path}>
+                        <div
+                          key={item.path}
+                          className={
+                            item.path === 'weblinkProfileDestination' ? 'sm:col-span-2' : ''
+                          }
+                        >
                           <div className="flex items-center justify-between gap-2">
                             <label
                               htmlFor={inputId}
-                              className="text-sm font-semibold text-slate-800"
+                              className="text-sm font-medium text-slate-800"
                             >
                               {item.label}
                             </label>
-                            <Button
+                            <button
                               type="button"
-                              size="sm"
-                              variant="ghost"
                               disabled={!current.trim()}
                               aria-label={`Reset ${item.label} to default`}
                               onClick={() =>
                                 form.setValue(item.path, null, { shouldDirty: true })
                               }
+                              className="text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:cursor-not-allowed disabled:text-slate-300"
                             >
                               Reset to Default
-                            </Button>
+                            </button>
                           </div>
                           <p className="mt-0.5 text-xs text-slate-500">{item.helper}</p>
                           <input
@@ -9106,213 +9159,216 @@ export function QuotationBuilderPage() {
                                 shouldDirty: true,
                               });
                             }}
-                            className={`${field} mt-1 w-full`}
+                            className={`${field} mt-1.5 w-full`}
                           />
                         </div>
                       );
                     })}
 
-                    {/* Profile Information card rows — per-item label/value/show
-                        overrides plus the Prepared By composite. Display only;
-                        never writes back to lead/business data. */}
-                    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
-                      <p className="text-sm font-semibold text-slate-800">Profile Information</p>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Rows in the profile card. Blank label or value fields use the automatic
-                        values.
-                      </p>
-                      <div className="mt-3 space-y-3">
+                    {/* Profile Information — per-item label/value/show overrides
+                        plus the Prepared By composite. Display only; never
+                        writes back to lead/business data. */}
+                    <div className="rounded-lg border border-slate-200 sm:col-span-2">
+                      <div className="border-b border-slate-100 px-3 py-3">
+                        <p className="text-sm font-semibold text-slate-800">Profile Information</p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          Rows in the profile card. Blank label or value fields use the automatic
+                          values.
+                        </p>
+                      </div>
+                      <div className="hidden gap-3 border-b border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[56px_140px_minmax(0,1fr)_minmax(0,1fr)]">
+                        <span className="text-center">Show</span>
+                        <span>Field</span>
+                        <span>Label</span>
+                        <span>Value</span>
+                      </div>
+                      <div className="divide-y divide-slate-100">
                         {WEBLINK_PROFILE_FIELD_IDS.map((id) => {
                           const config = watchedWeblinkProfile?.[id] ?? {};
                           const labelId = `weblink-profile-label-${id}`;
                           const valueId = `weblink-profile-value-${id}`;
                           return (
-                            <div key={id} className="rounded-lg border border-slate-200 bg-white p-3">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                  {WEBLINK_PROFILE_FIELD_LABELS[id]}
-                                </span>
-                                <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
-                                  <input
-                                    type="checkbox"
-                                    checked={config.hidden !== true}
-                                    aria-label={`Show ${WEBLINK_PROFILE_FIELD_LABELS[id]}`}
-                                    onChange={(event) =>
-                                      setWeblinkProfileField(id, { hidden: !event.target.checked })
-                                    }
-                                    className="h-3.5 w-3.5 rounded border-slate-300"
-                                  />
+                            <div
+                              key={id}
+                              className="grid grid-cols-1 gap-2 px-3 py-3 md:grid-cols-[56px_140px_minmax(0,1fr)_minmax(0,1fr)] md:items-center md:gap-3"
+                            >
+                              <label className="flex cursor-pointer items-center gap-1.5 md:justify-center">
+                                <input
+                                  type="checkbox"
+                                  checked={config.hidden !== true}
+                                  aria-label={`Show ${WEBLINK_PROFILE_FIELD_LABELS[id]}`}
+                                  onChange={(event) =>
+                                    setWeblinkProfileField(id, { hidden: !event.target.checked })
+                                  }
+                                  className="h-3.5 w-3.5 rounded border-slate-300"
+                                />
+                                <span className="text-xs font-medium text-slate-600 md:hidden">
                                   Show
+                                </span>
+                              </label>
+                              <span className="text-xs font-semibold text-slate-700">
+                                {WEBLINK_PROFILE_FIELD_LABELS[id]}
+                              </span>
+                              <div>
+                                <label htmlFor={labelId} className="sr-only">
+                                  Label
                                 </label>
+                                <input
+                                  id={labelId}
+                                  type="text"
+                                  maxLength={60}
+                                  aria-label={`${WEBLINK_PROFILE_FIELD_LABELS[id]} label`}
+                                  placeholder={WEBLINK_PROFILE_FIELD_LABELS[id]}
+                                  value={config.label ?? ''}
+                                  onChange={(event) =>
+                                    setWeblinkProfileField(id, {
+                                      label:
+                                        event.target.value === '' ? null : event.target.value,
+                                    })
+                                  }
+                                  className={`${field} w-full`}
+                                />
                               </div>
-                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                                <div>
-                                  <label
-                                    htmlFor={labelId}
-                                    className="text-[11px] font-medium text-slate-500"
-                                  >
-                                    Label
-                                  </label>
-                                  <input
-                                    id={labelId}
-                                    type="text"
-                                    maxLength={60}
-                                    aria-label={`${WEBLINK_PROFILE_FIELD_LABELS[id]} label`}
-                                    placeholder={WEBLINK_PROFILE_FIELD_LABELS[id]}
-                                    value={config.label ?? ''}
-                                    onChange={(event) =>
-                                      setWeblinkProfileField(id, {
-                                        label:
-                                          event.target.value === '' ? null : event.target.value,
-                                      })
-                                    }
-                                    className={`${field} mt-1 w-full`}
-                                  />
-                                </div>
-                                <div>
-                                  <label
-                                    htmlFor={valueId}
-                                    className="text-[11px] font-medium text-slate-500"
-                                  >
-                                    Value
-                                  </label>
-                                  <input
-                                    id={valueId}
-                                    type="text"
-                                    maxLength={300}
-                                    aria-label={`${WEBLINK_PROFILE_FIELD_LABELS[id]} value`}
-                                    placeholder={
-                                      weblinkAutoProfile.items.find((row) => row.id === id)?.value ??
-                                      ''
-                                    }
-                                    value={config.value ?? ''}
-                                    onChange={(event) =>
-                                      setWeblinkProfileField(id, {
-                                        value:
-                                          event.target.value === '' ? null : event.target.value,
-                                      })
-                                    }
-                                    className={`${field} mt-1 w-full`}
-                                  />
-                                </div>
+                              <div>
+                                <label htmlFor={valueId} className="sr-only">
+                                  Value
+                                </label>
+                                <input
+                                  id={valueId}
+                                  type="text"
+                                  maxLength={300}
+                                  aria-label={`${WEBLINK_PROFILE_FIELD_LABELS[id]} value`}
+                                  placeholder={
+                                    weblinkAutoProfile.items.find((row) => row.id === id)?.value ??
+                                    ''
+                                  }
+                                  value={config.value ?? ''}
+                                  onChange={(event) =>
+                                    setWeblinkProfileField(id, {
+                                      value:
+                                        event.target.value === '' ? null : event.target.value,
+                                    })
+                                  }
+                                  className={`${field} w-full`}
+                                />
                               </div>
                             </div>
                           );
                         })}
+                      </div>
 
-                        <div className="rounded-lg border border-slate-200 bg-white p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                              Prepared By
-                            </span>
-                            <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
-                              <input
-                                type="checkbox"
-                                checked={watchedWeblinkProfile?.preparedBy?.hidden !== true}
-                                aria-label="Show Prepared By"
-                                onChange={(event) =>
-                                  setWeblinkProfilePreparedBy({ hidden: !event.target.checked })
-                                }
-                                className="h-3.5 w-3.5 rounded border-slate-300"
-                              />
-                              Show
+                      <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                            Prepared By
+                          </span>
+                          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={watchedWeblinkProfile?.preparedBy?.hidden !== true}
+                              aria-label="Show Prepared By"
+                              onChange={(event) =>
+                                setWeblinkProfilePreparedBy({ hidden: !event.target.checked })
+                              }
+                              className="h-3.5 w-3.5 rounded border-slate-300"
+                            />
+                            Show
+                          </label>
+                        </div>
+                        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label
+                              htmlFor="weblink-profile-pb-label"
+                              className="text-[11px] font-medium text-slate-500"
+                            >
+                              Label
                             </label>
+                            <input
+                              id="weblink-profile-pb-label"
+                              type="text"
+                              maxLength={60}
+                              aria-label="Prepared By label"
+                              placeholder={weblinkAutoProfile.preparedBy.label}
+                              value={watchedWeblinkProfile?.preparedBy?.label ?? ''}
+                              onChange={(event) =>
+                                setWeblinkProfilePreparedBy({
+                                  label: event.target.value === '' ? null : event.target.value,
+                                })
+                              }
+                              className={`${field} mt-1 w-full`}
+                            />
                           </div>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                            <div>
-                              <label
-                                htmlFor="weblink-profile-pb-label"
-                                className="text-[11px] font-medium text-slate-500"
-                              >
-                                Label
-                              </label>
-                              <input
-                                id="weblink-profile-pb-label"
-                                type="text"
-                                maxLength={60}
-                                aria-label="Prepared By label"
-                                placeholder={weblinkAutoProfile.preparedBy.label}
-                                value={watchedWeblinkProfile?.preparedBy?.label ?? ''}
-                                onChange={(event) =>
-                                  setWeblinkProfilePreparedBy({
-                                    label: event.target.value === '' ? null : event.target.value,
-                                  })
-                                }
-                                className={`${field} mt-1 w-full`}
-                              />
-                            </div>
-                            <div>
-                              <label
-                                htmlFor="weblink-profile-pb-name"
-                                className="text-[11px] font-medium text-slate-500"
-                              >
-                                Name
-                              </label>
-                              <input
-                                id="weblink-profile-pb-name"
-                                type="text"
-                                maxLength={120}
-                                aria-label="Prepared By name"
-                                placeholder={weblinkAutoProfile.preparedBy.name}
-                                value={watchedWeblinkProfile?.preparedBy?.name ?? ''}
-                                onChange={(event) =>
-                                  setWeblinkProfilePreparedBy({
-                                    name: event.target.value === '' ? null : event.target.value,
-                                  })
-                                }
-                                className={`${field} mt-1 w-full`}
-                              />
-                            </div>
-                            <div>
-                              <label
-                                htmlFor="weblink-profile-pb-phone"
-                                className="text-[11px] font-medium text-slate-500"
-                              >
-                                Phone
-                              </label>
-                              <input
-                                id="weblink-profile-pb-phone"
-                                type="text"
-                                maxLength={60}
-                                aria-label="Prepared By phone"
-                                placeholder={weblinkAutoProfile.preparedBy.phone}
-                                value={watchedWeblinkProfile?.preparedBy?.phone ?? ''}
-                                onChange={(event) =>
-                                  setWeblinkProfilePreparedBy({
-                                    phone: event.target.value === '' ? null : event.target.value,
-                                  })
-                                }
-                                className={`${field} mt-1 w-full`}
-                              />
-                            </div>
-                            <div>
-                              <label
-                                htmlFor="weblink-profile-pb-email"
-                                className="text-[11px] font-medium text-slate-500"
-                              >
-                                Email
-                              </label>
-                              <input
-                                id="weblink-profile-pb-email"
-                                type="text"
-                                maxLength={160}
-                                aria-label="Prepared By email"
-                                placeholder={weblinkAutoProfile.preparedBy.email}
-                                value={watchedWeblinkProfile?.preparedBy?.email ?? ''}
-                                onChange={(event) =>
-                                  setWeblinkProfilePreparedBy({
-                                    email: event.target.value === '' ? null : event.target.value,
-                                  })
-                                }
-                                className={`${field} mt-1 w-full`}
-                              />
-                            </div>
+                          <div>
+                            <label
+                              htmlFor="weblink-profile-pb-name"
+                              className="text-[11px] font-medium text-slate-500"
+                            >
+                              Name
+                            </label>
+                            <input
+                              id="weblink-profile-pb-name"
+                              type="text"
+                              maxLength={120}
+                              aria-label="Prepared By name"
+                              placeholder={weblinkAutoProfile.preparedBy.name}
+                              value={watchedWeblinkProfile?.preparedBy?.name ?? ''}
+                              onChange={(event) =>
+                                setWeblinkProfilePreparedBy({
+                                  name: event.target.value === '' ? null : event.target.value,
+                                })
+                              }
+                              className={`${field} mt-1 w-full`}
+                            />
+                          </div>
+                          <div>
+                            <label
+                              htmlFor="weblink-profile-pb-phone"
+                              className="text-[11px] font-medium text-slate-500"
+                            >
+                              Phone
+                            </label>
+                            <input
+                              id="weblink-profile-pb-phone"
+                              type="text"
+                              maxLength={60}
+                              aria-label="Prepared By phone"
+                              placeholder={weblinkAutoProfile.preparedBy.phone}
+                              value={watchedWeblinkProfile?.preparedBy?.phone ?? ''}
+                              onChange={(event) =>
+                                setWeblinkProfilePreparedBy({
+                                  phone: event.target.value === '' ? null : event.target.value,
+                                })
+                              }
+                              className={`${field} mt-1 w-full`}
+                            />
+                          </div>
+                          <div>
+                            <label
+                              htmlFor="weblink-profile-pb-email"
+                              className="text-[11px] font-medium text-slate-500"
+                            >
+                              Email
+                            </label>
+                            <input
+                              id="weblink-profile-pb-email"
+                              type="text"
+                              maxLength={160}
+                              aria-label="Prepared By email"
+                              placeholder={weblinkAutoProfile.preparedBy.email}
+                              value={watchedWeblinkProfile?.preparedBy?.email ?? ''}
+                              onChange={(event) =>
+                                setWeblinkProfilePreparedBy({
+                                  email: event.target.value === '' ? null : event.target.value,
+                                })
+                              }
+                              className={`${field} mt-1 w-full`}
+                            />
                           </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                </section>
 
                 {/* Section Order — collapsible accordion (collapsed by default). */}
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -9328,10 +9384,12 @@ export function QuotationBuilderPage() {
                         Weblink Section Order
                         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
                           {
-                            resolveWeblinkSectionOrder(
-                              form.watch('weblinkSectionOrder')?.length
-                                ? form.watch('weblinkSectionOrder')
-                                : DEFAULT_WEBLINK_SECTION_ORDER,
+                            visibleWeblinkSectionOrder(
+                              resolveWeblinkSectionOrder(
+                                form.watch('weblinkSectionOrder')?.length
+                                  ? form.watch('weblinkSectionOrder')
+                                  : DEFAULT_WEBLINK_SECTION_ORDER,
+                              ),
                             ).length
                           }{' '}
                           sections
@@ -9354,14 +9412,20 @@ export function QuotationBuilderPage() {
                           const order = resolveWeblinkSectionOrder(
                             saved?.length ? saved : DEFAULT_WEBLINK_SECTION_ORDER,
                           );
+                          const visibleOrder = visibleWeblinkSectionOrder(order);
                           const move = (index: number, dir: -1 | 1) => {
-                            const next = [...order];
                             const target = index + dir;
-                            if (target < 0 || target >= next.length) return;
-                            [next[index], next[target]] = [next[target]!, next[index]!];
+                            if (target < 0 || target >= visibleOrder.length) return;
+                            const from = visibleOrder[index]!;
+                            const to = visibleOrder[target]!;
+                            const next = [...order];
+                            const fromIndex = next.indexOf(from);
+                            const toIndex = next.indexOf(to);
+                            if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+                            [next[fromIndex], next[toIndex]] = [next[toIndex]!, next[fromIndex]!];
                             form.setValue('weblinkSectionOrder', next, { shouldDirty: true });
                           };
-                          return order.map((sectionId, index) => (
+                          return visibleOrder.map((sectionId, index) => (
                             <div
                               key={sectionId}
                               className="flex items-center justify-between gap-3 py-2"
@@ -9389,7 +9453,7 @@ export function QuotationBuilderPage() {
                                   type="button"
                                   size="sm"
                                   variant="secondary"
-                                  disabled={index === order.length - 1}
+                                  disabled={index === visibleOrder.length - 1}
                                   aria-label={`Move ${sectionId} down`}
                                   onClick={() => move(index, 1)}
                                 >
@@ -9809,6 +9873,7 @@ export function QuotationBuilderPage() {
             expertUsers={expertUsersQuery.data?.data ?? []}
             activeSection={previewSectionForBuilderTab(activeTab)}
             activeItems={previewTargetItems}
+            navigationKey={previewNavRequest}
           />
         </aside>
       )}

@@ -448,11 +448,11 @@ describe('Phase 16 dashboard page', () => {
     }
   });
 
-  it('explains that upcoming travel ignores the dashboard period', async () => {
+  it('does not render helper copy about the dashboard period for upcoming travel', async () => {
     stub(analytics(), operations());
     renderDashboard();
     await screen.findByText('Total Leads');
-    expect(screen.getByText(/regardless of the selected period/i)).toBeInTheDocument();
+    expect(screen.queryByText(/regardless of the selected period/i)).not.toBeInTheDocument();
   });
 
   it('hides the Net Profit card when its value is zero', async () => {

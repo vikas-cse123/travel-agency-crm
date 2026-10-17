@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ensureBlankParagraphs, normalizePastedHtml } from './richTextPaste';
+import { ensureBlankParagraphs, normalizePastedHtml, wrapOrphanListItems } from './richTextPaste';
 
 /**
  * Regression coverage for Google Docs → shared editor paste normalization.
@@ -679,5 +679,63 @@ describe('ensureBlankParagraphs — detail/weblink rendering', () => {
     expect(root.querySelectorAll('ul > li')).toHaveLength(1);
     expect(root.querySelectorAll('ol > li')).toHaveLength(1);
     expect(root.querySelectorAll('p')[1]?.querySelector('br')).not.toBeNull();
+  });
+});
+
+/**
+ * Regression: legacy/imported policy rich text can store bare `<li>` siblings
+ * with no `<ul>`/`<ol>` container. Without a container the items get no list
+ * padding, so their `outside` markers are clipped by the editors'
+ * `overflow-hidden` wrapper (plain lines in the builder) while the public
+ * weblink still paints the default disc — the reported mismatch. Re-wrapping
+ * the orphans restores one real bullet list everywhere.
+ */
+describe('wrapOrphanListItems — malformed bare list items', () => {
+  it('wraps a run of bare <li> siblings into a single <ul>', () => {
+    const root = parse(wrapOrphanListItems('<li>One</li><li>Two</li><li>Three</li>'));
+    const lists = root.querySelectorAll('ul');
+    expect(lists).toHaveLength(1);
+    expect(Array.from(lists[0]!.querySelectorAll('li')).map((li) => li.textContent)).toEqual([
+      'One',
+      'Two',
+      'Three',
+    ]);
+    // No list item is left without a real list container.
+    expect(root.querySelectorAll(':scope > li')).toHaveLength(0);
+  });
+
+  it('leaves genuine <ul>/<ol> lists exactly as authored', () => {
+    const root = parse(
+      wrapOrphanListItems('<ul><li>A</li><li>B</li></ul><ol><li>1</li><li>2</li></ol>'),
+    );
+    expect(root.querySelectorAll('ul')).toHaveLength(1);
+    expect(root.querySelectorAll('ol')).toHaveLength(1);
+    expect(root.querySelectorAll('ul > li')).toHaveLength(2);
+    expect(root.querySelectorAll('ol > li')).toHaveLength(2);
+  });
+
+  it('never invents a list for ordinary paragraphs', () => {
+    const out = wrapOrphanListItems('<p>First</p><p>Second</p>');
+    expect(out).toBe('<p>First</p><p>Second</p>');
+    const root = parse(out);
+    expect(root.querySelector('ul, ol, li')).toBeNull();
+  });
+
+  it('wraps only the orphan items in a mixed document', () => {
+    const root = parse(
+      wrapOrphanListItems('<p>Intro</p><li>Item A</li><li>Item B</li><p>Outro</p>'),
+    );
+    expect(Array.from(root.querySelectorAll('p')).map((p) => p.textContent)).toEqual([
+      'Intro',
+      'Outro',
+    ]);
+    expect(root.querySelectorAll('ul > li')).toHaveLength(2);
+    // The generated <ul> sits between the paragraphs, not around them.
+    expect(root.querySelector('ul')?.nextElementSibling?.textContent).toBe('Outro');
+  });
+
+  it('is a no-op when there is no list markup', () => {
+    expect(wrapOrphanListItems('')).toBe('');
+    expect(wrapOrphanListItems('Just plain text')).toBe('Just plain text');
   });
 });

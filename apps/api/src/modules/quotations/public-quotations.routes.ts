@@ -23,6 +23,7 @@ router.get(
         userAgent: req.get('user-agent') ?? null,
         ip: req.ip ?? null,
         authCompanyId: req.auth?.companyId ?? null,
+        staffViewToken: typeof req.query.stv === 'string' ? req.query.stv : null,
         customDomainCompanyId: req.customDomain?.companyId ?? null,
       }),
     ),
@@ -52,6 +53,7 @@ router.post(
       userAgent: req.get('user-agent') ?? null,
       ip: req.ip ?? null,
       authCompanyId: req.auth?.companyId ?? null,
+      staffViewToken: req.body.staffViewToken ?? null,
       customDomainCompanyId: req.customDomain?.companyId ?? null,
     });
     sendSuccess(res, { ok: true });
@@ -90,6 +92,7 @@ router.get(
         userAgent: req.get('user-agent') ?? null,
         ip: req.ip ?? null,
         authCompanyId: req.auth?.companyId ?? null,
+        staffViewToken: typeof req.query.stv === 'string' ? req.query.stv : null,
         customDomainCompanyId: req.customDomain?.companyId ?? null,
       }),
     ),
@@ -119,6 +122,7 @@ router.post(
       userAgent: req.get('user-agent') ?? null,
       ip: req.ip ?? null,
       authCompanyId: req.auth?.companyId ?? null,
+      staffViewToken: req.body.staffViewToken ?? null,
       customDomainCompanyId: req.customDomain?.companyId ?? null,
     });
     sendSuccess(res, { ok: true });

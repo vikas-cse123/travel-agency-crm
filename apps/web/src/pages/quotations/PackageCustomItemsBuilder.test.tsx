@@ -259,6 +259,38 @@ describe('By Traveler — Additional Price Items', () => {
     expect(totalInput().value).toContain('2,10,440');
   });
 
+  it('sizes the Up/Down arrows like the row buttons and keeps reorder + boundary states', async () => {
+    vi.stubGlobal('fetch', masterFetch(quotationDetail('PER_PERSON')));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await openPricingTab();
+
+    await userEvent.click(addItem());
+    await userEvent.type(labelInput(1), 'Flights');
+    await userEvent.type(amountInput(1), '5000');
+    await userEvent.click(addItem());
+    await userEvent.type(labelInput(2), 'Visa');
+    await userEvent.type(amountInput(2), '3000');
+
+    const up = screen.getByRole('button', { name: 'Move Flights up' });
+    const down = screen.getByRole('button', { name: 'Move Flights down' });
+    // Both arrows use the same compact button dimensions as the row's Delete
+    // button, so they are equal in size and line up with the input row.
+    expect(up.tagName).toBe('BUTTON');
+    expect(up.className).toBe(down.className);
+    expect(up.className).toContain('h-8');
+
+    // Boundary disabled state: the trailing item cannot move further down.
+    expect(screen.getByRole('button', { name: 'Move Visa down' })).toBeDisabled();
+    expect(down).toBeEnabled();
+
+    // Reordering still moves the item one position — the enabled boundary
+    // states follow the new order.
+    await userEvent.click(down);
+    expect(screen.getByRole('button', { name: 'Move Flights down' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Visa down' })).toBeEnabled();
+  });
+
   it('hides the Additional Price Items section for By Section pricing', async () => {
     // Pricing mode is stored on the version (set on the Quotation Details page).
     const fetchMock = masterFetch(quotationDetail('SECTION_WISE'));

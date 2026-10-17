@@ -934,6 +934,52 @@ export function decodeHtmlEntities(value: string): string {
   return cur;
 }
 
+/**
+ * Wrap runs of orphan list items in a `<ul>`.
+ *
+ * Legacy and imported rich text (Excel imports, Google-Docs-style pastes made
+ * before the normalizer existed) can store bare `<li>` siblings with no
+ * `ul`/`ol` container. A `<li>` that is not inside a list gets no list padding,
+ * so with `list-style-position: outside` its marker is painted to the left of
+ * the content box and clipped by any `overflow-hidden` ancestor — the CRM
+ * editors' rounded wrappers — while the public weblink, which does not clip,
+ * still paints the browser's default disc. Re-wrapping the items produces one
+ * real bullet list that renders identically everywhere.
+ *
+ * Only orphan `<li>` elements are touched: genuine `<ul>`/`<ol>` lists are
+ * preserved as authored, and ordinary paragraphs/plain text never acquire a
+ * marker (no bullet is ever invented).
+ */
+export function wrapOrphanListItems(html: string): string {
+  if (!html || typeof DOMParser === 'undefined' || !/<li[\s/>]/i.test(html)) return html;
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const { body } = parsed;
+  const wrapIn = (container: Element) => {
+    let list: Element | null = null;
+    for (const node of Array.from(container.childNodes)) {
+      if (node.nodeType === 1) {
+        const el = node as Element;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'li') {
+          if (!list) {
+            list = parsed.createElement('ul');
+            container.insertBefore(list, el);
+          }
+          list.appendChild(el);
+          continue;
+        }
+        list = null;
+        // A real list keeps its items; anything else may still hold orphan items.
+        if (tag !== 'ul' && tag !== 'ol') wrapIn(el);
+        continue;
+      }
+      if (node.nodeType === 3 && (node.nodeValue ?? '').trim()) list = null;
+    }
+  };
+  wrapIn(body);
+  return body.innerHTML;
+}
+
 export function ensureBlankParagraphs(
   html: string,
   { trimEdges = false }: BlankParagraphOptions = {},

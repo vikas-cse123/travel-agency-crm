@@ -192,9 +192,32 @@ interface ServiceRowLike {
 }
 
 /**
- * Build hotel presentations keyed by quotation hotel ROW id (the renderer
- * looks them up per stay), mirroring the server mapping. Only rows linked to
- * a resolved master detail produce an entry; anything else falls back to the
+ * Stable lookup key for a hotel stay's resolved master presentation.
+ *
+ * The persisted row id is authoritative (real public weblink and the saved
+ * builder version both carry it, and the server keys its map by it). A stay
+ * that was just linked to a master, however, has no row id until the first
+ * Save — only the referenced `hotelId`. Falling back to the master id lets the
+ * Live Weblink Preview resolve the same master-derived display fields
+ * (stars, score, address, review link) before saving, instead of only after a
+ * save + reopen. The renderer (`PublicQuotationView`) computes the key with
+ * this exact helper so both sides always agree. Returns null when the row has
+ * no usable reference.
+ */
+export function hotelPresentationKey(row: {
+  id?: string | null | undefined;
+  hotelId?: string | null | undefined;
+}): string | null {
+  const rowId = (row.id ?? '').trim();
+  if (rowId) return rowId;
+  const masterId = (row.hotelId ?? '').trim();
+  return masterId || null;
+}
+
+/**
+ * Build hotel presentations keyed by `hotelPresentationKey` (the renderer looks
+ * them up per stay), mirroring the server mapping. Only rows linked to a
+ * resolved master detail produce an entry; anything else falls back to the
  * row's own snapshot data exactly like the real weblink. Pure, exported for
  * focused tests.
  */
@@ -205,12 +228,13 @@ export function buildHotelPresentations(
 ): PreviewPresentations['hotelPresentations'] {
   const presentations: PreviewPresentations['hotelPresentations'] = {};
   for (const row of rows) {
-    const rowId = row.id;
     const hotelId = row.hotelId;
-    if (!rowId || !hotelId) continue;
+    if (!hotelId) continue;
     const detail = detailsById[hotelId];
     if (!detail) continue;
-    presentations[rowId] = {
+    const key = hotelPresentationKey(row);
+    if (!key) continue;
+    presentations[key] = {
       imageUrl: imageUrlsById[hotelId] ?? null,
       starCategory: detail.starCategory ?? null,
       starRating: detail.starRating != null ? String(detail.starRating) : null,

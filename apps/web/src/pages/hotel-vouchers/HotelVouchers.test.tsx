@@ -120,8 +120,8 @@ describe('Hotel Voucher pages (standalone)', () => {
     auth.permissions = new Set(ALL);
   });
 
-  it('adds a Vouchers-section Hotel nav item gated by its own permission', () => {
-    const item = NAV_ITEMS.find((entry) => entry.label === 'Hotel');
+  it('adds a Vouchers-section Hotel Vouchers nav item gated by its own permission', () => {
+    const item = NAV_ITEMS.find((entry) => entry.label === 'Hotel Vouchers');
     expect(item).toMatchObject({
       to: '/hotel-vouchers',
       permission: 'hotel_vouchers.view',
@@ -131,7 +131,6 @@ describe('Hotel Voucher pages (standalone)', () => {
     const salesLabels = NAV_ITEMS.filter((entry) => entry.section === 'SALES').map(
       (entry) => entry.label,
     );
-    expect(salesLabels).not.toContain('Hotel');
     expect(salesLabels).not.toContain('Hotel Vouchers');
   });
 

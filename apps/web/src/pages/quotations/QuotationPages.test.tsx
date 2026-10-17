@@ -589,7 +589,7 @@ describe('Phase 8 quotation pages', () => {
     expect(headerText).not.toContain('Lead / customer');
   });
 
-  describe('Documents panel version filtering', () => {
+  describe('Simplified detail page sections', () => {
     const multiVersionDetail = {
       ...copyQuotationDetail,
       currentVersionId: 'version-2',
@@ -598,17 +598,6 @@ describe('Phase 8 quotation pages', () => {
         { ...copyFinalizedVersion, id: 'version-2', versionNumber: 2 },
       ],
       documents: [
-        {
-          id: 'document-v1',
-          quotationVersionId: 'version-1',
-          fileName: 'QT-2026-000001-v1.pdf',
-          mimeType: 'application/pdf',
-          fileSize: 4096,
-          checksum: 'aaa',
-          documentType: 'QUOTATION_PDF',
-          status: 'AVAILABLE',
-          createdAt: '2026-07-21T00:00:00.000Z',
-        },
         {
           id: 'document-v2',
           quotationVersionId: 'version-2',
@@ -649,73 +638,39 @@ describe('Phase 8 quotation pages', () => {
       );
     };
 
-    it('shows the current version PDF and attachments but hides older version PDFs', async () => {
+    it('removes the Current version card but keeps the Final amount', async () => {
       renderDetail(multiVersionDetail);
-      await screen.findByText('Documents');
-      expect(screen.getByText('QT-2026-000001-v2.pdf')).toBeInTheDocument();
-      expect(screen.getByText('passport-scan.png')).toBeInTheDocument();
-      expect(screen.queryByText('QT-2026-000001-v1.pdf')).not.toBeInTheDocument();
+      await screen.findByText('Activity timeline');
+      expect(screen.queryByText('Current version')).not.toBeInTheDocument();
+      expect(screen.getByText('Final amount')).toBeInTheDocument();
     });
 
-    it('shows no older PDF as fallback when the current version has no PDF', async () => {
-      renderDetail({
-        ...multiVersionDetail,
-        documents: multiVersionDetail.documents.filter((doc) => doc.id !== 'document-v2'),
-      });
-      await screen.findByText('Documents');
-      expect(screen.queryByText('QT-2026-000001-v1.pdf')).not.toBeInTheDocument();
+    it('removes the Version history and Documents sections', async () => {
+      renderDetail(multiVersionDetail);
+      await screen.findByText('Activity timeline');
+      expect(screen.queryByText('Version history')).not.toBeInTheDocument();
+      expect(screen.queryByText('Documents')).not.toBeInTheDocument();
+      expect(screen.queryByText('Add PDF or image attachment')).not.toBeInTheDocument();
       expect(screen.queryByText('QT-2026-000001-v2.pdf')).not.toBeInTheDocument();
-      // Attachments remain visible.
-      expect(screen.getByText('passport-scan.png')).toBeInTheDocument();
+      expect(screen.queryByText('passport-scan.png')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Duplicate' })).not.toBeInTheDocument();
     });
 
-    it('keeps supporting attachments downloadable', async () => {
-      const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
-        const url = String(input);
-        if (url.includes('/download-url')) return response({ url: 'http://localhost:5173/docs/x' });
-        if (!options || options.method === 'GET') return response(multiVersionDetail);
-        return response({});
-      });
-      vi.stubGlobal('fetch', fetchMock);
-      renderWithProviders(
-        <Routes>
-          <Route path="/quotations/:quotationId" element={<QuotationDetailsPage />} />
-        </Routes>,
-        { route: '/quotations/quotation-1' },
-      );
-      await screen.findByText('passport-scan.png');
-      const article = screen.getByText('passport-scan.png').closest('article')!;
-      await userEvent.click(within(article).getByRole('button', { name: 'Download' }));
-      await waitFor(() =>
-        expect(
-          fetchMock.mock.calls.some(([url]) =>
-            String(url).includes('/documents/document-photo/download-url'),
-          ),
-        ).toBe(true),
-      );
+    it('removes the Contact, Travel dates and Travellers rows', async () => {
+      renderDetail({ ...multiVersionDetail, travelStartDate: '2026-09-02', travelEndDate: null });
+      await screen.findByText('Activity timeline');
+      expect(screen.queryByText('Contact')).not.toBeInTheDocument();
+      expect(screen.queryByText('Travel dates')).not.toBeInTheDocument();
+      expect(screen.queryByText('Travellers')).not.toBeInTheDocument();
+      expect(screen.queryByText('aarav@example.test')).not.toBeInTheDocument();
+      expect(screen.queryByText('+91 90000 00000')).not.toBeInTheDocument();
     });
 
-    it('leaves Version History and Duplicate actions unaffected', async () => {
+    it('removes the FINALIZED Send button but keeps Create revision', async () => {
       renderDetail(multiVersionDetail);
-      await screen.findByText('Version 1');
-      expect(screen.getByText('Version 2')).toBeInTheDocument();
-      expect(screen.getAllByRole('button', { name: 'Duplicate' })).toHaveLength(2);
-    });
-
-    it('keeps the attachment upload control working', async () => {
-      renderDetail(multiVersionDetail);
-      await screen.findByText('Add PDF or image attachment');
-      expect(screen.getByText('QT-2026-000001-v2.pdf')).toBeInTheDocument();
-    });
-
-    it('does not render the Email history section', async () => {
-      renderDetail(multiVersionDetail);
-      await screen.findByText('Documents');
-      expect(screen.queryByText('Email history')).not.toBeInTheDocument();
-      expect(screen.queryByText('No emails sent yet.')).not.toBeInTheDocument();
-      // Neighboring sections remain intact.
-      expect(screen.getByText('Activity timeline')).toBeInTheDocument();
-      expect(screen.getByText('QT-2026-000001-v2.pdf')).toBeInTheDocument();
+      await screen.findByText('Activity timeline');
+      expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create revision' })).toBeInTheDocument();
     });
   });
 
@@ -1021,7 +976,11 @@ describe('Phase 8 quotation pages', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.getByRole('heading', { name: 'Quotation Settings' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Weblink Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Weblink Navigation' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Weblink Name' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Hero & Display Settings' }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Destination Expert' })).not.toBeInTheDocument();
     expect(screen.getAllByText('Quotation Summary')).toHaveLength(1);
     expect(screen.getByLabelText('Settings actions')).toHaveClass('sm:flex-row');
@@ -1034,7 +993,7 @@ describe('Phase 8 quotation pages', () => {
     expect(screen.queryByRole('heading', { name: 'Quotation Settings' })).not.toBeInTheDocument();
   });
 
-  it('shows version history and runs revision, PDF, public-link and send actions', async () => {
+  it('runs revision, PDF and public-link actions from the detail page', async () => {
     const finalizedVersion = {
       id: 'version-1',
       versionNumber: 1,
@@ -1144,8 +1103,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    expect(await screen.findByText('Version 1')).toBeInTheDocument();
-    expect(screen.getByText('QT-2026-000001-v1.pdf')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Aarav Mehta/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await userEvent.click(screen.getByRole('button', { name: /Classic PDF/ }));
     await waitFor(() =>
@@ -1164,13 +1122,6 @@ describe('Phase 8 quotation pages', () => {
     expect(
       screen.queryByText(/departure sightseeing activity is not configured/i),
     ).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByLabelText('Recipient email')).toHaveValue('aarav@example.test');
-    await userEvent.click(screen.getByRole('button', { name: 'Send quotation' }));
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/send'))).toBe(true),
-    );
   });
 
   it('surfaces a clear error when creating a revision fails instead of failing silently', async () => {
@@ -1201,7 +1152,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    expect(await screen.findByText('Version 1')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Aarav Mehta/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Create revision' }));
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(/could not be found/i);
@@ -1230,7 +1181,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    expect(await screen.findByText('Version 1')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Aarav Mehta/ })).toBeInTheDocument();
     const button = screen.getByRole('button', { name: 'Create revision' });
     await userEvent.click(button);
     expect(button).toBeDisabled();
@@ -1243,7 +1194,7 @@ describe('Phase 8 quotation pages', () => {
     resolveVersions(response({ id: 'version-2', versionNumber: 2 }));
   });
 
-  it('shows inclusive travel dates and no lifecycle status on the detail page', async () => {
+  it('removes the travel dates row and keeps no lifecycle status on the detail page', async () => {
     const detail = {
       ...copyQuotationDetail,
       travelStartDate: '2026-09-02',
@@ -1299,13 +1250,13 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    await screen.findByText('Version 1');
-    // Travel dates: 7-day trip starting 02/09/2026 ends 08/09/2026 (inclusive).
+    await screen.findByText('Activity timeline');
+    // Travel dates row was removed from the detail page: the inclusive
+    // 02/09/2026 – 08/09/2026 range is no longer rendered.
     const start = new Date('2026-09-02').toLocaleDateString();
     const end = new Date('2026-09-08').toLocaleDateString();
-    expect(screen.getByText(`${start} – ${end}`)).toBeInTheDocument();
-    // No "Open" anywhere in the travel dates row.
-    expect(screen.queryByText(/– Open/)).not.toBeInTheDocument();
+    expect(screen.queryByText(`${start} – ${end}`)).not.toBeInTheDocument();
+    expect(screen.queryByText('Travel dates')).not.toBeInTheDocument();
     // No lifecycle Status card and no Valid until row.
     expect(screen.queryByText('Valid until')).not.toBeInTheDocument();
     const statusLabel = screen.queryByText(
@@ -1362,7 +1313,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
 
     // The customer preview section was removed: no preview header, hotels,
     // itinerary, inclusions/exclusions/terms, or final amount block.
@@ -1396,7 +1347,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     // Copy Weblink URL uses the Copy icon (not the ExternalLink icon).
     const copyButton = screen.getByRole('button', { name: 'Copy Weblink URL' });
     expect(copyButton.querySelector('svg')).not.toBeNull();
@@ -1447,7 +1398,7 @@ describe('Phase 8 quotation pages', () => {
       </Routes>,
       { route: '/quotations/quotation-1' },
     );
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     await userEvent.click(screen.getByRole('button', { name: 'Copy Weblink URL' }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalled());
     // Failed copy must NOT show "Copied!".
@@ -1481,11 +1432,11 @@ describe('Phase 8 quotation pages', () => {
             url: `http://localhost:5173/q/token-for-${body.quotationVersionId}`,
           });
         }
-        if (url.endsWith('/duplicate')) {
-          // Duplicating invalidates the quotation query; flip the current
-          // version to v2 on the next refetch to simulate a session change.
+        if (url.endsWith('/versions')) {
+          // Creating a revision invalidates the quotation query; flip the
+          // current version to v2 on the next refetch to simulate a session change.
           mutableDetail.currentVersionId = 'version-2';
-          return response({ id: 'version-2' });
+          return response({ id: 'version-2', versionNumber: 2 });
         }
         return response({ id: 'document-1', reused: true });
       },
@@ -1511,8 +1462,8 @@ describe('Phase 8 quotation pages', () => {
     await waitFor(() =>
       expect(clipboardWrite).toHaveBeenCalledWith('http://localhost:5173/q/token-for-version-1'),
     );
-    // Duplicate: invalidates the quotation query and flips currentVersionId to v2.
-    await userEvent.click(screen.getAllByRole('button', { name: 'Duplicate' })[0]!);
+    // Create revision: invalidates the quotation query and flips currentVersionId to v2.
+    await userEvent.click(screen.getByRole('button', { name: 'Create revision' }));
     // After refetch, the component re-provisions for v2.
     await waitFor(() =>
       expect(publicLinkCalls.some((call) => call.versionId === 'version-2')).toBe(true),
@@ -11188,6 +11139,55 @@ describe('Quotation Builder - destination default add-ons', () => {
     expect(row!.pricingSnapshot).toEqual([]);
   });
 
+  it('adds a new quotation-specific pricing option without touching the master', async () => {
+    const quotation = builderQuotation({ services: [savedAddonService(threeOptions)] });
+    const fetchMock = masterFetch(quotation);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await screen.findByLabelText('Visa Assistance pricing option 1 label');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add pricing option for Visa Assistance' }),
+    );
+    const newLabel = screen.getByLabelText('Visa Assistance pricing option 4 label');
+    expect(newLabel).toHaveValue('');
+    await userEvent.type(newLabel, 'Per Group');
+    await userEvent.type(
+      screen.getByLabelText('Visa Assistance pricing option 4 amount'),
+      '15000',
+    );
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    const row = (body.services as Array<Record<string, unknown>>).find(
+      (service) => service.serviceType === 'OTHER_ADD_ON',
+    );
+    const snapshot = row!.pricingSnapshot as Array<{ label: string; price: number }>;
+    expect(snapshot).toHaveLength(4);
+    expect(snapshot[3]).toMatchObject({ label: 'Per Group', price: 15000 });
+    // The Add-on Services master is read-only here: no write request ever
+    // targets it; only the quotation PATCH is issued.
+    const masterWrites = fetchMock.mock.calls.filter(
+      ([input, options]) =>
+        String(input).includes('/masters/add-on-services') &&
+        options?.method != null &&
+        options.method !== 'GET',
+    );
+    expect(masterWrites).toHaveLength(0);
+  });
+
+  it('no longer shows the obsolete add-on services helper text', async () => {
+    const quotation = builderQuotation({ services: [savedAddonService(threeOptions)] });
+    const fetchMock = masterFetch(quotation);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Add-on Services');
+    await screen.findByLabelText('Visa Assistance pricing option 1 label');
+    expect(
+      screen.queryByText(/pricing entered centrally in Summary & Pricing/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Select additional services/i)).not.toBeInTheDocument();
+  });
+
   it('does not resurrect a manually removed default on save', async () => {
     const addonWithLinks = {
       ...addOn,
@@ -11316,6 +11316,158 @@ describe('Quotation Builder - destination default add-ons', () => {
     expect(editor.className).toContain('max-w-full');
     expect(editor.className).toContain('[&_pre]:whitespace-pre-wrap');
     expect(editor.className).toContain('[&_code]:whitespace-pre-wrap');
+  });
+});
+
+describe('Quotation Builder - policy editors', () => {
+  it('keeps plain policy lines bullet-free through save and reopen', async () => {
+    const plainInclusions = '<p>Daily breakfast and dinner</p><p>Airport transfers both ways</p>';
+    const fetchMock = masterFetch(
+      builderQuotation({
+        inclusionsHtml: plainInclusions,
+        exclusionsHtml: '<p>Personal expenses</p>',
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Inclusions & Exclusions');
+
+    const editor = await screen.findByLabelText('Inclusions');
+    expect(editor).toHaveTextContent('Daily breakfast and dinner');
+    expect(editor).toHaveTextContent('Airport transfers both ways');
+    // Ordinary lines are never wrapped in list markup to force bullet points.
+    expect(editor.querySelector('ul, ol, li')).toBeNull();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    expect(body.inclusionsHtml).toContain('Daily breakfast and dinner');
+    expect(body.inclusionsHtml).toContain('Airport transfers both ways');
+    expect(body.inclusionsHtml).not.toMatch(/<(ul|ol|li)\b/i);
+  });
+
+  // A destination master stored with bare `<li>` siblings and no `ul`/`ol`
+  // container (legacy import / pre-normalizer paste). The browser cannot give
+  // these items list padding, so the editor's `overflow-hidden` wrapper clipped
+  // their outside markers (plain lines) while the public weblink still showed
+  // the default disc — the reported mismatch.
+  const bareList = (items: readonly string[]) => items.map((item) => `<li>${item}</li>`).join('');
+
+  const policyItems = {
+    inclusions: ['Night Safari Entry Ticket', 'Safari Adventure Tram Ride'],
+    exclusions: ['International airfare', 'Visa processing fees'],
+    paymentPolicies: ['50% advance to confirm', 'Balance before departure'],
+    cancellationPolicies: ['Free cancellation up to 7 days', '50% charge within 3 days'],
+    bookingTerms: ['Valid only for the dates shown', 'Rooms subject to availability'],
+    childPolicy: ['Children below 5 stay free', 'Age proof required at check-in'],
+  } as const;
+
+  const singaporeMaster = {
+    id: 'dest-singapore',
+    countryCode: 'SG',
+    countryName: 'Singapore',
+    name: 'Singapore',
+    destinationType: 'CITY',
+    status: 'ACTIVE',
+    inclusions: bareList(policyItems.inclusions),
+    exclusions: bareList(policyItems.exclusions),
+    paymentPolicies: bareList(policyItems.paymentPolicies),
+    cancellationPolicies: bareList(policyItems.cancellationPolicies),
+    bookingTerms: bareList(policyItems.bookingTerms),
+    childPolicy: bareList(policyItems.childPolicy),
+    cities: [],
+    _count: { cities: 0 },
+    createdAt: '2026-07-21T00:00:00.000Z',
+    updatedAt: '2026-07-21T00:00:00.000Z',
+    createdBy: person,
+  };
+
+  const singaporeQuotation = (overrides: Record<string, unknown> = {}) => ({
+    ...builderQuotation(overrides),
+    destinationSummary: 'Singapore',
+    query: {
+      id: 'lead-1',
+      queryNumber: 'QRY-000001',
+      leadStage: 'NEW_LEAD',
+      assignedToId: null,
+      createdById: 'user-1',
+      departureCity: 'Delhi',
+      departureCountry: 'India',
+      itinerary: [
+        {
+          id: 'stay-0',
+          country: 'Singapore',
+          destination: 'Singapore',
+          nights: 2,
+          sequence: 1,
+          arrivalDate: '2026-08-10T00:00:00.000Z',
+          departureDate: '2026-08-12T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  const policyFields = [
+    ['Inclusions', 'inclusionsHtml', policyItems.inclusions],
+    ['Exclusions', 'exclusionsHtml', policyItems.exclusions],
+    ['Payment Policies', 'paymentPolicies', policyItems.paymentPolicies],
+    ['Cancellation Policies', 'cancellationPolicies', policyItems.cancellationPolicies],
+    ['Child Policy', 'childPolicy', policyItems.childPolicy],
+    ['Booking Terms & Conditions', 'bookingTerms', policyItems.bookingTerms],
+  ] as const;
+
+  /** Every policy editor must show one real <ul>, with no orphaned item. */
+  const expectEditorShowsRealList = (label: string, items: readonly string[]) => {
+    const editor = screen.getByLabelText(label);
+    const list = editor.querySelector('ul');
+    expect(list, `${label}: orphan <li> should be wrapped in a real <ul>`).not.toBeNull();
+    expect(Array.from(list!.querySelectorAll('li')).map((li) => li.textContent)).toEqual([...items]);
+    expect(editor.querySelectorAll('ul')).toHaveLength(1);
+    expect(
+      Array.from(editor.querySelectorAll('li')).every((li) => li.parentElement?.tagName === 'UL'),
+    ).toBe(true);
+  };
+
+  it('renders explicitly authored bullet lists for every policy field (legacy bare <li>)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(singaporeQuotation(), { '/masters/destinations': page([singaporeMaster]) }),
+    );
+    renderBuilderPage();
+    await openTab('Inclusions & Exclusions');
+    for (const [label, , items] of policyFields) {
+      await screen.findByLabelText(label);
+      expectEditorShowsRealList(label, items);
+    }
+  });
+
+  it('keeps authored bullet lists stable through save and reopen', async () => {
+    const fetchMock = masterFetch(singaporeQuotation(), {
+      '/masters/destinations': page([singaporeMaster]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const first = renderBuilderPage();
+    await openTab('Inclusions & Exclusions');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const body = await getSavedQuotationBody(fetchMock);
+    first.unmount();
+
+    // Reopen with whatever the save persisted (bare or already wrapped) and
+    // confirm the list still renders once — save/reopen never changes it.
+    const saved = Object.fromEntries(
+      policyFields.map(([, field, items]) => [field, body[field] ?? bareList(items)]),
+    );
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(singaporeQuotation(saved as Record<string, unknown>), {
+        '/masters/destinations': page([singaporeMaster]),
+      }),
+    );
+    renderBuilderPage();
+    await openTab('Inclusions & Exclusions');
+    for (const [label, , items] of policyFields) {
+      await screen.findByLabelText(label);
+      expectEditorShowsRealList(label, items);
+    }
   });
 });
 
@@ -14581,7 +14733,7 @@ describe.skip('Phase 14 master selectors', () => {
     );
     renderBuilderPage();
     await openTab('Sightseeing');
-    await userEvent.click(screen.getByRole('button', { name: 'Add Activity at End' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add activity after activity 1 on day 1' }));
     const picker = await screen.findByLabelText('Day 1 activity 2');
     fireEvent.focus(picker);
     const listbox = await screen.findByRole('listbox', { name: 'Day 1 activity 2' });
@@ -14840,7 +14992,7 @@ describe.skip('Phase 14 master selectors', () => {
     );
     renderBuilderPage();
     await openTab('Sightseeing');
-    await userEvent.click(screen.getByRole('button', { name: 'Add Activity at End' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add activity after activity 1 on day 1' }));
     const picker1 = await screen.findByLabelText('Day 1 activity 1');
     const picker2 = await screen.findByLabelText('Day 1 activity 2');
     await openActivityPicker(picker1, 'Singapore City Tour');
@@ -14865,7 +15017,7 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Sightseeing');
     expect(await screen.findByLabelText('Day 1 activity 1 name')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Add Activity at End' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add activity after activity 1 on day 1' }));
     expect(await screen.findByLabelText('Day 1 activity 2 name')).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'Remove activity' })[0]!);
     expect(screen.queryByLabelText('Day 1 activity 2 name')).not.toBeInTheDocument();
@@ -17568,6 +17720,27 @@ describe('Summary & Pricing — package pricing, tax note and secure booking', (
     await userEvent.type(screen.getByLabelText('Per Infant Price'), '7000');
   };
 
+  it('never renders the Pricing Validation warning box for zero or partial prices', async () => {
+    vi.stubGlobal('fetch', masterFetch(pricingBase()));
+    renderBuilderPage();
+    await openTab('Pricing');
+
+    // All prices zero: this is exactly where the amber "Traveler pricing is
+    // incomplete…" box used to render. It must be gone at the source.
+    expect(screen.queryByText('Pricing Validation')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Traveler pricing is incomplete/i)).not.toBeInTheDocument();
+
+    // Partially completed pricing (adults priced, children not) stays clean too.
+    await userEvent.type(screen.getByLabelText('Per Adult Price'), '10000');
+    expect(screen.queryByText('Pricing Validation')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Traveler pricing is incomplete/i)).not.toBeInTheDocument();
+
+    // The surrounding pricing UI is unchanged.
+    expect(screen.getByText('Initial Payment Details')).toBeInTheDocument();
+    expect(screen.getByLabelText('Discount amount')).toBeInTheDocument();
+    expect(screen.getByLabelText('Tax rate percent')).toBeInTheDocument();
+  });
+
   it('computes the total, margin and breakdown live with no NaN', async () => {
     vi.stubGlobal('fetch', masterFetch(pricingBase()));
     renderBuilderPage();
@@ -18410,7 +18583,7 @@ describe('Generate PDF button — real request, open, loading and error states',
     });
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     expect(screen.getByRole('dialog', { name: 'Choose PDF style' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Stylish PDF/ })).toBeEnabled();
@@ -18449,7 +18622,7 @@ describe('Generate PDF button — real request, open, loading and error states',
     });
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     const stylish = screen.getByRole('button', { name: /Stylish PDF/ });
     await userEvent.click(stylish);
@@ -18479,7 +18652,7 @@ describe('Generate PDF button — real request, open, loading and error states',
     });
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await userEvent.click(screen.getByRole('button', { name: /Classic PDF/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -18494,7 +18667,7 @@ describe('Generate PDF button — real request, open, loading and error states',
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => response(detail));
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await userEvent.click(screen.getByRole('button', { name: /Classic PDF/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Allow pop-ups');
@@ -18512,7 +18685,7 @@ describe('Generate PDF button — real request, open, loading and error states',
     });
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
-    await screen.findByText('Version 1');
+    await screen.findByText('Activity timeline');
     await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
     await userEvent.click(screen.getByRole('button', { name: /Classic PDF/ }));
     const busy = await screen.findByRole('button', { name: /Generating PDF/ });

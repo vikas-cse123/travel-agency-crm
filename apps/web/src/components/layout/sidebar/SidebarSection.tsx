@@ -11,8 +11,10 @@ interface SidebarSectionProps {
 }
 
 /**
- * One labelled group of navigation items. In the collapsed rail the heading is
- * replaced by a subtle divider; empty sections are filtered by the caller.
+ * One group of navigation items. Headings are intentionally not rendered;
+ * groups are separated by spacing alone (a subtle divider on the collapsed
+ * rail). The section name stays on the wrapper as an accessible label;
+ * empty sections are filtered by the caller.
  */
 export function SidebarSection({ section, collapsed, isFirst, children }: SidebarSectionProps) {
   if (collapsed) {
@@ -26,9 +28,6 @@ export function SidebarSection({ section, collapsed, isFirst, children }: Sideba
 
   return (
     <section aria-label={NAV_SECTION_LABELS[section]} className={cn(isFirst ? '' : 'mt-4')}>
-      <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-        {NAV_SECTION_LABELS[section]}
-      </p>
       {children}
     </section>
   );

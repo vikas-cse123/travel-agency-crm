@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Bold, Italic, Underline, Link as LinkIcon, List, ListOrdered } from 'lucide-react';
-import { decodeHtmlEntities, insertNormalizedPaste, ensureBlankParagraphs } from '@/utils/richTextPaste';
+import {
+  decodeHtmlEntities,
+  insertNormalizedPaste,
+  ensureBlankParagraphs,
+  wrapOrphanListItems,
+} from '@/utils/richTextPaste';
 
 interface RichTextEditorProps {
   value: string;
@@ -49,7 +54,9 @@ export function RichTextEditor({ value, onChange, ariaLabel, placeholder }: Rich
     // Legacy blank paragraphs (`<p></p>`, `<p><span></span></p>`, `<p>&nbsp;</p>`)
     // become a real blank line so the editor matches the read-only detail view;
     // leading/trailing clipboard junk is trimmed. Interior blanks are kept.
-    const html = ensureBlankParagraphs(richTextToDisplayHtml(next), { trimEdges: true });
+    const html = ensureBlankParagraphs(wrapOrphanListItems(richTextToDisplayHtml(next)), {
+      trimEdges: true,
+    });
     if (el.innerHTML !== html) el.innerHTML = html;
     lastEmitted.current = next;
   }, [value]);

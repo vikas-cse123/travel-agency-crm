@@ -102,6 +102,66 @@ const money = (value: number) =>
 const card = () =>
   screen.getByText('Total Package Price', { selector: 'p' }).closest('div.bg-emerald-600') as HTMLElement;
 
+/**
+ * Alignment regression guard, shared by the saved weblink and the Live Weblink
+ * Preview. The heading is pinned to the top and Contact Now to the bottom; the
+ * pricing group (original price + discount badge on one row, final price
+ * beneath) is centred as a whole — on both axes — in the space between them.
+ */
+function assertPriceCentered(expectDiscount: boolean) {
+  const cardEl = card();
+  const inner = cardEl.firstElementChild as HTMLElement;
+  const heading = inner.children[0] as HTMLElement;
+  const group = inner.children[1] as HTMLElement;
+  const contact = inner.children[2] as HTMLElement;
+
+  // A flex column whose middle region grows to fill the leftover height.
+  expect(inner.className).toContain('flex');
+  expect(inner.className).toContain('flex-1');
+
+  // Heading pinned to the top, Contact Now pinned to the bottom.
+  expect(heading.tagName).toBe('P');
+  expect(contact.tagName).toBe('A');
+  expect(contact).toHaveAccessibleName(/Contact Now/);
+
+  // The pricing group is centred vertically (justify-center) and horizontally
+  // (items-center) inside the flexible middle region.
+  expect(group.className).toContain('flex-1');
+  expect(group.className).toContain('justify-center');
+  expect(group.className).toContain('items-center');
+
+  const finalPrice = screen.getByTestId('total-final-price');
+  expect(group.contains(finalPrice)).toBe(true);
+  // The button stays after the group, so the group is centred above it.
+  expect(group.compareDocumentPosition(contact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  if (expectDiscount) {
+    const original = screen.getByTestId('total-original-price');
+    const badge = screen.getByTestId('total-discount-badge');
+    const priceRow = original.parentElement as HTMLElement;
+
+    // Struck-through original + badge share one non-wrapping row...
+    expect(priceRow.className).toContain('flex');
+    expect(priceRow.className).not.toContain('flex-wrap');
+    expect(priceRow.contains(badge)).toBe(true);
+    // ...with the badge to the right of the original price...
+    expect(
+      original.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // ...and the row sits directly above the final price, inside the group.
+    expect(priceRow.parentElement).toBe(group);
+    expect(
+      priceRow.compareDocumentPosition(finalPrice) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  } else {
+    // No discount: no empty space or leftover discount elements — the final
+    // price is the only thing in the centred group.
+    expect(screen.queryByTestId('total-original-price')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('total-discount-badge')).not.toBeInTheDocument();
+    expect(group.firstElementChild).toBe(finalPrice);
+  }
+}
+
 describe('Public weblink — Total Package Price card', () => {
   it('keeps the clean single-price card when there is no discount', async () => {
     const payload = publicQuotation();
@@ -195,5 +255,21 @@ describe('Public weblink — Total Package Price card', () => {
     expect(screen.getAllByText('₹45,000').length).toBeGreaterThanOrEqual(2);
     const breakdown = screen.getByTestId('traveler-price-breakdown');
     expect(within(breakdown).getByText('-₹5,000')).toBeInTheDocument();
+  });
+
+  it('centres the final price between the label and Contact Now (no discount)', async () => {
+    renderWeblink(publicQuotation(), 'token-center-nodiscount');
+    await screen.findByText('Custom Package for Aarav Mehta');
+    assertPriceCentered(false);
+  });
+
+  it('centres the original price and badge above the final price (with discount)', async () => {
+    renderWeblink(publicQuotation({ discountAmount: '5000' }), 'token-center-discount');
+    await screen.findByText('Custom Package for Aarav Mehta');
+    const cardEl = card();
+    expect(within(cardEl).getByTestId('total-original-price')).toHaveTextContent(money(50000));
+    expect(within(cardEl).getByTestId('total-discount-badge')).toHaveTextContent('₹5,000 OFF');
+    expect(within(cardEl).getByTestId('total-final-price')).toHaveTextContent(money(45000));
+    assertPriceCentered(true);
   });
 });

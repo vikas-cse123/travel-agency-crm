@@ -970,6 +970,123 @@ describe('Live preview in the builder', () => {
     expect(screen.getByTestId('pinned-preview-frame')).toBe(frame);
   });
 
+  it('reflects unsaved add-on pricing edits in the preview without saving', async () => {
+    const addonMaster = {
+      id: 'addon-visa',
+      name: 'Visa Assistance',
+      description: null,
+      price: 6000,
+      currency: 'INR',
+      pricingBasis: 'Per Person',
+      pricing: [{ id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' }],
+      destinations: [],
+      status: 'ACTIVE',
+      hasImage: false,
+      images: [],
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      createdBy: person,
+      updatedBy: null,
+    };
+    const quotation = detail();
+    (
+      quotation.versions[0] as unknown as { services: Array<Record<string, unknown>> }
+    ).services.push({
+      id: 'svc-visa',
+      serviceType: 'OTHER_ADD_ON',
+      addOnServiceId: 'addon-visa',
+      name: 'Visa Assistance',
+      description: null,
+      dayNumber: null,
+      city: null,
+      quantity: '1',
+      unitSellingPrice: '6000',
+      totalSellingPrice: '6000',
+      sellingPrice: '6000',
+      pricingBasis: 'FIXED',
+      pricingBasisLabel: 'Adult',
+      pricingSnapshot: [{ id: 'opt-adult', label: 'Adult', price: 6000, currency: 'INR' }],
+      sequence: 2,
+      images: [],
+    });
+    const fetchMock = builderFetch(quotation, {
+      '/masters/add-on-services': {
+        success: true,
+        data: [addonMaster],
+        pagination: { total: 1 },
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Add-on Services' }));
+    await screen.findByLabelText('Visa Assistance pricing option 1 label');
+    // The preview first mirrors the saved quotation-owned snapshot.
+    const doc = await pinnedReady();
+    const body = doc.body as HTMLElement;
+    expect((await within(body).findAllByText('Adult')).length).toBeGreaterThan(0);
+    expect(within(body).getAllByText('₹6,000').length).toBeGreaterThan(0);
+    // A quotation-only label edit flows into the phone immediately.
+    const label = screen.getByLabelText('Visa Assistance pricing option 1 label');
+    await userEvent.clear(label);
+    await userEvent.type(label, 'Adult twin');
+    expect(await within(body).findByText('Adult twin')).toBeInTheDocument();
+    // Nothing was persisted or published by the live edit.
+    expect(
+      fetchMock.mock.calls.some(
+        ([, options]) => options?.method === 'PATCH' || options?.method === 'POST',
+      ),
+    ).toBe(false);
+  });
+
+  it('shows the Back to top button inside the preview frame and scrolls that frame to the top', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    const win = (screen.getByTestId('pinned-preview-frame') as HTMLIFrameElement)
+      .contentWindow as Window;
+    // Deterministic frame metrics: scrollable = 2000 - 1000 = 1000px.
+    Object.defineProperty(doc.documentElement, 'scrollHeight', {
+      value: 2000,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(doc.documentElement, 'clientHeight', {
+      value: 1000,
+      writable: true,
+      configurable: true,
+    });
+    const frameScrollTo = vi.fn();
+    Object.defineProperty(win, 'scrollTo', {
+      value: frameScrollTo,
+      writable: true,
+      configurable: true,
+    });
+    const setScrollY = (value: number) => {
+      Object.defineProperty(win, 'scrollY', { value, writable: true, configurable: true });
+      win.dispatchEvent(new Event('scroll'));
+    };
+    setScrollY(0);
+
+    const button = () =>
+      within(doc.body as HTMLElement).getByRole('button', { name: 'Back to top' });
+    // The floating button lives inside the preview and starts hidden.
+    expect(button()).toHaveClass('opacity-0', 'pointer-events-none');
+    // Visibly driven by the FRAME window's scroll, not the builder page.
+    setScrollY(390);
+    expect(button()).toHaveClass('opacity-0', 'pointer-events-none');
+    setScrollY(400);
+    await vi.waitFor(() => expect(button()).toHaveClass('opacity-100'));
+    setScrollY(300);
+    await vi.waitFor(() => expect(button()).toHaveClass('opacity-0', 'pointer-events-none'));
+
+    setScrollY(600);
+    await vi.waitFor(() => expect(button()).toHaveClass('opacity-100'));
+    fireEvent.click(button());
+    expect(frameScrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+  });
+
   it('has no separate full-quotation drawer — only the persistent live preview', async () => {
     vi.stubGlobal('fetch', builderFetch(detail()));
     renderBuilder();
@@ -1084,6 +1201,41 @@ describe('Preview presentations (master-sourced data)', () => {
     const body = doc.body as HTMLElement;
     expect(within(body).getByLabelText('5 star hotel')).toBeInTheDocument();
     expect(within(body).queryByRole('link', { name: /Hotel Review/ })).not.toBeInTheDocument();
+  });
+
+  // A stay that was just linked to a master carries `hotelId` but no persisted
+  // row id until the first Save — precisely the state that used to drop the
+  // master's stars/score/address/review link from the Live Weblink Preview
+  // until the quotation was saved and reopened.
+  const withLinkedHotelWithoutId = () => {
+    const quotation = detail();
+    const version = quotation.versions[0] as unknown as { hotels: Array<Record<string, unknown>> };
+    version.hotels = version.hotels.map((hotel) => {
+      const { id: _dropped, ...rest } = hotel;
+      void _dropped;
+      return { ...rest, hotelId: 'hotel-m1' };
+    });
+    return quotation;
+  };
+
+  it('shows master stars, score, address, and review link before saving (no row id yet)', async () => {
+    const fetchMock = builderFetch(withLinkedHotelWithoutId(), hotelRoutes);
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    // Preview open by default; must resolve from the unsaved form, no Save/reopen.
+    const doc = await pinnedReady();
+    const body = doc.body as HTMLElement;
+    expect(within(body).getByLabelText('5 star hotel')).toBeInTheDocument();
+    expect(within(body).getByText('4.6')).toBeInTheDocument();
+    const review = within(body).getByRole('link', { name: /Hotel Review/ });
+    expect(review).toHaveAttribute('href', 'https://maps.google.com/?cid=coastal-bay-reviews');
+    expect(review).toHaveAttribute('target', '_blank');
+    expect(within(body).getByText('Sea Face Road, Calangute, Goa')).toBeInTheDocument();
+    // Master-picker style: the linked master's detail is fetched once.
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes('/masters/hotels/hotel-m1')),
+    ).toBe(true);
   });
 
   it('loads the destination hero image matched from masters', async () => {
@@ -2324,6 +2476,32 @@ describe('Preview item-level navigation', () => {
     const pos = stubPositions(doc);
     await userEvent.click(await screen.findByRole('button', { name: 'Hotel' }));
     // Section anchor at 100 minus the 16px heading offset.
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(84));
+  });
+
+  it('re-selecting the already-active tab re-navigates the preview', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    const doc = await pinnedReady();
+    expect(doc.querySelector('[data-preview-section="hotels"]')).not.toBeNull();
+    const pos = stubPositions(doc);
+    const hotelTab = await screen.findByRole('button', { name: 'Hotel' });
+    await userEvent.click(hotelTab);
+    await vi.waitFor(() => expect(pos.readScroll()).toBe(84));
+    // The reader scrolls the preview away while Hotel is already the active
+    // tab (its target value never changes, only the scroll position does).
+    // Anchor rects are viewport-relative: with the reader 4000px down, the
+    // Hotels section sits 3900px above the viewport top.
+    const hotels = doc.querySelector<HTMLElement>('[data-preview-section="hotels"]');
+    hotels!.getBoundingClientRect = () =>
+      ({ top: -3900, left: 0, bottom: -3900, right: 0, width: 0, height: 0, x: 0, y: 0 }) as DOMRect;
+    (frameScroller(doc) as HTMLElement).scrollTop = 4000;
+    expect(pos.readScroll()).toBe(4000);
+    // Re-selecting the same tab must re-navigate to the Hotels section. This
+    // regressed before because navigation was keyed only on the resolved
+    // section string, so a same-value `setActiveTab` was a no-op.
+    await userEvent.click(hotelTab);
     await vi.waitFor(() => expect(pos.readScroll()).toBe(84));
   });
 

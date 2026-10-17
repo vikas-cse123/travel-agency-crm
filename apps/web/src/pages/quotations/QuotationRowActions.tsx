@@ -28,26 +28,47 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
   const [linkCopied, setLinkCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [weblinkUrl, setWeblinkUrl] = useState<string | null>(null);
+  // Signed staff-preview variant (same URL + short-lived signal), so opening the
+  // preview from the branded/custom domain is classified HOME, not as a
+  // customer visit. The shared Copy value stays the plain URL.
+  const [weblinkStaffViewUrl, setWeblinkStaffViewUrl] = useState<string | null>(null);
   const [weblinkVersionId, setWeblinkVersionId] = useState<string | null>(null);
   const [whatsappOpen, setWhatsappOpen] = useState(false);
   const [error, setError] = useState('');
 
   /** Provision the public weblink for the row's current version (lazy so the
-   *  list never fires one request per row on load). Cached per version. */
-  const ensurePublicLink = (): Promise<string | null> =>
+   *  list never fires one request per row on load). Cached per version.
+   *  `staffView` asks the server for the signed staff-preview variant. */
+  const ensurePublicLink = (
+    options: { staffView?: boolean } = {},
+  ): Promise<{ url: string; staffViewUrl: string | null } | null> =>
     new Promise((resolve) => {
       if (!current) return resolve(null);
-      if (weblinkUrl && weblinkVersionId === current.id) return resolve(weblinkUrl);
+      if (
+        weblinkUrl &&
+        weblinkVersionId === current.id &&
+        (!options.staffView || weblinkStaffViewUrl)
+      ) {
+        return resolve({ url: weblinkUrl, staffViewUrl: weblinkStaffViewUrl });
+      }
       action.mutate(
-        { path: 'public-link', body: { quotationVersionId: current.id } },
+        {
+          path: 'public-link',
+          body: {
+            quotationVersionId: current.id,
+            ...(options.staffView ? { staffView: true } : {}),
+          },
+        },
         {
           onSuccess: (result) => {
-            const url = (result as { url?: string }).url ?? null;
+            const payload = result as { url?: string; staffViewUrl?: string };
+            const url = payload.url ?? null;
             if (url) {
               setWeblinkUrl(url);
+              setWeblinkStaffViewUrl(payload.staffViewUrl ?? null);
               setWeblinkVersionId(current.id);
             }
-            resolve(url);
+            resolve(url ? { url, staffViewUrl: payload.staffViewUrl ?? null } : null);
           },
           onError: () => resolve(null),
         },
@@ -81,10 +102,10 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
   };
 
   const copyRowLink = async () => {
-    const url = await ensurePublicLink();
-    if (!url) return;
+    const link = await ensurePublicLink();
+    if (!link) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(link.url);
       setLinkCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setLinkCopied(false), 1800);
@@ -94,10 +115,6 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
   };
 
   const previewRowLink = async () => {
-    if (weblinkUrl && weblinkVersionId === current?.id) {
-      window.open(weblinkUrl, '_blank', 'noopener');
-      return;
-    }
     const win = window.open('about:blank', '_blank');
     if (!win) {
       setError('Allow pop-ups for this site so the weblink preview can open in a new tab.');
@@ -107,8 +124,8 @@ export function QuotationRowActions({ quotation }: { quotation: Quotation }) {
     win.document.title = 'Opening preview…';
     win.document.body.innerHTML =
       '<p style="font:16px system-ui;padding:32px">Opening preview…</p>';
-    const url = await ensurePublicLink();
-    if (url) win.location.replace(url);
+    const link = await ensurePublicLink({ staffView: true });
+    if (link) win.location.replace(link.staffViewUrl ?? link.url);
     else {
       win.close();
       setError('The weblink preview could not be opened. Please try again.');

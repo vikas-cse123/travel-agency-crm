@@ -541,9 +541,6 @@ export function DashboardPage() {
 
           {caps?.canViewLeads && (
             <div>
-              <p className="mb-2 text-xs text-slate-500">
-                Upcoming travel always shows all future trips, regardless of the selected period.
-              </p>
               <div className="grid gap-4 lg:grid-cols-2">
                 <UpcomingTravelCard kind="confirmed" />
                 <UpcomingTravelCard kind="others" />

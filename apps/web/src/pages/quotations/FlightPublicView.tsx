@@ -1,6 +1,7 @@
 import { ExternalLink, Plane } from 'lucide-react';
 import { cabinLuggageLabel, flightRecordPrefix, normalizeFlightDetails } from '@interscale/shared';
 import { formatTime12Hour } from '@/utils/dateTime';
+import { wrapOrphanListItems } from '@/utils/richTextPaste';
 import type { FlightJourney } from '@/features/quotations/quotations.api';
 
 /**
@@ -22,7 +23,7 @@ export function RichHtml({ html }: { html: string }) {
   return (
     <div
       className="weblink-rich-text rich-text-content min-w-0 max-w-full text-sm leading-relaxed text-[#000000] [overflow-wrap:anywhere] [&_a]:text-blue-600 [&_a]:underline [&_code]:whitespace-pre-wrap [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5"
-      dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
+      dangerouslySetInnerHTML={{ __html: sanitizeHtml(wrapOrphanListItems(html)) }}
     />
   );
 }

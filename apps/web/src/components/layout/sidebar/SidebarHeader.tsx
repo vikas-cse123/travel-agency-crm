@@ -52,7 +52,7 @@ export function SidebarHeader({ collapsed, onToggleCollapse, onCloseMobile }: Si
   );
 
   return (
-    <div className="relative flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3">
+    <div className="relative flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border pl-3 pr-3 lg:pr-5">
       {collapsed ? (
         <div
           className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg lg:mx-0"
@@ -79,7 +79,7 @@ export function SidebarHeader({ collapsed, onToggleCollapse, onCloseMobile }: Si
         <img
           src="/new-logo.png"
           alt="Travel Agency CRM"
-          className="block h-12 w-full min-w-0 flex-1 object-contain object-left"
+          className="block h-full w-full min-w-0 flex-1 object-contain object-left"
         />
       )}
 

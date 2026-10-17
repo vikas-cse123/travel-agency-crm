@@ -399,7 +399,7 @@ describe('Details page quotation title and package heading', () => {
     auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
   });
 
-  it('shows the saved title and package heading from the current version', async () => {
+  it('shows only the lead name and hides the saved title and package heading', async () => {
     vi.stubGlobal(
       'fetch',
       detailFetch(
@@ -411,17 +411,21 @@ describe('Details page quotation title and package heading', () => {
     );
     renderDetails();
     await screen.findByRole('heading', { name: /Akash Sahni/ });
-    // Actual saved values, not reconstructed ones.
-    expect(screen.getByText('Singapore Escape')).toBeInTheDocument();
-    expect(screen.getByText('Singapore Family Holiday Package')).toBeInTheDocument();
+    // The heading area shows only the lead name (no destination suffix). The
+    // version title and package heading stay editable but are no longer shown.
+    expect(screen.getByRole('heading', { name: /Akash Sahni/ }).textContent).toBe('Akash Sahni');
+    expect(screen.queryByText('Singapore Escape')).not.toBeInTheDocument();
+    expect(screen.queryByText('Singapore Family Holiday Package')).not.toBeInTheDocument();
     expect(screen.queryByText('Custom Package for Akash Sahni')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit title' })).toBeInTheDocument();
   });
 
-  it('falls back to "Custom Package for [Lead]" when the saved heading is blank', async () => {
+  it('does not fall back to "Custom Package for [Lead]" in the heading area', async () => {
     vi.stubGlobal('fetch', detailFetch(builderDetail()));
     renderDetails();
     await screen.findByRole('heading', { name: /Akash Sahni/ });
-    expect(screen.getByText('Custom Package for Akash Sahni')).toBeInTheDocument();
+    expect(screen.queryByText('Custom Package for Akash Sahni')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit title' })).toBeInTheDocument();
   });
 
   it('edits and saves both fields to the current version', async () => {

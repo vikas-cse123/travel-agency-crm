@@ -234,6 +234,25 @@ describe('Duplicate Lead', () => {
     expect(screen.getByRole('link', { name: 'Duplicate Lead' })).toBeInTheDocument();
   });
 
+  it('places Edit immediately left of Duplicate Lead in one right-aligned group', async () => {
+    stubApi();
+    renderBoth();
+    const heading = await screen.findByRole('heading', { name: 'Aarav Mehta' });
+    const edit = screen.getByRole('link', { name: 'Edit' });
+    const duplicate = screen.getByRole('link', { name: 'Duplicate Lead' });
+    // Both actions share one group, with Edit directly before Duplicate Lead.
+    expect(edit.parentElement).toBe(duplicate.parentElement);
+    expect(edit.nextElementSibling).toBe(duplicate);
+    // The group is pushed to the right end of the header row.
+    expect(duplicate.parentElement?.className).toContain('justify-end');
+    expect(duplicate.parentElement?.className).toContain('flex-wrap');
+    // The identity block shares the header row with the action group.
+    const header = duplicate.parentElement?.parentElement;
+    expect(header?.contains(heading)).toBe(true);
+    // Both actions still perform their existing actions.
+    expect(edit).toHaveAttribute('href', '/queries/lead-1/edit');
+  });
+
   it('hides Duplicate Lead without create permission', async () => {
     authState.permissions = new Set(['queries.view', 'queries.update']);
     stubApi();

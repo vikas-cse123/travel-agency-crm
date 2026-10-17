@@ -289,6 +289,7 @@ export function MobilePhonePreview({
   data,
   activeSection,
   activeItems,
+  navigationKey,
   frameTestId,
 }: {
   data: PublicQuotation;
@@ -305,6 +306,13 @@ export function MobilePhonePreview({
    * never move it, so typing cannot reset the reader's scroll position.
    */
   activeItems?: string[] | null;
+  /**
+   * Navigation request signal: any change re-runs the scroll even when the
+   * section/item target is unchanged. The builder bumps it on every tab click
+   * so that re-selecting the already-active tab (where React bails out of the
+   * same-value state update) still navigates the preview to its section.
+   */
+  navigationKey?: number | string | undefined;
   /** Test id for the iframe element itself. */
   frameTestId: string;
 }) {
@@ -327,37 +335,69 @@ export function MobilePhonePreview({
     if (!mountNode || (activeSection == null && !(activeItems ?? []).length)) return;
     const target: PreviewTarget = { section: activeSection ?? null, items: activeItems ?? [] };
     let cancelled = false;
-    let attempts = 0;
-    const timers: Array<ReturnType<typeof setTimeout>> = [];
-    const tryScroll = (): boolean => {
-      if (cancelled) return true;
+    let navigated = false;
+    let observer: MutationObserver | null = null;
+    let giveUpTimer: ReturnType<typeof setTimeout> | null = null;
+    const scrollerFor = (): HTMLElement | null => {
       const doc = iframeRef.current?.contentDocument;
-      const scroller = (doc?.scrollingElement ?? doc?.documentElement ?? null) as
-        | HTMLElement
-        | null;
-      if (!scroller) return false;
-      const hasTarget =
+      return (doc?.scrollingElement ?? doc?.documentElement ?? null) as HTMLElement | null;
+    };
+    const hasTarget = (): boolean => {
+      const doc = iframeRef.current?.contentDocument;
+      if (!doc) return false;
+      return (
         (target.items ?? []).some(
-          (item) => item && !!doc?.querySelector<HTMLElement>(`[data-preview-item="${item}"]`),
+          (item) => item && !!doc.querySelector<HTMLElement>(`[data-preview-item="${item}"]`),
         ) ||
         (target.section
-          ? !!doc?.querySelector<HTMLElement>(`[data-preview-section="${target.section}"]`)
-          : false);
-      if (!hasTarget && attempts < 5) {
-        attempts += 1;
-        timers.push(setTimeout(tryScroll, 120));
-        return false;
-      }
+          ? !!doc.querySelector<HTMLElement>(`[data-preview-section="${target.section}"]`)
+          : false)
+      );
+    };
+    const tryScroll = (): void => {
+      if (cancelled || navigated) return;
+      const scroller = scrollerFor();
+      if (!scroller) return;
+      // The target may not be committed yet (async section mounts, images and
+      // dynamic heights). Keep watching the frame and scroll the instant it
+      // exists rather than polling on a fixed timer.
+      if (!hasTarget()) return;
       scrollPreviewToTarget(scroller, target);
-      return true;
+      navigated = true;
+      observer?.disconnect();
+      observer = null;
+      if (giveUpTimer) {
+        clearTimeout(giveUpTimer);
+        giveUpTimer = null;
+      }
     };
     tryScroll();
+    if (!navigated && typeof MutationObserver !== 'undefined') {
+      const doc = iframeRef.current?.contentDocument;
+      const root = doc?.documentElement ?? doc?.body ?? null;
+      if (root) {
+        observer = new MutationObserver(() => tryScroll());
+        observer.observe(root, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['data-preview-section', 'data-preview-item'],
+        });
+        // Bounded safety net: stop watching a genuinely absent target so later
+        // unrelated edits can never scroll-jack the reader.
+        giveUpTimer = setTimeout(() => {
+          observer?.disconnect();
+          observer = null;
+        }, 2000);
+      }
+    }
     return () => {
       cancelled = true;
-      timers.forEach((timer) => clearTimeout(timer));
+      observer?.disconnect();
+      if (giveUpTimer) clearTimeout(giveUpTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mountNode, targetKey]);
+  }, [mountNode, targetKey, navigationKey]);
 
   return (
     <div
@@ -832,6 +872,7 @@ export function PinnedLiveQuotationPreview({
   expertUsers,
   activeSection,
   activeItems,
+  navigationKey,
 }: {
   quotation: Quotation;
   savedVersion: QuotationVersion;
@@ -857,6 +898,12 @@ export function PinnedLiveQuotationPreview({
    * reader's scroll position.
    */
   activeItems?: string[] | null;
+  /**
+   * Navigation request signal forwarded to the phone: any change re-navigates
+   * even when the section/item target is unchanged (re-selecting the active
+   * builder tab).
+   */
+  navigationKey?: number | string | undefined;
 }) {
   const data = useFullPreviewData({
     quotation,
@@ -897,6 +944,7 @@ export function PinnedLiveQuotationPreview({
           data={data}
           activeSection={activeSection ?? null}
           activeItems={activeItems ?? null}
+          navigationKey={navigationKey}
           frameTestId="pinned-preview-frame"
         />
       </div>

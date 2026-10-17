@@ -300,4 +300,59 @@ describe('Quotation Builder sub-tab styling', () => {
       expect.objectContaining({ left: expect.any(Number) }),
     );
   });
+
+  it('removes Visa and Destination Expert from the Weblink Section Order editor', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await userEvent.click(tabButton('Settings'));
+    await userEvent.click(screen.getByRole('button', { name: /Weblink Section Order/i }));
+
+    const panel = document.getElementById('weblink-section-order-panel') as HTMLElement;
+    const order = () =>
+      Array.from(panel.querySelectorAll('button[aria-label$=" up"]')).map((el) =>
+        el.getAttribute('aria-label')!.replace(/^Move /, '').replace(/ up$/, ''),
+      );
+    const defaultVisible = [
+      'services',
+      'itinerary',
+      'hotels',
+      'flights',
+      'transportation',
+      'cruise',
+      'addons',
+      'policies',
+      'faqs',
+    ];
+
+    // Count and listed rows exclude the two hidden sections.
+    expect(screen.getByText('9 sections')).toBeInTheDocument();
+    expect(order()).toEqual(defaultVisible);
+    for (const hidden of ['visa', 'destinationExpert']) {
+      expect(screen.queryByRole('button', { name: `Move ${hidden} up` })).toBeNull();
+      expect(screen.queryByRole('button', { name: `Move ${hidden} down` })).toBeNull();
+    }
+
+    // Up/Down still reorder the remaining sections (bounds use visible rows).
+    expect(screen.getByRole('button', { name: 'Move services up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move faqs down' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Move hotels up' }));
+    expect(order()).toEqual([
+      'services',
+      'hotels',
+      'itinerary',
+      'flights',
+      'transportation',
+      'cruise',
+      'addons',
+      'policies',
+      'faqs',
+    ]);
+
+    // Resetting restores the default order without bringing them back.
+    await userEvent.click(screen.getByRole('button', { name: 'Reset to default order' }));
+    expect(order()).toEqual(defaultVisible);
+    expect(screen.queryByRole('button', { name: 'Move visa up' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Move destinationExpert up' })).toBeNull();
+  });
 });

@@ -272,6 +272,7 @@ export const quotationsController = {
         req.body.quotationVersionId,
         req.body.expiresAt,
         context(req),
+        { staffView: req.body.staffView === true },
       ),
       'Public link created.',
     );

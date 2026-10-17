@@ -334,6 +334,37 @@ describe('shared ui RichTextEditor list marker visibility', () => {
   });
 });
 
+/**
+ * Regression: legacy policy content stores runs of bare `<li>` with no
+ * `ul`/`ol` container. With `list-style-position: outside` and no list padding
+ * those items' markers were painted left of the content box and clipped by the
+ * editor's `overflow-hidden` wrapper (plain lines), while the public weblink
+ * still showed the default disc. Hydration now wraps orphan items, so the
+ * editor shows the same real list the public weblink renders.
+ */
+describe('shared ui RichTextEditor orphan list items', () => {
+  it('wraps bare <li> from legacy policy text into a real <ul> on load', () => {
+    render(
+      <ControlledShared initial="<li>Night Safari admission.</li><li>Bird Paradise admission.</li>" />,
+    );
+    const editor = screen.getByRole('textbox', { name: /notes/i });
+    const list = editor.querySelector('ul');
+    expect(list).not.toBeNull();
+    expect(Array.from(list?.querySelectorAll('li') ?? []).map((li) => li.textContent)).toEqual([
+      'Night Safari admission.',
+      'Bird Paradise admission.',
+    ]);
+    // No orphan list item survives as a direct child of the editor.
+    expect(editor.querySelectorAll(':scope > li')).toHaveLength(0);
+  });
+
+  it('keeps ordinary paragraphs free of any list markup', () => {
+    render(<ControlledShared initial="<p>Plain line one.</p><p>Plain line two.</p>" />);
+    const editor = screen.getByRole('textbox', { name: /notes/i });
+    expect(editor.querySelector('ul, ol, li')).toBeNull();
+  });
+});
+
 describe('masters RichTextEditor numbered list (Terms & Conditions)', () => {
   const renderTerms = (initial: string) => render(<ControlledMasters initial={initial} />);
   const editorOf = () => screen.getByRole('textbox', { name: /description/i });

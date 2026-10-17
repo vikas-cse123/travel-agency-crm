@@ -1440,20 +1440,6 @@ function DayCard({
                 {imageError}
               </p>
             )}
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  const wasEmpty = activities.fields.length === 0;
-                  activities.append(emptySightseeingActivity());
-                  // Appending to an empty day creates its first activity.
-                  if (wasEmpty) syncDayTitleFromFirstActivity();
-                }}
-              >
-                <Plus className="h-4 w-4" /> Add Activity at End
-              </Button>
-            </div>
       </article>
     );
   }

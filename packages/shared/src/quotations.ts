@@ -2045,6 +2045,12 @@ export const quotationTrackSchema = z.object({
   maxScrollDepth: z.coerce.number().int().min(0).max(100).optional(),
   timeOnPageSeconds: z.coerce.number().int().min(0).max(86400).optional(),
   ctaClicks: z.coerce.number().int().min(0).max(100000).optional(),
+  // Short-lived, HMAC-signed staff-view signal minted by the CRM when a signed-in
+  // employee opens the weblink from the public (possibly cross-domain) host. It
+  // only ever influences HOME vs EXTERNAL analytics classification — never
+  // authentication or data access. Optional so ordinary customer beacons are
+  // unchanged.
+  staffViewToken: z.string().max(2000).optional(),
 });
 export type QuotationTrackInput = z.infer<typeof quotationTrackSchema>;
 
@@ -2103,6 +2109,10 @@ export const quotationSendSchema = z.object({
 export const publicLinkSchema = z.object({
   quotationVersionId: z.string().uuid().optional(),
   expiresAt: z.coerce.date().nullable().optional(),
+  // Opt-in: when true the response also carries a `staffViewUrl` — the same
+  // public link plus a short-lived signed signal that marks the visit HOME.
+  // The ordinary `url` (used for copying/sharing with customers) is unchanged.
+  staffView: z.boolean().optional(),
 });
 
 export const uploadRequestSchema = z.object({

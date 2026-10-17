@@ -96,13 +96,20 @@ describe('Sidebar expanded state', () => {
     expect(screen.queryByText('Vendors')).not.toBeInTheDocument();
   });
 
-  it('renders the section headings', () => {
+  it('does not render section headings, only navigation items', () => {
     renderSidebar();
-    expect(screen.getByText('General')).toBeInTheDocument();
-    expect(screen.getByText('Sales')).toBeInTheDocument();
-    expect(screen.getByText('Administration')).toBeInTheDocument();
-    // "Masters" is both a heading and the group button label.
-    expect(screen.getAllByText('Masters').length).toBeGreaterThan(0);
+    expect(screen.queryByText('General')).not.toBeInTheDocument();
+    expect(screen.queryByText('Workspace')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sales')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vouchers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Administration')).not.toBeInTheDocument();
+    expect(screen.queryByText('Operations')).not.toBeInTheDocument();
+    // The section wrappers keep accessible names; the "Masters" group button
+    // (a navigation item, not a heading) still renders exactly once.
+    expect(screen.getAllByText('Masters')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Masters' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Quotations' })).toBeInTheDocument();
   });
 });
 
@@ -132,10 +139,10 @@ describe('Temporarily hidden sidebar modules', () => {
     expect(screen.getByRole('link', { name: 'Quotations' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Customers' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Vendors' })).not.toBeInTheDocument();
-    // Sales still renders because Quotations remains; Operations is gone because
-    // Bookings, Customers and Vendors are all retired/hidden (empty sections
-    // are never rendered).
-    expect(screen.getByText('Sales')).toBeInTheDocument();
+    // Headings are never rendered; Operations is gone because Bookings,
+    // Customers and Vendors are all retired/hidden (empty sections are
+    // never rendered).
+    expect(screen.queryByText('Sales')).not.toBeInTheDocument();
     expect(screen.queryByText('Operations')).not.toBeInTheDocument();
   });
 
