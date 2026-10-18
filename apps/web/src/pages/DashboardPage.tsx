@@ -392,11 +392,15 @@ export function DashboardPage() {
   const data = analytics.data;
   const caps = data?.capabilities;
   const showFinancials = Boolean(caps?.canViewFinancials);
-  // Net Profit renders only for a positive calculated value. Non-numeric,
-  // null, and missing values hide the card instead of showing NaN.
-  const netProfitValue = Number(data?.financials?.netProfit);
-  const showNetProfit =
-    showFinancials && Number.isFinite(netProfitValue) && netProfitValue > 0;
+  // Net Profit renders whenever a value is available — including exactly zero
+  // and negative amounts. Missing, null, or non-numeric values stay hidden
+  // rather than rendering NaN or treating unknown data as zero.
+  const netProfitRaw = data?.financials?.netProfit;
+  const netProfitValue =
+    netProfitRaw === undefined || netProfitRaw === null || netProfitRaw.trim() === ''
+      ? Number.NaN
+      : Number(netProfitRaw);
+  const showNetProfit = showFinancials && Number.isFinite(netProfitValue);
 
   return (
     <div className="space-y-4">

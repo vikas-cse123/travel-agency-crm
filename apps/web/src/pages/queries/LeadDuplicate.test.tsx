@@ -311,10 +311,11 @@ describe('Duplicate Lead', () => {
     expect(screen.getByRole('checkbox', { name: 'Cruise' })).not.toBeChecked();
     // Itinerary rows in order.
     expect((screen.getByLabelText('Destination 1') as HTMLInputElement).value).toBe('Thailand');
-    expect((screen.getByLabelText('City 1') as HTMLInputElement).value).toBe('Phuket');
     expect(screen.getByLabelText('Nights 1')).toHaveValue(5);
-    expect((screen.getByLabelText('City 2') as HTMLInputElement).value).toBe('Bangkok');
     expect(screen.getByLabelText('Nights 2')).toHaveValue(3);
+    // Create Lead no longer exposes the itinerary City column.
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('City 2')).not.toBeInTheDocument();
     // Traveller names + ages.
     await userEvent.click(screen.getByRole('button', { name: 'Traveller names' }));
     expect(screen.getByLabelText('Adult 1')).toHaveValue('Aarav Mehta');

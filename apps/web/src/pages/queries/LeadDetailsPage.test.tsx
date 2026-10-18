@@ -379,6 +379,45 @@ describe('Lead Detail page redesign', () => {
     view.unmount();
   });
 
+  it('omits the leading separator on itinerary rows whose city is empty', async () => {
+    const leadWithMixedItinerary = {
+      ...richLead,
+      itinerary: [
+        {
+          id: 'it-a',
+          country: 'Singapore Heaven Delight',
+          destination: '',
+          nights: 4,
+          sequence: 1,
+          arrivalDate: null,
+          departureDate: null,
+          notes: null,
+        },
+        {
+          id: 'it-b',
+          country: 'Thailand',
+          destination: 'Bangkok',
+          nights: 3,
+          sequence: 2,
+          arrivalDate: null,
+          departureDate: null,
+          notes: null,
+        },
+      ],
+    };
+    stubDetail({ ...richWorkspace, lead: leadWithMixedItinerary });
+    renderDetail();
+    await screen.findByText('Contact Information');
+
+    const itinerary = screen.getByText('Itinerary').closest('section')!;
+    const rows = within(itinerary).getAllByRole('listitem');
+    // Missing city: no stray leading comma, just the destination.
+    expect(rows[0]!.textContent).toContain('Singapore Heaven Delight');
+    expect(rows[0]!.textContent).not.toContain(',');
+    // Both present: the city and destination are still separated by a comma.
+    expect(rows[1]!.textContent).toContain('Bangkok, Thailand');
+  });
+
   it('hides empty sections and shows no misleading values', async () => {
     stubDetail({ ...richWorkspace, lead: minimalLead });
     renderDetail('lead-2');

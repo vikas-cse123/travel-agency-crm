@@ -103,7 +103,10 @@ export function assertTravelMonthYearPair(
 export const itineraryInputSchema = z
   .object({
     country: z.string().trim().min(1).max(80),
-    destination: z.string().trim().min(1).max(120),
+    // Lead itinerary city is optional: Create Lead collects only a Destination
+    // (stored in `country`). Existing leads may still carry a city; a blank
+    // value is accepted and preserved as-is (never auto-filled).
+    destination: z.string().trim().max(120).default(''),
     nights: z.coerce.number().int().min(0).max(365),
     sequence: z.coerce.number().int().min(1).max(100),
     arrivalDate: optionalDate,

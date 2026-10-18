@@ -455,12 +455,13 @@ describe('Phase 16 dashboard page', () => {
     expect(screen.queryByText(/regardless of the selected period/i)).not.toBeInTheDocument();
   });
 
-  it('hides the Net Profit card when its value is zero', async () => {
+  it('keeps the Net Profit card visible and shows ₹0.00 when its value is zero', async () => {
     stub(analytics({ financials: { ...analytics().financials, netProfit: '0.00' } }), operations());
     renderDashboard();
     await screen.findByText('Total Leads');
-    expect(screen.queryByText('Net Profit')).not.toBeInTheDocument();
-    // Neighbouring cards still render with no gap left behind.
+    expect(screen.getByText('Net Profit')).toBeInTheDocument();
+    expect(screen.getByText('₹0.00')).toBeInTheDocument();
+    // Neighbouring cards still render.
     expect(screen.getByText('Total Leads')).toBeInTheDocument();
     expect(screen.getByText('Agency Revenue')).toBeInTheDocument();
     expect(screen.getByText('Quotations')).toBeInTheDocument();
@@ -472,6 +473,17 @@ describe('Phase 16 dashboard page', () => {
     await screen.findByText('Total Leads');
     expect(screen.getByText('Net Profit')).toBeInTheDocument();
     expect(screen.getByText('₹80,000.00')).toBeInTheDocument();
+  });
+
+  it('shows the Net Profit card formatted for a negative value', async () => {
+    stub(
+      analytics({ financials: { ...analytics().financials, netProfit: '-15000.00' } }),
+      operations(),
+    );
+    renderDashboard();
+    await screen.findByText('Total Leads');
+    expect(screen.getByText('Net Profit')).toBeInTheDocument();
+    expect(screen.getByText('-₹15,000.00')).toBeInTheDocument();
   });
 
   it('hides the Net Profit card for missing values without NaN', async () => {

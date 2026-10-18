@@ -126,14 +126,6 @@ async function pickItineraryDestination(row: number, name: string) {
   fireEvent.change(input, { target: { value: name } });
   await userEvent.click(await screen.findByRole('option', { name }));
 }
-/** Pick a searchable itinerary city in the Create lead form. */
-async function pickItineraryCity(row: number, name: string) {
-  const input = screen.getByLabelText(`City ${row}`);
-  await waitFor(() => expect(input).toBeEnabled());
-  await userEvent.click(input);
-  fireEvent.change(input, { target: { value: name } });
-  await userEvent.click(await screen.findByRole('option', { name }));
-}
 describe('Phase 6 lead pages', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -384,7 +376,6 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('option', { name: 'Trivandrum' }));
 
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -485,7 +476,6 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('option', { name: 'Delhi' }));
 
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -596,6 +586,8 @@ describe('Phase 6 lead pages', () => {
       ['Departure city', 'Select city'],
       ['Destination 1', 'Select Destination'],
     ] as const;
+    // Create Lead and Edit Lead both omit the itinerary City column, so the
+    // shared controls are identical in either mode.
     const expectConsistentControls = () => {
       for (const [label, placeholder] of fieldExpectations) {
         const input = screen.getByLabelText(label);
@@ -603,13 +595,7 @@ describe('Phase 6 lead pages', () => {
         expect(input).toHaveAttribute('role', 'combobox');
         expect(input).toHaveAttribute('placeholder', placeholder);
       }
-      // City placeholder follows row state, not the mode; the control matches.
-      const itineraryCity = screen.getByLabelText('City 1');
-      expect(itineraryCity.tagName).toBe('INPUT');
-      expect(itineraryCity).toHaveAttribute('role', 'combobox');
-      expect(['Select City', 'Select a destination first']).toContain(
-        itineraryCity.getAttribute('placeholder'),
-      );
+      expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
       // Same labels and components beyond the dropdowns.
       expect(screen.getByRole('checkbox', { name: 'Vehicle' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Traveller names' })).toBeInTheDocument();
@@ -730,7 +716,6 @@ describe('Phase 6 lead pages', () => {
     await userEvent.selectOptions(screen.getByLabelText('Travel month'), '12');
     await userEvent.selectOptions(screen.getByLabelText('Travel year'), year);
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -847,7 +832,6 @@ describe('Phase 6 lead pages', () => {
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
     fireEvent.change(screen.getByLabelText('Travel Date'), { target: { value: '2026-09-10' } });
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -1093,7 +1077,6 @@ describe('Phase 6 lead pages', () => {
       String(new Date().getFullYear()),
     );
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -1179,7 +1162,6 @@ describe('Phase 6 lead pages', () => {
     await userEvent.click(screen.getByRole('option', { name: 'Goa Beach Escape — GBE' }));
     // Closed field shows only the public destination name.
     expect(destInput).toHaveValue('Goa Beach Escape');
-    await pickItineraryCity(1, 'Goa');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -1190,7 +1172,7 @@ describe('Phase 6 lead pages', () => {
       expect(JSON.stringify(body)).not.toContain('GBE');
     });
   });
-  it('searches itinerary destinations and cities with keyboard support', async () => {
+  it('searches itinerary destinations with keyboard support', async () => {
     const destinations = [
       {
         id: 'dest-sg',
@@ -1220,12 +1202,10 @@ describe('Phase 6 lead pages', () => {
     renderWithProviders(<LeadFormPage />);
     await screen.findByRole('heading', { name: 'Create lead' });
 
-    // Placeholders preserved; city locked until a destination is chosen.
+    // Create Lead exposes only a Destination per row (no City column).
     const destination = screen.getByLabelText('Destination 1');
     expect(destination).toHaveAttribute('placeholder', 'Select Destination');
-    const city = screen.getByLabelText('City 1');
-    expect(city).toBeDisabled();
-    expect(city).toHaveAttribute('placeholder', 'Select a destination first');
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
 
     // Typing filters destinations; Enter picks the highlighted match.
     await userEvent.click(destination);
@@ -1234,14 +1214,6 @@ describe('Phase 6 lead pages', () => {
     expect(screen.queryByRole('option', { name: 'Goa' })).not.toBeInTheDocument();
     await userEvent.keyboard('{ArrowDown}{Enter}');
     expect(destination).toHaveValue('Singapore');
-
-    // City unlocks with the destination's cities and the same search behavior.
-    await waitFor(() => expect(city).toBeEnabled());
-    expect(city).toHaveAttribute('placeholder', 'Select City');
-    await userEvent.click(city);
-    fireEvent.change(city, { target: { value: 'sing' } });
-    await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
-    expect(city).toHaveValue('Singapore');
 
     // Escape closes without changing the value; outside click does too.
     await userEvent.click(destination);
@@ -1259,7 +1231,7 @@ describe('Phase 6 lead pages', () => {
       screen.queryByRole('listbox', { name: 'Destination 1 search results' }),
     ).not.toBeInTheDocument();
   });
-  it('renders itinerary dropdown menus in a portal above the itinerary card', async () => {
+  it('renders the itinerary destination menu in a portal above the itinerary card', async () => {
     const destinations = [
       {
         id: 'dest-sg',
@@ -1297,112 +1269,8 @@ describe('Phase 6 lead pages', () => {
     expect(destMenu.style.maxHeight).not.toBe('');
     expect(destMenu.style.width).not.toBe('');
     await pickItineraryDestination(1, 'Singapore');
-
-    // City menu gets the same portal treatment.
-    await userEvent.click(screen.getByLabelText('City 1'));
-    const cityMenu = await screen.findByRole('listbox', { name: 'City 1 search results' });
-    expect(cityMenu.closest('section')).toBeNull();
-    expect(cityMenu.parentElement).toBe(document.body);
-    expect(cityMenu.style.position).toBe('fixed');
-    await pickItineraryCity(1, 'Singapore');
   });
-  it('clears an invalid itinerary city when the destination changes', async () => {
-    const destinations = [
-      {
-        id: 'dest-sg',
-        name: 'Singapore',
-        status: 'ACTIVE',
-        cities: [{ id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } }],
-      },
-      {
-        id: 'dest-goa',
-        name: 'Goa',
-        status: 'ACTIVE',
-        cities: [{ id: 'dc-goa', sequence: 1, city: { name: 'Goa' } }],
-      },
-    ];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes('/masters/destinations'))
-          return response({
-            data: destinations,
-            pagination: { page: 1, pageSize: 100, total: 2, totalPages: 2 },
-          });
-        return response(lookups);
-      }),
-    );
-    renderWithProviders(<LeadFormPage />);
-    await screen.findByRole('heading', { name: 'Create lead' });
-    await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
-    expect(screen.getByLabelText('City 1')).toHaveValue('Singapore');
-
-    // Switching destinations drops the now-invalid city.
-    await pickItineraryDestination(1, 'Goa');
-    expect(screen.getByLabelText('Destination 1')).toHaveValue('Goa');
-    expect(screen.getByLabelText('City 1')).toHaveValue('');
-  });
-  it('keeps a shared itinerary city when the new destination still offers it', async () => {
-    const destinations = [
-      {
-        id: 'dest-sg',
-        name: 'Singapore',
-        status: 'ACTIVE',
-        cities: [
-          { id: 'dc-sg', sequence: 1, city: { name: 'Singapore' } },
-          { id: 'dc-hub-sg', sequence: 2, city: { name: 'Hubtown' } },
-        ],
-      },
-      {
-        id: 'dest-goa',
-        name: 'Goa',
-        status: 'ACTIVE',
-        cities: [
-          { id: 'dc-goa', sequence: 1, city: { name: 'Goa' } },
-          { id: 'dc-hub-goa', sequence: 2, city: { name: 'Hubtown' } },
-        ],
-      },
-    ];
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
-      const url = String(input);
-      if (url.includes('/masters/destinations'))
-        return response({
-          data: destinations,
-          pagination: { page: 1, pageSize: 100, total: 2, totalPages: 2 },
-        });
-      if (url.endsWith('/queries') && options?.method === 'POST')
-        return {
-          ok: true,
-          status: 201,
-          json: async () => ({ success: true, data: lead }),
-        } as Response;
-      return response(lookups);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    renderWithProviders(<LeadFormPage />);
-    await screen.findByRole('heading', { name: 'Create lead' });
-    await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
-    await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
-
-    await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Hubtown');
-    // Hubtown belongs to Goa too, so it survives the destination change.
-    await pickItineraryDestination(1, 'Goa');
-    expect(screen.getByLabelText('Destination 1')).toHaveValue('Goa');
-    expect(screen.getByLabelText('City 1')).toHaveValue('Hubtown');
-
-    await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
-    await waitFor(() => {
-      const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
-      expect(post).toBeDefined();
-      const body = JSON.parse(String(post![1]!.body));
-      expect(body.itinerary).toHaveLength(1);
-      expect(body.itinerary[0]).toMatchObject({ country: 'Goa', destination: 'Hubtown' });
-    });
-  }, 30000);
-  it('supports searchable destinations and cities on rows added with Add More', async () => {
+  it('supports searchable destinations on rows added with Add More', async () => {
     const destinations = [
       {
         id: 'dest-sg',
@@ -1439,18 +1307,13 @@ describe('Phase 6 lead pages', () => {
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
 
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getAllByRole('button', { name: 'Add More' })[0]!);
     expect(screen.getByLabelText('Destination 2')).toHaveAttribute(
       'placeholder',
       'Select Destination',
     );
-    expect(screen.getByLabelText('City 2')).toHaveAttribute(
-      'placeholder',
-      'Select a destination first',
-    );
+    expect(screen.queryByLabelText('City 2')).not.toBeInTheDocument();
     await pickItineraryDestination(2, 'Goa');
-    await pickItineraryCity(2, 'Goa');
 
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
@@ -1458,8 +1321,8 @@ describe('Phase 6 lead pages', () => {
       expect(post).toBeDefined();
       const body = JSON.parse(String(post![1]!.body));
       expect(body.itinerary).toHaveLength(2);
-      expect(body.itinerary[0]).toMatchObject({ country: 'Singapore', destination: 'Singapore' });
-      expect(body.itinerary[1]).toMatchObject({ country: 'Goa', destination: 'Goa' });
+      expect(body.itinerary[0]).toMatchObject({ country: 'Singapore', destination: '' });
+      expect(body.itinerary[1]).toMatchObject({ country: 'Goa', destination: '' });
     });
   });
   it('loads the stored itinerary into searchable fields on edit', async () => {
@@ -1535,22 +1398,24 @@ describe('Phase 6 lead pages', () => {
     // stays plain.
     const destination = screen.getByLabelText('Destination 1');
     await waitFor(() => expect(destination).toHaveValue('Goa Beach Escape'));
-    expect(screen.getByLabelText('City 1')).toHaveValue('Goa');
+    // The itinerary City column is gone; a stored city is preserved internally
+    // instead of being exposed in the form.
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
     // Private names stay searchable without leaking into stored values.
     await userEvent.click(destination);
     fireEvent.change(destination, { target: { value: 'avd' } });
     expect(screen.getByRole('option', { name: 'Lucknow — avd' })).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
-    // Changing the destination clears the city; saving keeps payload formats.
+    // Changing the destination clears a city that no longer applies; saving
+    // keeps payload formats.
     await pickItineraryDestination(1, 'Singapore');
-    expect(screen.getByLabelText('City 1')).toHaveValue('');
-    await pickItineraryCity(1, 'Singapore');
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Save changes/i }));
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
       expect(patch).toBeDefined();
       const body = JSON.parse(String(patch![1]!.body));
-      expect(body.itinerary[0]).toMatchObject({ country: 'Singapore', destination: 'Singapore' });
+      expect(body.itinerary[0]).toMatchObject({ country: 'Singapore', destination: '' });
       expect(JSON.stringify(body)).not.toContain('GBE');
     });
   });
@@ -3480,7 +3345,6 @@ describe('Admin lead self-assignment (frontend)', () => {
       String(new Date().getFullYear()),
     );
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -3540,7 +3404,6 @@ describe('Admin lead self-assignment (frontend)', () => {
       String(new Date().getFullYear()),
     );
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -3640,7 +3503,6 @@ describe('Admin lead self-assignment (frontend)', () => {
       String(new Date().getFullYear()),
     );
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
     await userEvent.click(screen.getByRole('button', { name: /Create Lead/i }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST');
@@ -4864,7 +4726,6 @@ describe('Lead traveller names', () => {
     await userEvent.type(screen.getByLabelText('Name'), 'Test Lead');
     await userEvent.type(screen.getByLabelText('Phone'), '9876543210');
     await pickItineraryDestination(1, 'Singapore');
-    await pickItineraryCity(1, 'Singapore');
   }
 
   async function postedBody(fetchMock: ReturnType<typeof stubCreate>) {

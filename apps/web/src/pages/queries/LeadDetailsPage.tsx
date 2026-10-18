@@ -340,7 +340,7 @@ export function LeadDetailsPage() {
                       {row.sequence}
                     </span>
                     <strong>
-                      {row.destination}, {row.country}
+                      {[row.destination, row.country].filter(Boolean).join(', ')}
                     </strong>
                     <span>
                       {row.nights} night{row.nights === 1 ? '' : 's'}

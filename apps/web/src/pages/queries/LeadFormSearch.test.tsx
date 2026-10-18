@@ -333,88 +333,27 @@ describe('Lead searchable fields regression', () => {
     expect(first).toHaveValue('Singapore');
   }, 30000);
 
-  it('Create: itinerary City follows its destination and survives shared cities', async () => {
+  it('itinerary rows expose only a Destination (no City column)', async () => {
     await renderCreate();
-    const destination = screen.getByLabelText('Destination 1');
-    const city = screen.getByLabelText('City 1') as HTMLInputElement;
-
-    // No destination: the city field is disabled.
-    expect(city).toBeDisabled();
-
-    await search(destination, 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
-    await waitFor(() => expect(city).toBeEnabled());
-
-    // City search, Backspace, clear, reselect.
-    await search(city, 'bang');
-    await userEvent.click(screen.getByRole('option', { name: 'Bangkok' }));
-    expect(city).toHaveValue('Bangkok');
-    await userEvent.click(city);
-    fireEvent.change(city, { target: { value: 'Bangko' } });
-    expect(screen.getByRole('option', { name: 'Bangkok' })).toBeInTheDocument();
-    fireEvent.change(city, { target: { value: '' } });
-    expect(city).toHaveValue('');
-    expect(screen.getByRole('option', { name: 'Phuket' })).toBeInTheDocument();
-    fireEvent.change(city, { target: { value: 'phuk' } });
-    await userEvent.click(screen.getByRole('option', { name: 'Phuket' }));
-    expect(city).toHaveValue('Phuket');
-
-    // Switching to a destination without Phuket clears the city.
-    await search(destination, 'singapore');
-    await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
-    expect(city).toHaveValue('');
-
-    // A shared city (Bangkok) survives the destination switch.
-    await search(city, 'bang');
-    await userEvent.click(screen.getByRole('option', { name: 'Bangkok' }));
-    expect(city).toHaveValue('Bangkok');
-    await search(destination, 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
-    expect(destination).toHaveValue('Thailand');
-    expect(city).toHaveValue('Bangkok');
-
-    // Keyboard selection works for city too.
-    await search(city, 'phuk');
-    await userEvent.keyboard('{ArrowDown}{Enter}');
-    expect(city).toHaveValue('Phuket');
-  }, 30000);
-
-  it('Create: second itinerary City row is independent of the first', async () => {
-    await renderCreate();
-    await search(screen.getByLabelText('Destination 1'), 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
-    await search(screen.getByLabelText('City 1'), 'phuk');
-    await userEvent.click(screen.getByRole('option', { name: 'Phuket' }));
-
+    expect(screen.getByLabelText('Destination 1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Add More/i }));
-    await search(screen.getByLabelText('Destination 2'), 'singapore');
-    await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
-    const city2 = screen.getByLabelText('City 2');
-    await search(city2, 'sing');
-    await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
-
-    expect(screen.getByLabelText('City 1')).toHaveValue('Phuket');
-    expect(city2).toHaveValue('Singapore');
-    // First row menu only ever listed Thailand cities.
-    await userEvent.click(screen.getByLabelText('City 1'));
-    fireEvent.change(screen.getByLabelText('City 1'), { target: { value: '' } });
-    const menu = screen.getByRole('listbox', { name: 'City 1 search results' });
-    expect(within(menu).getByRole('option', { name: 'Bangkok' })).toBeInTheDocument();
-    expect(within(menu).queryByRole('option', { name: 'Singapore' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Destination 2')).toBeInTheDocument();
+    expect(screen.queryByLabelText('City 2')).not.toBeInTheDocument();
   }, 30000);
 
-  it('Edit: saved values are preserved and every field stays searchable', async () => {
+  it('Edit: the City column is gone while saved itinerary values are preserved', async () => {
     await renderEdit();
     const country = screen.getByLabelText('Departure country');
     const city = screen.getByLabelText('Departure city');
     const destination = screen.getByLabelText('Destination 1');
-    const itineraryCity = screen.getByLabelText('City 1');
 
     // Saved values load intact (committed input shows the public name).
     expect(country).toHaveValue('India');
     expect(city).toHaveValue('Chennai');
     expect(destination).toHaveValue('Thailand');
-    expect(itineraryCity).toHaveValue('Bangkok');
+    // The itinerary City field is no longer exposed in Edit mode.
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
 
     // Departure city: Backspace, clear, and a fresh search.
     await userEvent.click(city);
@@ -432,20 +371,11 @@ describe('Lead searchable fields regression', () => {
     expect(country).toHaveValue('Germany');
     expect(city).toHaveValue('');
 
-    // Itinerary destination + city stay searchable with saved values.
+    // Itinerary Destination stays searchable with its saved value.
     await search(destination, 'sing');
     await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
-    // Bangkok exists in Singapore too, so it survives the switch.
-    expect(itineraryCity).toHaveValue('Bangkok');
-    await search(itineraryCity, 'sing');
-    await userEvent.click(screen.getByRole('option', { name: 'Singapore' }));
-    expect(itineraryCity).toHaveValue('Singapore');
-    // Backspace and clear on the edited itinerary city.
-    await userEvent.click(itineraryCity);
-    fireEvent.change(itineraryCity, { target: { value: 'Singapor' } });
-    expect(screen.getByRole('option', { name: 'Singapore' })).toBeInTheDocument();
-    fireEvent.change(itineraryCity, { target: { value: '' } });
-    expect(itineraryCity).toHaveValue('');
+    expect(destination).toHaveValue('Singapore');
+    expect(screen.queryByLabelText('City 1')).not.toBeInTheDocument();
   }, 30000);
 
   it('Create: itinerary Destination is findable by private name and commits the public name', async () => {
@@ -686,24 +616,19 @@ describe('itinerary destination country groups', () => {
   });
 });
 
-describe('itinerary City dropdown upward positioning', () => {
+describe('itinerary Destination dropdown upward positioning', () => {
   const originalRect = window.HTMLElement.prototype.getBoundingClientRect;
   const originalInnerHeight = window.innerHeight;
 
-  // Destination sits left, City sits right; both near the viewport bottom so
-  // a downward menu would fit but must still open upward.
-  function mockTwoInputs() {
+  // The Destination input sits near the viewport bottom, so a downward menu
+  // would fit but the dropdown must still open upward.
+  function mockDestinationInput() {
     Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
     window.HTMLElement.prototype.getBoundingClientRect = function () {
       const label = (this as HTMLElement).getAttribute?.('aria-label') ?? '';
       if (label === 'Destination 1')
         return {
           x: 100, y: 600, left: 100, top: 600, right: 350, bottom: 638,
-          width: 250, height: 38, toJSON: () => ({}),
-        } as DOMRect;
-      if (label === 'City 1')
-        return {
-          x: 400, y: 600, left: 400, top: 600, right: 650, bottom: 638,
           width: 250, height: 38, toJSON: () => ({}),
         } as DOMRect;
       return originalRect.call(this);
@@ -715,42 +640,16 @@ describe('itinerary City dropdown upward positioning', () => {
     Object.defineProperty(window, 'innerHeight', { value: originalInnerHeight, configurable: true });
   });
 
-  const destMenu = () => screen.queryByRole('listbox', { name: 'Destination 1 search results' });
+  it('opens the itinerary Destination menu above its own input', async () => {
+    mockDestinationInput();
+    await renderEdit();
+    const destination = screen.getByLabelText('Destination 1') as HTMLInputElement;
 
-  it('opens City above its own input, independent of the Destination menu', async () => {
-    mockTwoInputs();
-    await renderCreate();
-    const destination = screen.getByLabelText('Destination 1');
-    await search(destination, 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
-    const city = screen.getByLabelText('City 1') as HTMLInputElement;
-    await waitFor(() => expect(city).toBeEnabled());
-
-    await userEvent.click(city);
-    const first = await screen.findByRole('listbox', { name: 'City 1 search results' });
-    // Anchored to the City input (left 400), above it — not the Destination's.
-    expect(first.style.left).toBe('400px');
-    expect(Number.parseFloat(first.style.top)).toBeLessThan(600);
-    expect(destMenu()).not.toBeInTheDocument();
-  });
-
-  it('reopening City after selecting a city still opens above', async () => {
-    mockTwoInputs();
-    await renderCreate();
-    const destination = screen.getByLabelText('Destination 1');
-    await search(destination, 'thailand');
-    await userEvent.click(screen.getByRole('option', { name: 'Thailand — Thai Private' }));
-    const city = screen.getByLabelText('City 1') as HTMLInputElement;
-    await waitFor(() => expect(city).toBeEnabled());
-
-    await search(city, 'bang');
-    await userEvent.click(screen.getByRole('option', { name: 'Bangkok' }));
-    expect(city).toHaveValue('Bangkok');
-
-    await userEvent.click(city);
-    const reopened = await screen.findByRole('listbox', { name: 'City 1 search results' });
-    expect(reopened.style.left).toBe('400px');
-    expect(Number.parseFloat(reopened.style.top)).toBeLessThan(600);
+    await userEvent.click(destination);
+    const menu = await screen.findByRole('listbox', { name: 'Destination 1 search results' });
+    // Anchored to the Destination input (left 100), above it.
+    expect(menu.style.left).toBe('100px');
+    expect(Number.parseFloat(menu.style.top)).toBeLessThan(600);
   });
 });
 

@@ -479,6 +479,8 @@ export function LeadForm({
   // inputs stay mounted (CSS-hidden) so typed or saved names are preserved.
   const [travellerNamesOpen, setTravellerNamesOpen] = useState(false);
   const leadIdentity = lead?.id ?? null;
+  // Itinerary rows collect just a Destination. Any city already saved on a lead
+  // is preserved internally and submitted untouched; the field is never shown.
   useEffect(() => {
     setTravelTiming(travelTimingModeFor(lead));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -540,8 +542,9 @@ export function LeadForm({
       .map((city) => ({ value: city, label: city }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [departureCountry, lookups?.cities]);
-  // Itinerary destinations come from the Destinations master so each row's City
-  // dropdown can show the cities linked to the chosen destination.
+  // Itinerary destinations come from the Destinations master; an existing
+  // lead's City dropdown (Edit only) shows the cities linked to the chosen
+  // destination, and the map is also used to drop a city that no longer fits.
   const itineraryDestinations = useDestinations(ITINERARY_DESTINATIONS_PARAMS);
   const destinationCityMap = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -651,7 +654,7 @@ export function LeadForm({
   };
   const submit = (v: FormValues) => {
     const itinerary = v.itinerary
-      .filter((r) => r.country.trim() && r.destination.trim())
+      .filter((r) => r.country.trim())
       .map((r, index) => ({
         ...r,
         sequence: index + 1,
@@ -684,7 +687,7 @@ export function LeadForm({
     }
     if (itinerary.length === 0) {
       setLocalError(
-        'Please fix the following errors: At least one destination and city must be selected.',
+        'Please fix the following errors: At least one destination must be selected.',
       );
       return;
     }
@@ -1124,7 +1127,7 @@ export function LeadForm({
           {fields.map((field, index) => (
             <div
               key={field.id}
-              className="grid gap-3 rounded-lg border border-slate-200 bg-card p-4 md:grid-cols-[1fr_1fr_180px_240px]"
+              className="grid gap-3 rounded-lg border border-slate-200 bg-card p-4 md:grid-cols-[1fr_180px_240px]"
             >
               <Field label={`Destination ${index + 1}`}>
                 <SearchableSelect
@@ -1143,23 +1146,6 @@ export function LeadForm({
                       setValue(`itinerary.${index}.destination`, '', { shouldDirty: true });
                     }
                   }}
-                />
-              </Field>
-              <Field label={`City ${index + 1}`}>
-                <SearchableSelect
-                  ariaLabel={`City ${index + 1}`}
-                  placeholder={
-                    itineraryRows?.[index]?.country ? 'Select City' : 'Select a destination first'
-                  }
-                  options={(
-                    destinationCityMap.get(itineraryRows?.[index]?.country ?? '') ?? []
-                  ).map((cityName) => ({ value: cityName, label: cityName }))}
-                  openUpward
-                  value={itineraryRows?.[index]?.destination ?? ''}
-                  disabled={!itineraryRows?.[index]?.country}
-                  onChange={(next) =>
-                    setValue(`itinerary.${index}.destination`, next, { shouldDirty: true })
-                  }
                 />
               </Field>
               <Field label="Nights">
