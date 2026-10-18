@@ -12997,8 +12997,8 @@ describe.skip('Phase 14 master selectors', () => {
     ).toEqual(['First activity', '', 'Second activity']);
   });
 
-  it('persists an independent PDF and weblink time choice for every sightseeing activity', async () => {
-    const activity = (name: string, startTime: string, sequence: number) => ({
+  it('auto-includes a populated sightseeing start time and clears it on demand', async () => {
+    const activity = (name: string, startTime: string | null, sequence: number) => ({
       sightseeingId: null,
       name,
       description: null,
@@ -13028,7 +13028,7 @@ describe.skip('Phase 14 master selectors', () => {
               dailyTransfer: 'SHARED',
               activities: [
                 activity('Morning tour', '09:00', 1),
-                activity('Evening tour', '18:30', 2),
+                activity('Evening tour', null, 2),
               ],
             },
           ],
@@ -13039,16 +13039,24 @@ describe.skip('Phase 14 master selectors', () => {
     renderBuilderPage();
     await openTab('Sightseeing');
 
-    const firstToggle = await screen.findByRole('checkbox', {
-      name: 'Day 1 activity 1 include time in PDF and weblink',
-    });
-    const secondToggle = screen.getByRole('checkbox', {
-      name: 'Day 1 activity 2 include time in PDF and weblink',
-    });
-    // Legacy activities with no stored flag remain visible by default.
-    expect(firstToggle).toBeChecked();
-    expect(secondToggle).toBeChecked();
-    await userEvent.click(secondToggle);
+    // The legacy visibility checkbox is gone; a populated time is shown automatically.
+    expect(
+      screen.queryByLabelText('Day 1 activity 1 include time in PDF and weblink'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Clear day 1 activity 1 start time' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Clear day 1 activity 2 start time' }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Clear day 1 activity 1 start time' }),
+    );
+    expect(screen.getByLabelText('Day 1 activity 1 start time')).toHaveValue('');
+    expect(
+      screen.queryByRole('button', { name: 'Clear day 1 activity 1 start time' }),
+    ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
     await waitFor(() => {
@@ -13058,8 +13066,8 @@ describe.skip('Phase 14 master selectors', () => {
     const savedActivities = JSON.parse(String(patch![1]!.body)).sightseeingDetails.days[0]
       .activities;
     expect(savedActivities).toMatchObject([
-      { name: 'Morning tour', startTime: '09:00', showTime: true },
-      { name: 'Evening tour', startTime: '18:30', showTime: false },
+      { name: 'Morning tour', startTime: null, showTime: false },
+      { name: 'Evening tour', startTime: null, showTime: false },
     ]);
   });
 
@@ -17297,10 +17305,8 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getByLabelText('Day 7 activity 1 name')).toHaveValue('Departure from Singapore');
     expect(screen.getByLabelText('Day 7 activity 1 start time')).toHaveValue('10:00');
     expect(
-      screen.getByRole('checkbox', {
-        name: 'Day 7 activity 1 include time in PDF and weblink',
-      }),
-    ).toBeChecked();
+      screen.getByRole('button', { name: 'Clear day 7 activity 1 start time' }),
+    ).toBeInTheDocument();
   });
 
   it('uses departure master for the final day and never assigns a non-departure by sequence', async () => {
@@ -17369,10 +17375,8 @@ describe.skip('Phase 14 master selectors', () => {
     expect(screen.getByLabelText('Day 3 activity 1 name')).toHaveValue('Departure from Singapore');
     expect(screen.getByLabelText('Day 3 activity 1 start time')).toHaveValue('');
     expect(
-      screen.getByRole('checkbox', {
-        name: 'Day 3 activity 1 include time in PDF and weblink',
-      }),
-    ).not.toBeChecked();
+      screen.queryByRole('button', { name: 'Clear day 3 activity 1 start time' }),
+    ).not.toBeInTheDocument();
     // Normal day never gets the departure master
     expect(screen.getByLabelText('Day 1 activity 1 name')).not.toHaveValue(
       'Departure from Singapore',
@@ -19245,6 +19249,19 @@ describe('Public weblink — activity pricing', () => {
       const term = screen.getByText(label as string);
       expect(term.nextElementSibling).toHaveTextContent(amount as string);
     }
+  });
+
+  it('shows a populated start time even when the legacy visibility flag is false', async () => {
+    await renderWithActivities([
+      {
+        name: 'Singapore Zoo',
+        description: '<p>Meet the animals.</p>',
+        startTime: '09:00',
+        showTime: false,
+        dailyTransfer: 'SHARED',
+      },
+    ]);
+    expect(screen.getByText(/9:00 AM/)).toBeInTheDocument();
   });
 
   it('renders custom labels exactly as entered', async () => {

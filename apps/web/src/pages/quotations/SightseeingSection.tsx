@@ -1110,44 +1110,43 @@ function DayCard({
                           />
                         </div>
                       </label>
-                      <label className={labelCls}>
-                        Start Time
-                        <input
-                          type="time"
-                          lang="en-US"
-                          aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} start time`}
-                          className={`${field} mt-1`}
-                          {...form.register(fp(`${abase}.startTime`), {
-                            onChange: (event) =>
-                              form.setValue(
-                                fp(`${abase}.showTime`),
-                                Boolean(event.target.value) as never,
-                                { shouldDirty: true },
-                              ),
-                          })}
-                        />
-                        <span className="mt-2 flex items-start gap-2 text-xs font-medium normal-case tracking-normal text-slate-600">
+                      <div>
+                        <label className={labelCls}>
+                          Start Time
                           <input
-                            {...form.register(fp(`${abase}.showTime`))}
-                            type="checkbox"
-                            aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} include time in PDF and weblink`}
-                            checked={
-                              (form.watch(fp(`${abase}.showTime`)) as boolean | undefined) === true
-                            }
-                            onChange={(event) =>
-                              form.setValue(
-                                fp(`${abase}.showTime`),
-                                event.target.checked as never,
-                                {
-                                  shouldDirty: true,
-                                },
-                              )
-                            }
-                            className="mt-0.5"
+                            type="time"
+                            lang="en-US"
+                            aria-label={`Day ${dayIndex + 1} activity ${aIndex + 1} start time`}
+                            className={`${field} mt-1`}
+                            {...form.register(fp(`${abase}.startTime`), {
+                              onChange: (event) =>
+                                form.setValue(
+                                  fp(`${abase}.showTime`),
+                                  Boolean(event.target.value) as never,
+                                  { shouldDirty: true },
+                                ),
+                            })}
                           />
-                          Include time in PDF and weblink
-                        </span>
-                      </label>
+                        </label>
+                        {form.watch(fp(`${abase}.startTime`)) ? (
+                          <button
+                            type="button"
+                            aria-label={`Clear day ${dayIndex + 1} activity ${aIndex + 1} start time`}
+                            title="Clear start time"
+                            onClick={() => {
+                              form.setValue(fp(`${abase}.startTime`), null as never, {
+                                shouldDirty: true,
+                              });
+                              form.setValue(fp(`${abase}.showTime`), false as never, {
+                                shouldDirty: true,
+                              });
+                            }}
+                            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-800"
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <label className={labelCls}>
                       Custom Name

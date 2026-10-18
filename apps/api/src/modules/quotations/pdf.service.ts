@@ -2484,7 +2484,7 @@ export async function renderQuotationPdf(input: QuotationPdfInput): Promise<Buff
                 });
           const aTransfer = pdfTransferLabel(a.dailyTransfer ?? day.dailyTransfer);
           const aMeta =
-            a.showTime !== false && a.startTime ? `STARTS: ${formatClock12Hour(a.startTime)}` : '';
+            a.startTime ? `STARTS: ${formatClock12Hour(a.startTime)}` : '';
 
           let imgColH = imgW + 8;
           if (aMeta) imgColH += 22 + 8;

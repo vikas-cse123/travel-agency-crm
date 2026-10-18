@@ -1278,9 +1278,7 @@ function SightseeingItineraryView({
               (activity) => activity.name?.trim() || activity.description?.trim(),
             );
             const primaryActivityForHeader =
-              validActivities.find(
-                (a) => a.showTime !== false && a.startTime?.trim(),
-              ) ?? null;
+              validActivities.find((a) => a.startTime?.trim()) ?? null;
             const headerTimeLabel = primaryActivityForHeader?.startTime
               ? `${formatTime12Hour(primaryActivityForHeader.startTime)}${primaryActivityForHeader.duration ? ` · ${primaryActivityForHeader.duration}` : ''}`
               : null;

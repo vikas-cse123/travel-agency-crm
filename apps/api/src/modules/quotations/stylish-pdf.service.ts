@@ -2204,7 +2204,7 @@ export async function renderStylishQuotationPdf(input: QuotationPdfInput): Promi
             },
           );
         let metaTop = top + 88;
-        if (activity.showTime !== false && activity.startTime) {
+        if (activity.startTime) {
           doc.font('Bold').fontSize(7.2).fillColor(NAVY).text('Time', dayX, metaTop);
           doc
             .font('Body')

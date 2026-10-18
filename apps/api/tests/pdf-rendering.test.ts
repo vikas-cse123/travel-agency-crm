@@ -883,7 +883,7 @@ describe('Stylish quotation PDF', () => {
     }
   });
 
-  it('renders each sightseeing activity time independently in 12-hour format', async () => {
+  it('renders every populated sightseeing time in 12-hour format regardless of the legacy flag', async () => {
     const input: Parameters<typeof renderQuotationPdf>[0] = {
       company: footerEmptyCompanyForOverlap(),
       quotation: quotationOverlap(),
@@ -902,7 +902,7 @@ describe('Stylish quotation PDF', () => {
               activities: [
                 { name: 'Morning Tour', description: null, startTime: '09:00', showTime: true },
                 {
-                  name: 'Hidden Evening Tour',
+                  name: 'Evening Tour',
                   description: null,
                   startTime: '18:30',
                   showTime: false,
@@ -920,8 +920,9 @@ describe('Stylish quotation PDF', () => {
       const visible = pdfText(pdf);
       expect(visible).toContain('Morning Tour');
       expect(visible).toContain('9:00 AM');
-      expect(visible).toContain('Hidden Evening Tour');
-      expect(visible).not.toContain('6:30 PM');
+      // A populated time shows even when the removed checkbox stored false.
+      expect(visible).toContain('Evening Tour');
+      expect(visible).toContain('6:30 PM');
       expect(visible).toContain('Untimed Visit');
     }
   });
