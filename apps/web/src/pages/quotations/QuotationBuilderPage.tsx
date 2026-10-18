@@ -125,6 +125,7 @@ import { PinnedLiveQuotationPreview, previewDestinations, previewDurationNights,
 import { resolveWeblinkDisplay, resolveWeblinkProfile } from './PublicQuotationPage';
 import { dateShort } from './FlightPublicView';
 import { formatPublicQuotationNumber } from './quotationContact';
+import { deriveDestinationSummary, repairLegacyItinerary } from './quotationItineraryRepair';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -3649,7 +3650,12 @@ export function QuotationBuilderPage() {
       weblinkDurationText: version.weblinkDurationText ?? null,
       weblinkProfileDestination: version.weblinkProfileDestination ?? null,
       weblinkProfile: version.weblinkProfile ?? null,
-      destinationSummary: version.destinationSummary,
+      destinationSummary: version.destinationSummary?.trim()
+        ? version.destinationSummary
+        : deriveDestinationSummary(
+            quotation.data?.destinationSummary,
+            quotation.data?.query?.itinerary ?? [],
+          ),
       travelStartDate: version.travelStartDate ? new Date(version.travelStartDate) : null,
       travelEndDate: version.travelEndDate ? new Date(version.travelEndDate) : null,
       currency: version.currency,
@@ -3796,7 +3802,10 @@ export function QuotationBuilderPage() {
           : prefilledSightseeing,
       notes: version.notes,
       internalNotes: version.internalNotes ?? null,
-      itinerary: version.itinerary.map((row) => ({
+      itinerary: repairLegacyItinerary(
+        version.itinerary,
+        quotation.data?.query?.itinerary ?? [],
+      ).map((row) => ({
         ...row,
         date: row.date ? new Date(row.date) : null,
       })),

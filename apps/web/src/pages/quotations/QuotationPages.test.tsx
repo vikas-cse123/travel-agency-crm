@@ -11791,6 +11791,76 @@ describe('Quotation Builder - default hotel destination prefill', () => {
       screen.getAllByRole('button', { name: /^Select sightseeing day \d+$/ }),
     ).toHaveLength(1);
   });
+
+  it(
+    'derives a missing version destination summary from the lead so an older quotation can be saved',
+    async () => {
+      // An older quotation can store an empty version destinationSummary (the
+      // required field used to be pre-filled only from the blank lead city).
+      // Reopening it must derive the summary from the lead's Master Destination
+      // so the required-field validation no longer blocks saving.
+      const quotation = {
+        ...builderQuotation({
+          destinationSummary: '',
+          itinerary: [
+            {
+              id: 'legacy-1',
+              dayNumber: 1,
+              date: null,
+              title: 'Azerbaijan',
+              destination: 'Azerbaijan',
+              description: '4 night stay in Azerbaijan.',
+              meals: null,
+              overnightLocation: 'Azerbaijan',
+              activities: null,
+              transfers: null,
+              notes: null,
+              sequence: 1,
+            },
+          ],
+        }),
+        destinationSummary: '',
+        query: {
+          id: 'lead-az',
+          queryNumber: 'QRY-AZ',
+          leadStage: 'NEW_LEAD',
+          departureCity: 'Delhi',
+          departureCountry: 'India',
+          itinerary: [
+            {
+              id: 'stay-1',
+              country: 'Azerbaijan',
+              destination: '',
+              nights: 4,
+              sequence: 1,
+              arrivalDate: null,
+              departureDate: null,
+            },
+          ],
+        },
+      };
+      const fetchMock = masterFetch(quotation);
+      vi.stubGlobal('fetch', fetchMock);
+      renderBuilderPage();
+      await openTab('Sightseeing');
+      await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+      const patchCall = await waitFor(
+        () => {
+          const call = fetchMock.mock.calls.find(
+            ([, options]) =>
+              options?.method === 'PATCH' &&
+              String(options.body ?? '').includes('"destinationSummary"'),
+          );
+          expect(call).toBeDefined();
+          return call!;
+        },
+        { timeout: 5000 },
+      );
+      const body = JSON.parse(String(patchCall[1]!.body)) as { destinationSummary: string };
+      expect(body.destinationSummary).toBe('Azerbaijan');
+    },
+    20000,
+  );
 });
 
 

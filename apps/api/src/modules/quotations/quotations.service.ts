@@ -2575,14 +2575,20 @@ export const quotationsService = {
       if (!original) throw new NotFoundError('Source quotation version not found.');
       source = fromVersion(original);
     }
+    // The lead itinerary stores the Master Destination in `country` and an
+    // optional city in `destination` (Create Lead no longer collects a city, so
+    // `destination` is blank on new leads). Build the destination summary from
+    // each stay's city when present and otherwise its Master Destination — never
+    // from the blank city alone, which would collapse to an empty/invalid value.
+    const leadDestinationParts = lead.itinerary
+      .map((row) => (row.destination ?? '').trim() || (row.country ?? '').trim())
+      .filter((part) => part.length > 0);
     const destination =
       input.destinationSummary ??
       source?.destinationSummary ??
-      (lead.itinerary.map((row) => row.destination).join(' • ') ||
-        lead.departureCity ||
-        'Travel package');
+      (leadDestinationParts.join(' • ') || lead.departureCity || 'Travel package');
     const primaryDestination =
-      lead.itinerary[0]?.destination?.trim() ||
+      leadDestinationParts[0] ||
       destination.split(/[•(→>,]/)[0]?.trim() ||
       destination;
     const defaultTitle = `${primaryDestination} Package for ${lead.customerName}`;
@@ -2632,19 +2638,28 @@ export const quotationsService = {
       itinerary:
         input.version?.itinerary ??
         source?.itinerary ??
-        lead.itinerary.map((row, index) => ({
-          dayNumber: index + 1,
-          date: row.arrivalDate,
-          title: row.destination,
-          destination: row.destination,
-          description: row.notes ?? `${row.nights} night stay in ${row.destination}.`,
-          meals: null,
-          overnightLocation: row.destination,
-          activities: null,
-          transfers: null,
-          notes: null,
-          sequence: index + 1,
-        })),
+        lead.itinerary.map((row, index) => {
+          // The lead itinerary stores the Master Destination in `country` and an
+          // optional city in `destination` (Create Lead no longer collects a
+          // city, so `destination` is blank on new leads). The quotation
+          // itinerary requires a non-empty `title` and `destination`, so use the
+          // city when present and otherwise fall back to the Master Destination
+          // name — never emit an empty required value.
+          const place = (row.destination ?? '').trim() || (row.country ?? '').trim();
+          return {
+            dayNumber: index + 1,
+            date: row.arrivalDate,
+            title: place,
+            destination: place,
+            description: row.notes ?? `${row.nights} night stay in ${place}.`,
+            meals: null,
+            overnightLocation: place,
+            activities: null,
+            transfers: null,
+            notes: null,
+            sequence: index + 1,
+          };
+        }),
       hotels: input.version?.hotels ?? source?.hotels ?? [],
       services:
         input.version?.services ??
