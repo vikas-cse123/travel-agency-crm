@@ -4766,7 +4766,6 @@ export function QuotationBuilderPage() {
     if (path === 'inclusionsHtml') return 'Inclusions content is too long.';
     if (path === 'exclusionsHtml') return 'Exclusions content is too long.';
     if (path === 'title') return 'Quotation title is required.';
-    if (path === 'destinationSummary') return 'Destination summary is required.';
     if (path === 'currency') return 'Currency must be a 3-letter code.';
     if (path.includes('images')) return 'One image gallery could not be read.';
     return `${path.replace(/\.\d+\./g, ' ').replace(/\./g, ' ')}: ${message}`;

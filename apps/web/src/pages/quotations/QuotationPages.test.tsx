@@ -11861,6 +11861,47 @@ describe('Quotation Builder - default hotel destination prefill', () => {
     },
     20000,
   );
+
+  it(
+    'saves a quotation with an empty destination summary',
+    async () => {
+      // destinationSummary is optional: a quotation with no destination at all
+      // (empty stored summary and no lead itinerary) must still save. Before the
+      // requirement was removed the resolver blocked the save and no PATCH fired.
+      const quotation = {
+        ...builderQuotation({ destinationSummary: '' }),
+        destinationSummary: '',
+        query: {
+          id: 'lead-no-destination',
+          queryNumber: 'QRY-ND',
+          leadStage: 'NEW_LEAD',
+          departureCity: null,
+          departureCountry: null,
+          itinerary: [],
+        },
+      };
+      const fetchMock = masterFetch(quotation);
+      vi.stubGlobal('fetch', fetchMock);
+      renderBuilderPage();
+      await openTab('Sightseeing');
+      await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+      const patchCall = await waitFor(
+        () => {
+          const call = fetchMock.mock.calls.find(
+            ([, options]) =>
+              options?.method === 'PATCH' &&
+              String(options.body ?? '').includes('"destinationSummary"'),
+          );
+          expect(call).toBeDefined();
+          return call!;
+        },
+        { timeout: 5000 },
+      );
+      const body = JSON.parse(String(patchCall[1]!.body)) as { destinationSummary: string };
+      expect(body.destinationSummary).toBe('');
+    },
+    20000,
+  );
 });
 
 

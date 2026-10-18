@@ -1493,7 +1493,10 @@ export const quotationVersionInputSchema = z
     // Per-item label/value/visibility overrides for the weblink profile card.
     // Null/absent keeps the fully automatic card. Display-only.
     weblinkProfile: weblinkProfileConfigSchema.nullable().optional(),
-    destinationSummary: z.string().trim().min(2).max(500),
+    // Optional: a quotation may not have a destination summary yet, so an
+    // empty, blank or missing value must never block saving. Normalised to an
+    // empty string (never null) to match the stored column and the builder form.
+    destinationSummary: z.string().trim().max(500).default(''),
     travelStartDate: optionalDate,
     travelEndDate: optionalDate,
     currency: z
@@ -2061,7 +2064,8 @@ export const quotationInputSchema = z.object({
   customerName: z.string().trim().min(2).max(120).optional(),
   customerEmail: z.string().trim().email().max(255).nullable().optional().or(z.literal('')),
   customerPhone: z.string().trim().min(5).max(32).optional(),
-  destinationSummary: z.string().trim().min(2).max(500).optional(),
+  // Optional; an empty/blank summary is accepted (recording one is not required).
+  destinationSummary: z.string().trim().max(500).optional(),
   travelStartDate: optionalDate,
   travelEndDate: optionalDate,
   adults: z.coerce.number().int().min(1).max(200).optional(),

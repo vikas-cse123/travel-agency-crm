@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
-import { quotationItinerarySchema } from '@interscale/shared';
+import { quotationItinerarySchema, quotationVersionUpdateSchema } from '@interscale/shared';
 import { createTestPrismaClient, truncateAll } from './helpers/test-database.js';
 import { createAuthClient, registrationPayload } from './helpers/auth-client.js';
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
@@ -130,5 +130,28 @@ describe('Quotation itinerary prefill from a lead', () => {
     ]);
 
     expect(quotation.versions[0]!.destinationSummary).toBe('Azerbaijan • Georgia');
+  });
+
+  it('saves a quotation version with an empty destination summary', async () => {
+    const client = await owner();
+    const quotation = await createQuotation(client, [
+      { country: 'Azerbaijan', nights: 4, sequence: 1 },
+    ]);
+    const versionId = quotation.versions[0]!.id;
+
+    const saved = await client.patch(
+      `/api/quotations/${quotation.id}/versions/${versionId}`,
+      { destinationSummary: '' },
+    );
+
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.destinationSummary).toBe('');
+  });
+
+  it('treats the destination summary as optional in the update schema', () => {
+    expect(quotationVersionUpdateSchema.safeParse({ destinationSummary: '' }).success).toBe(true);
+    expect(
+      quotationVersionUpdateSchema.safeParse({ destinationSummary: 'Azerbaijan' }).success,
+    ).toBe(true);
   });
 });

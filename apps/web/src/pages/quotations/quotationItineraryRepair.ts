@@ -6,9 +6,9 @@
  *    quotation schema still requires a non-empty `title` and `destination` on
  *    every row, so a blank row makes every save fail with `itinerary.N.title` /
  *    `itinerary.N.destination` validation errors.
- * 2. The version's `destinationSummary` is required (min 2), but older
- *    quotations can store an empty value, which blocks saving with
- *    "Destination summary is required."
+ * 2. The version's `destinationSummary` is optional, but older quotations can
+ *    store an empty value; deriving it from the lead's own destination keeps
+ *    the saved summary meaningful without ever blocking a save when it is empty.
  *
  * The lead stores the Master Destination in `country` and an optional city in
  * `destination`. Both helpers derive values from those existing lead fields
