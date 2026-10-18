@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { selectSightseeingPrefillMasters } from './QuotationBuilderPage';
+import {
+  selectSightseeingCityForDestination,
+  selectSightseeingPrefillMasters,
+} from './QuotationBuilderPage';
 import type { Sightseeing } from '@/features/masters/masters.api';
 
 type Master = Sightseeing;
@@ -125,5 +128,92 @@ describe('selectSightseeingPrefillMasters', () => {
     // No destination token (new/blank summary) keeps the previous behavior:
     // every ACTIVE master is a candidate.
     expect(ids(selectSightseeingPrefillMasters(rows, undefined, []))).toEqual(['c', 'a', 'b']);
+  });
+
+  it('restricts the candidate set to the supplied cities (no cross-city leak)', () => {
+    const rows = [
+      master('sg-1', 'Singapore City Tour', 'Singapore HD', 'Singapore', 1),
+      master('sn-1', 'Sentosa Beach', 'Singapore HD', 'Sentosa', 2),
+      master('sn-2', 'Universal Studios', 'Singapore HD', 'Sentosa', 3),
+    ];
+    // Destination token matches, but the hard scope keeps only Sentosa masters.
+    const result = selectSightseeingPrefillMasters(rows, 'singapore hd', ['Sentosa'], ['Sentosa']);
+    expect(ids(result)).toEqual(['sn-1', 'sn-2']);
+  });
+});
+
+describe('selectSightseeingCityForDestination', () => {
+  it('selects the only linked city', () => {
+    expect(
+      selectSightseeingCityForDestination([{ id: 'city-sg', name: 'Singapore', sequence: 1 }], []),
+    ).toEqual({ cityId: 'city-sg', cityName: 'Singapore' });
+  });
+
+  it('selects the city with the most ACTIVE attractions', () => {
+    const rows = [
+      master('sg-1', 'Singapore City Tour', 'Singapore HD', 'Singapore'),
+      master('sn-1', 'Sentosa Beach', 'Singapore HD', 'Sentosa'),
+      master('sn-2', 'Universal Studios', 'Singapore HD', 'Sentosa'),
+      master('sn-3', 'Cable Car', 'Singapore HD', 'Sentosa'),
+    ];
+    expect(
+      selectSightseeingCityForDestination(
+        [
+          { id: 'city-sg', name: 'Singapore', sequence: 1 },
+          { id: 'city-sn', name: 'Sentosa', sequence: 2 },
+        ],
+        rows,
+      ),
+    ).toEqual({ cityId: 'city-sn', cityName: 'Sentosa' });
+  });
+
+  it('breaks ties by city link sequence, then alphabetical name', () => {
+    const rows = [
+      master('sg-1', 'Singapore City Tour', 'Singapore HD', 'Singapore'),
+      master('sn-1', 'Sentosa Beach', 'Singapore HD', 'Sentosa'),
+    ];
+    // Equal counts → the lower master sequence wins.
+    expect(
+      selectSightseeingCityForDestination(
+        [
+          { id: 'city-b', name: 'Bravo', sequence: 2 },
+          { id: 'city-a', name: 'Alpha', sequence: 1 },
+        ],
+        rows,
+      ),
+    ).toEqual({ cityId: 'city-a', cityName: 'Alpha' });
+    // Same sequence → alphabetical.
+    expect(
+      selectSightseeingCityForDestination(
+        [
+          { id: 'city-b', name: 'Bravo', sequence: 1 },
+          { id: 'city-a', name: 'Alpha', sequence: 1 },
+        ],
+        rows,
+      ),
+    ).toEqual({ cityId: 'city-a', cityName: 'Alpha' });
+  });
+
+  it('never counts archived masters', () => {
+    const rows = [
+      master('sg-1', 'Old Show', 'Singapore HD', 'Singapore', 1, { status: 'ARCHIVED' }),
+      master('sn-1', 'Beach', 'Singapore HD', 'Sentosa'),
+    ];
+    expect(
+      selectSightseeingCityForDestination(
+        [
+          { id: 'city-sg', name: 'Singapore', sequence: 1 },
+          { id: 'city-sn', name: 'Sentosa', sequence: 2 },
+        ],
+        rows,
+      ),
+    ).toEqual({ cityId: 'city-sn', cityName: 'Sentosa' });
+  });
+
+  it('returns nulls when the destination links no cities', () => {
+    expect(selectSightseeingCityForDestination([], [master('x', 'X', 'D', 'C')])).toEqual({
+      cityId: null,
+      cityName: null,
+    });
   });
 });

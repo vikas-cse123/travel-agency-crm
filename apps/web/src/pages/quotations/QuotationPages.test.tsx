@@ -11605,6 +11605,192 @@ describe('Quotation Builder - default hotel destination prefill', () => {
       hotelName: 'Mercure Singapore on Stevens',
     });
   });
+
+  const sightseeingMaster = (
+    id: string,
+    title: string,
+    city: { id: string; name: string },
+    sequence: number,
+    destination = { id: 'dest-sg-hd', name: 'Singapore Heaven Delight' },
+  ) => ({
+    id,
+    title,
+    sequence,
+    status: 'ACTIVE',
+    destination: { ...destination, countryName: 'Singapore' },
+    city,
+    estimatedHours: 2,
+    suggestedStartTime: '09:00',
+    description: null,
+    hasImage: false,
+    images: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  // A lead whose destination is set but whose city is blank — the Create Lead
+  // form no longer collects a city, so this is the normal new-lead shape.
+  // Overrides target the version (e.g. a saved sightseeingDetails).
+  const blankCityQuotation = (versionOverrides: Record<string, unknown> = {}) => ({
+    ...builderQuotation(versionOverrides),
+    destinationSummary: 'Singapore Heaven Delight',
+    travelStartDate: '2026-08-10T00:00:00.000Z',
+    travelEndDate: '2026-08-14T00:00:00.000Z',
+    query: {
+      id: 'lead-no-city',
+      queryNumber: 'QRY-NC',
+      leadStage: 'NEW_LEAD',
+      departureCity: 'Delhi',
+      departureCountry: 'India',
+      itinerary: [
+        {
+          id: 'stay-1',
+          country: 'Singapore Heaven Delight',
+          destination: '',
+          nights: 2,
+          sequence: 1,
+          arrivalDate: '2026-08-10T00:00:00.000Z',
+          departureDate: '2026-08-12T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  it('prefills sightseeing from the destination when the lead city is blank (single city)', async () => {
+    const masters = [
+      sightseeingMaster('sg-1', 'City Tour', { id: 'city-sg', name: 'Singapore' }, 1),
+      sightseeingMaster('sg-2', 'Night Safari', { id: 'city-sg', name: 'Singapore' }, 2),
+      sightseeingMaster('sg-3', 'Sentosa Tour', { id: 'city-sg', name: 'Singapore' }, 3),
+    ];
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(blankCityQuotation(), {
+        '/masters/sightseeing': page(masters),
+        '/masters/destinations': page([
+          destinationMaster([{ id: 'city-sg', name: 'Singapore' }]),
+        ]),
+      }),
+    );
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    // 2 nights → 3 days, each carrying the resolved city + one attraction. Only
+    // the selected day's card is mounted, so assert via the day picker and step
+    // through the days.
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button', { name: /^Select sightseeing day \d+$/ }),
+      ).toHaveLength(3),
+    );
+    expect(screen.getByLabelText('Sightseeing day 1 city')).toHaveValue('Singapore');
+    expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue('City Tour');
+    await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 2' }));
+    expect(screen.getByLabelText('Sightseeing day 2 city')).toHaveValue('Singapore');
+    expect(screen.getByLabelText('Day 2 activity 1 name')).toHaveValue('Night Safari');
+    await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 3' }));
+    expect(screen.getByLabelText('Sightseeing day 3 city')).toHaveValue('Singapore');
+    expect(screen.getByLabelText('Day 3 activity 1 name')).toHaveValue('Sentosa Tour');
+  });
+
+  it('picks the city with the most ACTIVE attractions and excludes other cities', async () => {
+    const masters = [
+      sightseeingMaster('sg-1', 'Singapore City Tour', { id: 'city-sg', name: 'Singapore' }, 1),
+      sightseeingMaster('sn-1', 'Sentosa Beach', { id: 'city-sn', name: 'Sentosa' }, 2),
+      sightseeingMaster('sn-2', 'Universal Studios', { id: 'city-sn', name: 'Sentosa' }, 3),
+      sightseeingMaster('sn-3', 'Cable Car', { id: 'city-sn', name: 'Sentosa' }, 4),
+      // A different destination entirely, sharing nothing with the lead.
+      sightseeingMaster(
+        'my-1',
+        'Kuala Lumpur Towers',
+        { id: 'city-kl', name: 'Kuala Lumpur' },
+        1,
+        { id: 'dest-my', name: 'Malaysia Delight' },
+      ),
+    ];
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(blankCityQuotation(), {
+        '/masters/sightseeing': page(masters),
+        '/masters/destinations': page([
+          destinationMaster([
+            { id: 'city-sg', name: 'Singapore' },
+            { id: 'city-sn', name: 'Sentosa' },
+          ]),
+        ]),
+      }),
+    );
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button', { name: /^Select sightseeing day \d+$/ }),
+      ).toHaveLength(3),
+    );
+    // Sentosa has three ACTIVE attractions vs Singapore's one → Sentosa wins.
+    // Only the selected day's card is mounted, so step through the days.
+    expect(screen.getByLabelText('Sightseeing day 1 city')).toHaveValue('Sentosa');
+    expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue('Sentosa Beach');
+    await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 2' }));
+    expect(screen.getByLabelText('Day 2 activity 1 name')).toHaveValue('Universal Studios');
+    await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 3' }));
+    expect(screen.getByLabelText('Day 3 activity 1 name')).toHaveValue('Cable Car');
+    // The losing city and the unrelated destination are never prefilled.
+    expect(screen.queryByDisplayValue('Singapore City Tour')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Kuala Lumpur Towers')).not.toBeInTheDocument();
+  });
+
+  it('never overwrites an existing saved sightseeing itinerary', async () => {
+    const saved = blankCityQuotation({
+      sightseeingDetails: {
+        include: true,
+        sectionTitle: 'Your Itinerary',
+        amount: 0,
+        description: null,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'My Custom Day',
+            titleTouched: true,
+            city: 'Singapore',
+            date: null,
+            meals: { breakfast: false, lunch: false, dinner: false },
+            mealMode: 'NO_TRANSFER',
+            dailyTransfer: 'NO_TRANSFER',
+            activities: [
+              {
+                sightseeingId: 'sg-1',
+                name: 'City Tour',
+                description: null,
+                startTime: '09:00',
+                imageUrl: null,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const masters = [
+      sightseeingMaster('sg-1', 'City Tour', { id: 'city-sg', name: 'Singapore' }, 1),
+      sightseeingMaster('sg-2', 'Night Safari', { id: 'city-sg', name: 'Singapore' }, 2),
+    ];
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(saved, {
+        '/masters/sightseeing': page(masters),
+        '/masters/destinations': page([
+          destinationMaster([{ id: 'city-sg', name: 'Singapore' }]),
+        ]),
+      }),
+    );
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Sightseeing day 1 title')).toHaveValue('My Custom Day'),
+    );
+    // The saved single day is kept as-is; no prefilled days were injected.
+    expect(
+      screen.getAllByRole('button', { name: /^Select sightseeing day \d+$/ }),
+    ).toHaveLength(1);
+  });
 });
 
 
