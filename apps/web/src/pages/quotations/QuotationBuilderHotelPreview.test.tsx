@@ -155,15 +155,23 @@ describe('the rest of the hotel stay UI is preserved', () => {
   });
 });
 
-describe('collapsed hotel card header title size', () => {
-  it('renders both header title variants at 16px', () => {
-    // Exactly the two card-header titles (named + fallback) are resized.
+describe('collapsed card header title size', () => {
+  it('renders the hotel, cruise and vehicle header title variants at 16px', () => {
+    // The two hotel card-header titles (named + fallback), the cruise
+    // card-header title and the vehicle card-header title all share the same
+    // 16px title style.
     expect(
       BUILDER_SRC.match(
         /className="truncate font-semibold text-\[16px\] text-slate-800"/g,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     expect(BUILDER_SRC).toContain('text-[16px] text-slate-800">Hotel Stay');
+    expect(BUILDER_SRC).toMatch(
+      /truncate font-semibold text-\[16px\] text-slate-800">\s*\{cruise\?\.name/,
+    );
+    expect(BUILDER_SRC).toMatch(
+      /truncate font-semibold text-\[16px\] text-slate-800">\s*\{vehicleName\.trim\(\) \|\| 'Vehicle'\}/,
+    );
   });
 
   it('leaves the expanded hotel form and the public weblink name untouched', () => {

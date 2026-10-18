@@ -435,12 +435,12 @@ const sightseeingSectionTitle = (value: string | null | undefined) => {
 };
 
 const TABS: TabDef[] = [
-  { key: 'flight', label: 'Flight' },
-  { key: 'hotel', label: 'Hotel' },
   { key: 'sightseeing', label: 'Sightseeing' },
+  { key: 'hotel', label: 'Hotel' },
   { key: 'cruise', label: 'Cruise', types: ['CRUISE'] },
   { key: 'vehicle', label: 'Vehicle', types: ['VEHICLE_TRANSFER'] },
   ...(SHOW_VISA_QUOTATION_TAB ? [{ key: 'visa', label: 'Visa' }] : []),
+  { key: 'flight', label: 'Flight' },
   { key: 'addon', label: 'Add-on Services', types: ADDON_TYPES },
   { key: 'inclusions', label: 'Inclusions & Exclusions' },
   ...(SHOW_DESTINATION_EXPERT_TAB ? [{ key: 'destinationExpert', label: 'Destination Expert' }] : []),
@@ -1666,9 +1666,54 @@ type DefaultHotelMaster = {
   isDefaultForCity: boolean;
   starCategory: number | null;
   city: { name: string };
-  destination: { name: string };
+  destination: { id: string; name: string };
   images: MasterImageMeta[];
 };
+
+/**
+ * Minimal Destination Master shape needed to resolve an itinerary city to the
+ * parent destination's stable id. Each destination embeds its linked cities, so
+ * the index can be built from the already-loaded `useDestinations` feed without
+ * a new API surface.
+ */
+export interface HotelDestinationSource {
+  id: string;
+  name?: string | null;
+  cities?: Array<{ city?: { name?: string | null } | null } | null> | null;
+}
+
+/**
+ * City → destination stable-id lookup from the Destination Master list.
+ *
+ * The lead itinerary stores a free-text CITY (`QueryItinerary.destination`), not
+ * a destination name, so a default hotel scoped to a destination could never be
+ * resolved by comparing that string to the destination name. This index maps a
+ * normalized city name to every destination that links that city, letting the
+ * builder select a destination's default hotels through the real relationship.
+ */
+export interface HotelDestinationIndex {
+  /** normalized city name → destination ids that link that city (stable ids) */
+  destinationIdsByCity: Map<string, string[]>;
+}
+
+export function buildHotelDestinationIndex(
+  destinations: HotelDestinationSource[] | null | undefined,
+): HotelDestinationIndex {
+  const destinationIdsByCity = new Map<string, string[]>();
+  const add = (key: string, destinationId: string) => {
+    if (!key) return;
+    const existing = destinationIdsByCity.get(key);
+    if (!existing) destinationIdsByCity.set(key, [destinationId]);
+    else if (!existing.includes(destinationId)) existing.push(destinationId);
+  };
+  for (const destination of destinations ?? []) {
+    for (const link of destination.cities ?? []) {
+      const name = link?.city?.name;
+      if (name) add(name.trim().toLowerCase(), destination.id);
+    }
+  }
+  return { destinationIdsByCity };
+}
 
 /** Segments that do not require hotel accommodation. */
 const NON_HOTEL_CITIES = new Set([
@@ -1699,22 +1744,73 @@ const isHotelStay = (city: string | null | undefined): boolean => {
 };
 
 /**
+ * Non-accommodation itinerary segments (Cruise, Airport, In transit, …) named as
+ * free text, e.g. "Singapore Cruise". Such a label is never proof a matching
+ * hotel exists, so the best-city-name guess must not fire for it; only a default
+ * hotel resolved through the destination relationship may fill it.
+ */
+const NON_HOTEL_SEGMENT_WORDS = new Set([
+  'cruise',
+  'airport',
+  'transfer',
+  'transit',
+  'departure',
+  'arrival',
+  'flight',
+  'fly',
+  'sea',
+  'embark',
+  'disembark',
+]);
+
+const isNonHotelSegmentLabel = (city: string | null | undefined): boolean =>
+  (city ?? '')
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .some((token) => NON_HOTEL_SEGMENT_WORDS.has(token));
+
+/**
  * Defaults are destination-scoped (up to 10 per destination). Returns every
- * active default hotel for a row's city/destination: exact city matches first,
- * then destination matches, de-duplicated and sorted by name for a stable
- * order. Matching is always exact (never substring) so hotels from other
+ * active default hotel for a stay row, in priority order:
+ *
+ *   1. exact city-tier  — the itinerary city names the hotel's own city;
+ *   2. resolved destination-tier — the itinerary city is linked (via the
+ *      Destination Master's cities) to the hotel's destination, so a default
+ *      configured for the destination applies even when the itinerary city is a
+ *      different city within it (e.g. "Singapore Cruise" → "Singapore" default);
+ *   3. exact destination-tier — the itinerary city literally names the
+ *      destination (legacy behaviour).
+ *
+ * Results are de-duplicated and sorted by name for a stable order. Matching is
+ * always exact on a resolved identity (never substring), so hotels from other
  * destinations are never mixed in.
  */
-export function matchDefaultHotels(rowCity: string, masters: DefaultHotelMaster[]) {
+export function matchDefaultHotels(
+  rowCity: string,
+  masters: DefaultHotelMaster[],
+  destinationIndex?: HotelDestinationIndex,
+) {
   const city = rowCity.trim().toLowerCase();
   if (!city) return [];
   const defaults = masters.filter((hotel) => hotel.status === 'ACTIVE' && hotel.isDefaultForCity);
   const byId = new Map<string, DefaultHotelMaster>();
+  // 1. Exact city-tier.
   for (const hotel of defaults) {
-    if (hotel.city.name.trim().toLowerCase() === city) byId.set(hotel.id, hotel);
+    if (hotel.city?.name?.trim().toLowerCase() === city) byId.set(hotel.id, hotel);
   }
+  // 2. Destination-tier through the resolved city → destination relationship.
+  const resolvedDestinationIds = destinationIndex?.destinationIdsByCity.get(city) ?? [];
+  if (resolvedDestinationIds.length) {
+    const resolved = new Set(resolvedDestinationIds);
+    for (const hotel of defaults) {
+      if (hotel.destination?.id && resolved.has(hotel.destination.id)) byId.set(hotel.id, hotel);
+    }
+  }
+  // 3. Exact destination-tier (legacy: the city string is the destination name).
   for (const hotel of defaults) {
-    if (hotel.destination.name.trim().toLowerCase() === city) byId.set(hotel.id, hotel);
+    if (hotel.destination?.name?.trim().toLowerCase() === city) byId.set(hotel.id, hotel);
   }
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -1813,14 +1909,21 @@ function mapRowToDefaultHotel(
 /**
  * Expand lead-generated hotel rows through their destinations' default
  * hotels: one stay row per default hotel (up to 10 per destination), each
- * inheriting the stay's dates/nights/rooms. Rows for destinations without
- * defaults keep the legacy single-row behavior (best hotel or empty), and a
- * destination already covered by an earlier row falls back to a single
- * mapping so stays are never dropped and hotels never duplicated.
+ * inheriting the stay's dates/nights/rooms. Defaults are resolved by the
+ * destination relationship (itinerary city → Destination Master cities), so a
+ * default configured for a destination applies to every city within it.
+ *
+ * Only when a destination has NO default does the row fall back to the best
+ * hotel of the SAME city name (exact match) — and never for a non-hotel
+ * segment label (Cruise, Airport, …). A row whose city matches no known hotel
+ * stays empty rather than borrowing an unrelated hotel; a destination already
+ * covered by an earlier row maps to a single default so stays are never
+ * dropped and hotels never duplicated.
  */
 export function expandDefaultHotelRows(
   rows: HotelInputRow[],
   masters: DefaultHotelMaster[],
+  destinationIndex?: HotelDestinationIndex,
 ): HotelInputRow[] {
   if (!rows.length) return rows;
   const addedHotelIds = new Set<string>();
@@ -1831,7 +1934,7 @@ export function expandDefaultHotelRows(
   for (const row of rows) {
     const cityName = (row.city ?? '').trim();
     if (!cityName) continue;
-    const defaults = matchDefaultHotels(cityName, masters);
+    const defaults = matchDefaultHotels(cityName, masters, destinationIndex);
     const missing = defaults.filter((hotel) => !addedHotelIds.has(hotel.id));
     if (missing.length) {
       for (const hotel of missing) {
@@ -1844,7 +1947,13 @@ export function expandDefaultHotelRows(
       built.push(mapRowToDefaultHotel(row, defaults[0]));
       continue;
     }
-    const bestHotel = matchBestCityHotel(cityName, masters);
+    // No default for this destination: only fall back to the best hotel of the
+    // exact same city (a legitimate city with no configured default). A
+    // cruise/transfer-style label is never treated as proof a hotel exists, so
+    // it stays empty instead of borrowing an unrelated alphabetical hotel.
+    const bestHotel = isNonHotelSegmentLabel(cityName)
+      ? undefined
+      : matchBestCityHotel(cityName, masters);
     built.push(mapRowToDefaultHotel(row, bestHotel));
   }
   return built;
@@ -2378,6 +2487,13 @@ export function QuotationBuilderPage() {
   );
   const destinationMasters = useDestinations(
     useMemo(() => new URLSearchParams({ status: 'ACTIVE', pageSize: '100' }), []),
+  );
+  // City → destination stable-id index used to resolve an itinerary city to the
+  // parent destination whose default hotels should prefill (see
+  // matchDefaultHotels). Rebuilt only when the destination feed changes.
+  const hotelDestinationIndex = useMemo(
+    () => buildHotelDestinationIndex(destinationMasters.data?.data ?? []),
+    [destinationMasters.data?.data],
   );
   // Automatic default-hotel prefill state. Automatic initialization is tracked
   // separately from an explicit user choice so Hotel is never re-enabled after
@@ -3600,7 +3716,11 @@ export function QuotationBuilderPage() {
                 (version.hotels.length === 1 ? (version.hotelDetails?.pdfImageUrl ?? null) : null),
             } as unknown as HotelInputRow);
           })
-        : expandDefaultHotelRows(leadHotelRows, hotelMasters.data?.data ?? []).map(
+        : expandDefaultHotelRows(
+            leadHotelRows,
+            hotelMasters.data?.data ?? [],
+            hotelDestinationIndex,
+          ).map(
             withSynthesizedLines,
           ),
       services: version.services.map((row) => {
@@ -3678,7 +3798,7 @@ export function QuotationBuilderPage() {
     // quotation's `hotelDetails.include` is authoritative (an explicitly
     // excluded hotel stays excluded).
     const prefilledHotelRows = shouldAutoPrefillHotels(version.hotels.length)
-      ? expandDefaultHotelRows(leadHotelRows, hotelMasters.data?.data ?? [])
+      ? expandDefaultHotelRows(leadHotelRows, hotelMasters.data?.data ?? [], hotelDestinationIndex)
       : [];
     const savedHotelInclude = version.hotelDetails?.include ?? true;
     if (savedHotelInclude && !autoHotelRef.current.userToggledHotel) {
@@ -3739,6 +3859,7 @@ export function QuotationBuilderPage() {
     sightseeingMasters.data,
     hotelMasters.data,
     destinationMasters.data,
+    hotelDestinationIndex,
     leadRequested,
   ]);
 
@@ -4009,7 +4130,7 @@ export function QuotationBuilderPage() {
       if (row.hotelId || row.hotelName?.trim()) return;
       const cityName = (row.city ?? '').trim();
       if (!cityName) return;
-      const defaults = matchDefaultHotels(cityName, masters);
+      const defaults = matchDefaultHotels(cityName, masters, hotelDestinationIndex);
       if (!defaults.length) return;
       // A default hotel for this destination already exists → no duplicates.
       if (defaults.some((hotel) => presentHotelIds.has(hotel.id))) return;
@@ -4045,7 +4166,7 @@ export function QuotationBuilderPage() {
       setExcluded((current) => ({ ...current, hotel: false }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedHotels, hotelMasters.data, version, form]);
+  }, [watchedHotels, hotelMasters.data, hotelDestinationIndex, version, form]);
 
   /**
    * Fill the first empty vehicle row (if any) and append the remaining
@@ -5227,9 +5348,11 @@ export function QuotationBuilderPage() {
                             className={`h-5 w-5 transition-transform ${isVehicleExpanded ? 'rotate-180' : ''}`}
                           />
                         </button>
-                        <h4 className={`${subsectionHeading} truncate text-slate-800 normal-case tracking-normal`}>
-                          {vehicleName.trim() || 'Vehicle'}
-                        </h4>
+                        <div className="min-w-0">
+                          <h4 className="truncate font-semibold text-[16px] text-slate-800">
+                            {vehicleName.trim() || 'Vehicle'}
+                          </h4>
+                        </div>
                       </div>
                       {/* Icon trio matching the hotel stay header: Up, Down and
                           an icon-only Delete carrying its own accessible label. */}
@@ -6045,9 +6168,11 @@ export function QuotationBuilderPage() {
                             className={`h-5 w-5 transition-transform ${isCruiseExpanded ? 'rotate-180' : ''}`}
                           />
                         </button>
-                        <h4 className={`${subsectionHeading} text-slate-800 normal-case tracking-normal`}>
-                          {cruise?.name?.trim() || 'Cruise Stay'}
-                        </h4>
+                        <div className="min-w-0">
+                          <h4 className="truncate font-semibold text-[16px] text-slate-800">
+                            {cruise?.name?.trim() || 'Cruise Stay'}
+                          </h4>
+                        </div>
                       </div>
                       {/* Icon trio matching the hotel stay header: Up, Down and
                           an icon-only Delete carrying its own accessible label. */}

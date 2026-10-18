@@ -122,14 +122,14 @@ describe('SidebarHeader custom-domain branding', () => {
     expect(row.className).toContain('items-center');
     expect(row.className).toContain('h-14');
     expect(row.className).toContain('lg:pr-5');
-    // Full logo: block-level, fills the available header width at a readable
-    // height, aspect preserved, left-anchored, no wrapper box.
+    // Full logo: block-level, rendered at 80% of the header content box
+    // (20% smaller than the previous full-bleed render), aspect preserved,
+    // left-anchored, no wrapper box.
     const logo = container.querySelector('img[src="/new-logo.png"]') as HTMLElement;
     expect(logo).not.toBeNull();
     expect(logo.className).toContain('block');
-    expect(logo.className).toContain('w-full');
-    expect(logo.className).toContain('flex-1');
-    expect(logo.className).toContain('h-full');
+    expect(logo.className).toContain('w-4/5');
+    expect(logo.className).toContain('h-4/5');
     expect(logo.className).toContain('object-contain');
     expect(logo.className).toContain('object-left');
   });

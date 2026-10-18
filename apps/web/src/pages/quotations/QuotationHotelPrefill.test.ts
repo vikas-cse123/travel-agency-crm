@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildHotelDestinationIndex,
   expandDefaultHotelRows,
   matchDefaultHotels,
   shouldAutoPrefillHotels,
@@ -15,6 +16,7 @@ function master(
   destination: string,
   isDefaultForCity = true,
   status = 'ACTIVE',
+  destinationId = `dest-${destination.trim().toLowerCase().replace(/\s+/g, '-')}`,
 ): Master {
   return {
     id,
@@ -23,7 +25,7 @@ function master(
     isDefaultForCity,
     starCategory: 5,
     city: { name: city },
-    destination: { name: destination },
+    destination: { id: destinationId, name: destination },
     images: [],
   };
 }
@@ -97,7 +99,182 @@ describe('shouldAutoPrefillHotels', () => {
   });
 });
 
-describe('expandDefaultHotelRows', () => {
+// ---------------------------------------------------------------------------
+// Destination-relationship matching (audit regression)
+// ---------------------------------------------------------------------------
+
+const SG_DEST = 'dest-sg-heaven-delight';
+const DUBAI_DEST = 'dest-dubai';
+const GOA_DEST = 'dest-goa';
+
+/** Destination Master feed: each destination embeds its linked cities. */
+const singaporeDestinations = [
+  {
+    id: SG_DEST,
+    name: 'Singapore Heaven Delight',
+    cities: [
+      { city: { name: 'Singapore' } },
+      { city: { name: 'Sentosa Island' } },
+      { city: { name: 'Singapore Cruise' } },
+      { city: { name: 'Marina Bay' } },
+    ],
+  },
+  { id: DUBAI_DEST, name: 'Dubai', cities: [{ city: { name: 'Dubai' } }] },
+  { id: GOA_DEST, name: 'GOA', cities: [{ city: { name: 'Baga' } }, { city: { name: 'Calanguate' } }] },
+];
+
+const singaporeIndex = buildHotelDestinationIndex(singaporeDestinations);
+
+/** Mirrors the audited Hotel Master data: default scoped to the destination. */
+const auditMasters: Master[] = [
+  master('h-mercure', 'Mercure Singapore on Stevens', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+  master('h-boss', 'Hotel Boss Singapore', 'Singapore', 'Singapore Heaven Delight', false, 'ACTIVE', SG_DEST),
+  master('h-disney', 'Disney Cruise', 'Singapore Cruise', 'Singapore Heaven Delight', false, 'ACTIVE', SG_DEST),
+  master('h-burj', 'Burj View Hotel', 'Dubai', 'Dubai', true, 'ACTIVE', DUBAI_DEST),
+];
+
+describe('matchDefaultHotels — destination relationship', () => {
+  it('1. matches a hotel whose city equals the itinerary city', () => {
+    expect(matchDefaultHotels('Singapore', auditMasters, singaporeIndex).map((h) => h.id)).toEqual([
+      'h-mercure',
+    ]);
+  });
+
+  it('2/3. resolves a different itinerary city to the same destination default', () => {
+    // "Singapore Cruise" is a city linked to the "Singapore Heaven Delight"
+    // destination, so its default applies even though the names differ.
+    expect(matchDefaultHotels('Singapore Cruise', auditMasters, singaporeIndex).map((h) => h.id)).toEqual([
+      'h-mercure',
+    ]);
+    expect(matchDefaultHotels('Sentosa Island', auditMasters, singaporeIndex).map((h) => h.id)).toEqual([
+      'h-mercure',
+    ]);
+  });
+
+  it('4. never selects defaults from a different destination', () => {
+    // A Dubai-scoped default must not leak into a Singapore destination city.
+    expect(matchDefaultHotels('Sentosa Island', auditMasters, singaporeIndex).map((h) => h.id)).not.toContain(
+      'h-burj',
+    );
+    expect(matchDefaultHotels('Baga', auditMasters, singaporeIndex)).toEqual([]);
+  });
+
+  it('does not resolve an unknown city to any destination', () => {
+    expect(matchDefaultHotels('Somewhere Unknown', auditMasters, singaporeIndex)).toEqual([]);
+  });
+});
+
+describe('expandDefaultHotelRows — audit regression', () => {
+  it('REGRESSION: a cross-city stay within the same destination prefills the destination default', () => {
+    // Before the fix this produced "Disney Cruise@Singapore Cruise" (an
+    // unrelated alphabetical best-city guess) instead of the destination default.
+    const rows = expandDefaultHotelRows([leadRow('Singapore Cruise')], auditMasters, singaporeIndex);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.hotelId).toBe('h-mercure');
+    expect(rows[0]?.hotelName).toBe('Mercure Singapore on Stevens');
+    expect(rows[0]?.city).toBe('Singapore');
+    expect(rows[0]?.nights).toBe(3);
+    expect(rows[0]?.rooms).toBe(2);
+  });
+
+  it('5. an unresolved/ambiguous destination never inserts an unrelated alphabetical hotel', () => {
+    // "Twin City" links to two destinations that have no defaults; an unrelated
+    // alphabetical hotel in another destination must not be borrowed.
+    const ambiguousIndex = buildHotelDestinationIndex([
+      { id: 'dest-a', name: 'Alpha', cities: [{ city: { name: 'Twin City' } }] },
+      { id: 'dest-b', name: 'Beta', cities: [{ city: { name: 'Twin City' } }] },
+    ]);
+    const masters: Master[] = [
+      master('h-aaa', 'AAA Resort', 'Dubai', 'Dubai', true, 'ACTIVE', DUBAI_DEST),
+    ];
+    const rows = expandDefaultHotelRows([leadRow('Twin City')], masters, ambiguousIndex);
+    expect(rows[0]?.hotelId).toBeNull();
+    expect(rows[0]?.hotelName).toBe('');
+
+    // A completely unknown free-text label also stays empty.
+    const unknown = expandDefaultHotelRows([leadRow('Nowhere')], masters, ambiguousIndex);
+    expect(unknown[0]?.hotelId).toBeNull();
+  });
+
+  it('6. a destination with no eligible default stays empty (no cross-city guess)', () => {
+    const masters: Master[] = [
+      master('h-boss', 'Hotel Boss Singapore', 'Singapore', 'Singapore Heaven Delight', false, 'ACTIVE', SG_DEST),
+    ];
+    // Sentosa Island resolves to the Singapore destination, which has no default
+    // here; the row must not be filled with an unrelated hotel.
+    const rows = expandDefaultHotelRows([leadRow('Sentosa Island')], masters, singaporeIndex);
+    expect(rows[0]?.hotelId).toBeNull();
+    expect(rows[0]?.hotelName).toBe('');
+  });
+
+  it('does not treat a cruise label as proof a hotel exists', () => {
+    const masters: Master[] = [
+      master('h-disney', 'Disney Cruise', 'Singapore Cruise', 'Singapore Heaven Delight', false, 'ACTIVE', SG_DEST),
+    ];
+    // No destination default and a cruise-style label → empty, never Disney Cruise.
+    const rows = expandDefaultHotelRows([leadRow('Singapore Cruise')], masters, singaporeIndex);
+    expect(rows[0]?.hotelId).toBeNull();
+    expect(rows[0]?.hotelName).toBe('');
+  });
+
+  it('preserves the best-available-city fallback for a legitimate city with no default', () => {
+    const masters: Master[] = [
+      master('h-boss', 'Hotel Boss Singapore', 'Singapore', 'Singapore Heaven Delight', false, 'ACTIVE', SG_DEST),
+    ];
+    const rows = expandDefaultHotelRows([leadRow('Singapore')], masters, singaporeIndex);
+    expect(rows[0]?.hotelId).toBe('h-boss');
+    expect(rows[0]?.hotelName).toBe('Hotel Boss Singapore');
+  });
+
+  it('7. prefills ALL defaults of the destination, ordered by name', () => {
+    const masters: Master[] = [
+      master('h-b', 'Hotel B', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+      master('h-a', 'Hotel A', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+      master('h-c', 'Hotel C', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+    ];
+    const rows = expandDefaultHotelRows([leadRow('Singapore Cruise')], masters, singaporeIndex);
+    expect(rows.map((r) => r.hotelName)).toEqual(['Hotel A', 'Hotel B', 'Hotel C']);
+    expect(rows.map((r) => r.city)).toEqual(['Singapore', 'Singapore', 'Singapore']);
+  });
+
+  it('8. prefills only brand-new quotations (saved rows are never rewritten)', () => {
+    // shouldAutoPrefillHotels gates the caller; when false the builder keeps the
+    // saved snapshot untouched (verified here through the guard contract).
+    expect(shouldAutoPrefillHotels(0)).toBe(true);
+    expect(shouldAutoPrefillHotels(1)).toBe(false);
+  });
+
+  it('9. a default already present on a stay is not inserted again', () => {
+    const masters: Master[] = [
+      master('h-a', 'Hotel A', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+      master('h-b', 'Hotel B', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+    ];
+    const rows = expandDefaultHotelRows(
+      [leadRow('Singapore Cruise', { hotelId: 'h-a', hotelName: 'Hotel A' })],
+      masters,
+      singaporeIndex,
+    );
+    // h-a is already present → only the missing default h-b is added.
+    expect(rows.map((r) => r.hotelId)).toEqual(['h-b']);
+  });
+
+  it('10. never duplicates a destination default across stays', () => {
+    const masters: Master[] = [
+      master('h-a', 'Hotel A', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+      master('h-b', 'Hotel B', 'Singapore', 'Singapore Heaven Delight', true, 'ACTIVE', SG_DEST),
+    ];
+    const rows = expandDefaultHotelRows(
+      [leadRow('Singapore'), leadRow('Sentosa Island')],
+      masters,
+      singaporeIndex,
+    );
+    // The first stay expands both defaults; the second same-destination stay
+    // maps to a single default and must NOT re-expand both again.
+    expect(rows.map((r) => r.hotelId)).toEqual(['h-a', 'h-b', 'h-a']);
+  });
+});
+
+describe('expandDefaultHotelRows — legacy behaviour', () => {
   it('8. prefills ALL defaults of the selected destination in a new quotation', () => {
     const rows = expandDefaultHotelRows([leadRow('Singapore')], singaporeDefaults);
     expect(rows.map((r) => r.hotelName)).toEqual(['Hotel A', 'Hotel B', 'Hotel C', 'Hotel D']);

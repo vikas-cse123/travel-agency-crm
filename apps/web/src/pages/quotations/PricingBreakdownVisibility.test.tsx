@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 const TABS = [
-  { key: 'flight', label: 'Flight' },
-  { key: 'hotel', label: 'Hotel' },
   { key: 'sightseeing', label: 'Sightseeing' },
+  { key: 'hotel', label: 'Hotel' },
   { key: 'cruise', label: 'Cruise' },
   { key: 'vehicle', label: 'Vehicle' },
+  { key: 'flight', label: 'Flight' },
   { key: 'addon', label: 'Add-on Services' },
   { key: 'inclusions', label: 'Inclusions & Exclusions' },
   { key: 'destinationExpert', label: 'Destination Expert' },
@@ -36,11 +36,11 @@ describe('Pricing Breakdown visibility (By Traveler)', () => {
     const tabs = visibleTabsFor('PER_PERSON');
     const labels = tabs.map((t) => t.label);
     expect(labels).toEqual([
-      'Flight',
-      'Hotel',
       'Sightseeing',
+      'Hotel',
       'Cruise',
       'Vehicle',
+      'Flight',
       'Add-on Services',
       'Inclusions & Exclusions',
       'Destination Expert',

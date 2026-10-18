@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ChevronDown,
   Copy,
   Pencil,
   ExternalLink,
@@ -118,15 +119,12 @@ export function QuotationDetailsPage() {
   };
   const [whatsappOpen, setWhatsappOpen] = useState(false);
   const [hasAttemptedFinalize, setHasAttemptedFinalize] = useState(false);
-  // Inline editing for the current version's Quotation Title and Weblink
-  // Package Heading (moved here from the Quotation Builder metadata card).
-  const [metaEditing, setMetaEditing] = useState(false);
-  const [metaTitle, setMetaTitle] = useState('');
-  const [metaPackage, setMetaPackage] = useState('');
-  const [metaError, setMetaError] = useState('');
   // Pricing method (moved here from the Quotation Builder). Saved to the
   // current version immediately; the backend recomputes the final amount.
   const [pricingMethodError, setPricingMethodError] = useState('');
+  // Pricing Method section expand/collapse. Collapsed by default; reset when a
+  // different quotation or version loads so the section never opens by itself.
+  const [pricingMethodOpen, setPricingMethodOpen] = useState(false);
   // Public weblink URL once provisioned, tagged with the version it belongs to.
   // Reset whenever the current version changes so Copy/Open always target the
   // currently displayed version (never a stale link from an earlier version).
@@ -185,10 +183,10 @@ export function QuotationDetailsPage() {
       query.data.versions[0])
     : undefined;
   const updateMeta = useUpdateQuotationVersion(quotationId, metaCurrent?.id ?? '');
-  // Close the inline editor whenever a different quotation or version loads.
+  // Reset transient section state whenever a different quotation or version
+  // loads so the Pricing Method section always starts collapsed.
   useEffect(() => {
-    setMetaEditing(false);
-    setMetaError('');
+    setPricingMethodOpen(false);
     setPricingMethodError('');
   }, [query.data?.id, query.data?.currentVersionId]);
 
@@ -410,95 +408,6 @@ export function QuotationDetailsPage() {
             <h1 className="break-words text-2xl font-semibold">
               {q.customerName}
             </h1>
-            {current?.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) && (
-              metaEditing ? (
-                <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <label className="block text-sm font-medium text-slate-700">
-                    Quotation Title *
-                    <input
-                      aria-label="Quotation Title"
-                      className={`${field} mt-1`}
-                      maxLength={200}
-                      value={metaTitle}
-                      onChange={(event) => setMetaTitle(event.target.value)}
-                    />
-                  </label>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Weblink Package Heading
-                    <input
-                      aria-label="Weblink Package Heading"
-                      className={`${field} mt-1`}
-                      maxLength={200}
-                      placeholder="Custom Package for [Lead]"
-                      value={metaPackage}
-                      onChange={(event) => setMetaPackage(event.target.value)}
-                    />
-                  </label>
-                  {metaError && (
-                    <p role="alert" className="text-sm text-red-700">
-                      {metaError}
-                    </p>
-                  )}
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      isLoading={updateMeta.isPending}
-                      onClick={() => {
-                        const title = metaTitle.trim();
-                        if (title.length < 2) {
-                          setMetaError('Quotation title is required.');
-                          return;
-                        }
-                        const packageHeading = metaPackage.trim();
-                        if (packageHeading.length > 200) {
-                          setMetaError('Weblink package heading is too long.');
-                          return;
-                        }
-                        setMetaError('');
-                        updateMeta.mutate(
-                          { title, packageHeading: packageHeading ? packageHeading : null },
-                          {
-                            onSuccess: () => setMetaEditing(false),
-                            onError: (error) =>
-                              setMetaError(
-                                error instanceof Error && error.message
-                                  ? error.message
-                                  : 'Unable to save. Please try again.',
-                              ),
-                          },
-                        );
-                      }}
-                    >
-                      Save
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setMetaEditing(false);
-                        setMetaError('');
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-                  onClick={() => {
-                    setMetaTitle(current.title);
-                    setMetaPackage(current.packageHeading ?? '');
-                    setMetaError('');
-                    setMetaEditing(true);
-                  }}
-                >
-                  <Pencil className="h-3 w-3" />
-                  Edit title
-                </button>
-              )
-            )}
             {q.customer && (
               <span className="text-xs font-medium text-slate-500">
                 {q.customer.customerNumber} customer record
@@ -607,8 +516,7 @@ export function QuotationDetailsPage() {
       <section className="rounded-xl border bg-card p-5">
         <div className="flex flex-wrap justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="font-semibold">Customer and travel</h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="text-sm text-slate-500">
               Linked lead{' '}
               <Link className="text-brand-700" to={`/queries/${q.query.id}`}>
                 {q.query.queryNumber}
@@ -723,18 +631,48 @@ export function QuotationDetailsPage() {
       </section>
       {current && (
         <section aria-label="Pricing Method" className="rounded-xl border bg-card p-5">
-          <div className="flex flex-wrap justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="font-semibold">Pricing Method</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                {current.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE)
-                  ? 'How the final package price is calculated for this quotation.'
-                  : `Current method: ${pricingModeLabel(current.pricingMode)}. Finalized versions are read-only.`}
-              </p>
-            </div>
-          </div>
           {current.status === 'DRAFT' && hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) ? (
-            <div className="mt-4">
+            <div
+              className="flex flex-wrap items-center justify-between gap-3"
+              onClick={() => setPricingMethodOpen((open) => !open)}
+            >
+              <div className="min-w-0 cursor-pointer">
+                <h2 className="font-semibold">Pricing Method</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  How the final package price is calculated for this quotation.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-expanded={pricingMethodOpen}
+                aria-controls="pricing-method-body"
+                aria-label={pricingMethodOpen ? 'Collapse pricing method' : 'Expand pricing method'}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPricingMethodOpen((open) => !open);
+                }}
+                className="shrink-0 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              >
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${pricingMethodOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="font-semibold">Pricing Method</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {`Current method: ${pricingModeLabel(current.pricingMode)}. Finalized versions are read-only.`}
+                </p>
+              </div>
+            </div>
+          )}
+          {current.status === 'DRAFT' &&
+          hasPermission(PERMISSIONS.QUOTATIONS_UPDATE) &&
+          pricingMethodOpen ? (
+            <div id="pricing-method-body" className="mt-4">
               <PricingMethodSelector
                 title={null}
                 value={current.pricingMode}

@@ -227,24 +227,22 @@ describe('Quotation Builder sub-tab styling', () => {
     const bar = tabButton('Flight').parentElement!;
     expect(bar.className).toContain('overflow-x-auto');
     expect(tabButton('Hotel').className).toContain('whitespace-nowrap');
-    // All expected labels render in order in one row.
+    // All expected labels render in the approved order in one row.
     const labels = Array.from(bar.querySelectorAll('button')).map((b) =>
       (b.getAttribute('aria-label') ?? '').replace(/\*$/, ''),
     );
-    expect(labels).toEqual(
-      expect.arrayContaining([
-        'Flight',
-        'Hotel',
-        'Sightseeing',
-        'Cruise',
-        'Vehicle',
-        'Add-on Services',
-        'Inclusions & Exclusions',
-        'FAQs',
-        'Pricing',
-        'Settings',
-      ]),
-    );
+    expect(labels).toEqual([
+      'Sightseeing',
+      'Hotel',
+      'Cruise',
+      'Vehicle',
+      'Flight',
+      'Add-on Services',
+      'Inclusions & Exclusions',
+      'FAQs',
+      'Pricing',
+      'Settings',
+    ]);
   });
 
   it('renders a restrained card container with separators between tabs', async () => {

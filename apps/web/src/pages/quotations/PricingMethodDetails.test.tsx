@@ -113,6 +113,12 @@ const renderDetails = () =>
     { route: '/quotations/quotation-1' },
   );
 
+// The Pricing Method section is collapsed by default, so options must be
+// revealed through the header/chevron control before they can be asserted.
+const expandPricing = async () => {
+  await userEvent.click(await screen.findByRole('button', { name: 'Expand pricing method' }));
+};
+
 describe('Pricing Method on the Quotation Details page', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -125,8 +131,34 @@ describe('Pricing Method on the Quotation Details page', () => {
     vi.stubGlobal('fetch', detailFetch(quotationDetail('PER_PERSON')));
     renderDetails();
     await screen.findByRole('heading', { name: 'Pricing Method' });
+    await expandPricing();
     expect(screen.getByLabelText('By Section')).toBeInTheDocument();
     expect(screen.getByLabelText('By Traveler')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('is collapsed by default and toggles the options open and closed', async () => {
+    const fetchMock = detailFetch(quotationDetail('PER_PERSON'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetails();
+    await screen.findByRole('heading', { name: 'Pricing Method' });
+    // Collapsed by default.
+    expect(screen.queryByLabelText('By Section')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('By Traveler')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Expand pricing method' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // Clicking the header text expands it.
+    await userEvent.click(screen.getByRole('heading', { name: 'Pricing Method' }));
+    expect(screen.getByLabelText('By Traveler')).toBeInTheDocument();
+    // Clicking again (the chevron) collapses it.
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse pricing method' }));
+    expect(screen.queryByLabelText('By Traveler')).not.toBeInTheDocument();
+    // Toggling is purely visual — the saved selection is never written.
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) =>
+          String(url).includes('/versions/version-1') && options?.method === 'PATCH',
+      ),
+    ).toBe(false);
   });
 
   it('persists a switch to By Section to the current version', async () => {
@@ -134,6 +166,7 @@ describe('Pricing Method on the Quotation Details page', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
     await screen.findByRole('heading', { name: 'Pricing Method' });
+    await expandPricing();
     await userEvent.click(screen.getByLabelText('By Section'));
     await waitFor(() =>
       expect(
@@ -155,6 +188,7 @@ describe('Pricing Method on the Quotation Details page', () => {
     vi.stubGlobal('fetch', fetchMock);
     renderDetails();
     await screen.findByRole('heading', { name: 'Pricing Method' });
+    await expandPricing();
     await userEvent.click(screen.getByLabelText('By Traveler'));
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(
@@ -176,14 +210,15 @@ describe('Pricing Method on the Quotation Details page', () => {
     expect(screen.getByText(/Current method: By Section/)).toBeInTheDocument();
   });
 
-  it('renders Pricing Method directly below Customer and travel', async () => {
+  it('renders Pricing Method directly below the customer section', async () => {
     vi.stubGlobal('fetch', detailFetch(quotationDetail('PER_PERSON')));
     renderDetails();
-    const customer = await screen.findByRole('heading', { name: 'Customer and travel' });
+    // The customer section no longer has a heading; anchor on its linked lead.
+    const linkedLead = await screen.findByRole('link', { name: 'QRY-1' });
     const pricing = screen.getByRole('heading', { name: 'Pricing Method' });
     const visitors = screen.getByRole('heading', { name: 'Weblink visitors' });
     // DOCUMENT_POSITION_FOLLOWING === 4: the second node follows the first.
-    expect(customer.compareDocumentPosition(pricing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(linkedLead.compareDocumentPosition(pricing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(pricing.compareDocumentPosition(visitors) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

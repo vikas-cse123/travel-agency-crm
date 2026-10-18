@@ -11495,6 +11495,119 @@ describe('Quotation Builder - policy editors', () => {
 });
 
 
+describe('Quotation Builder - default hotel destination prefill', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  const hotelMaster = (overrides: Record<string, unknown>) => ({
+    id: 'aaaaaa44-4444-4444-8444-444444444444',
+    name: 'Hotel',
+    starCategory: 4,
+    starRating: null,
+    status: 'ACTIVE',
+    isDefaultForCity: false,
+    isFeatured: false,
+    hasImage: false,
+    updatedAt: '2026-07-21T00:00:00.000Z',
+    createdAt: '2026-07-21T00:00:00.000Z',
+    destination: { id: 'dest-sg-hd', name: 'Singapore Heaven Delight' },
+    city: { id: 'city-sg', name: 'Singapore' },
+    ...overrides,
+  });
+
+  const destinationMaster = (cities: Array<{ id: string; name: string }>) => ({
+    id: 'dest-sg-hd',
+    countryCode: 'SG',
+    countryName: 'Singapore',
+    name: 'Singapore Heaven Delight',
+    destinationType: 'CITY',
+    status: 'ACTIVE',
+    inclusions: null,
+    exclusions: null,
+    paymentPolicies: null,
+    cancellationPolicies: null,
+    bookingTerms: null,
+    childPolicy: null,
+    cities: cities.map((city, index) => ({
+      id: `dc-${index + 1}`,
+      cityId: city.id,
+      sequence: index + 1,
+      city,
+    })),
+    _count: { cities: cities.length },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  const cruiseQuotation = {
+    ...builderQuotation(),
+    destinationSummary: 'Singapore Cruise',
+    query: {
+      id: 'lead-cross',
+      queryNumber: 'QRY-CROSS',
+      leadStage: 'NEW_LEAD',
+      departureCity: 'Delhi',
+      departureCountry: 'India',
+      itinerary: [
+        {
+          id: 'stay-0',
+          country: 'Singapore Heaven Delight',
+          destination: 'Singapore Cruise',
+          nights: 2,
+          sequence: 1,
+          arrivalDate: '2026-08-10T00:00:00.000Z',
+          departureDate: '2026-08-12T00:00:00.000Z',
+        },
+      ],
+    },
+  };
+
+  it('resolves an itinerary city to its destination default (cross-city regression)', async () => {
+    const mercure = hotelMaster({
+      id: 'aaaaaa55-5555-4555-8555-555555555555',
+      name: 'Mercure Singapore on Stevens',
+      isDefaultForCity: true,
+    });
+    const disneyCruise = hotelMaster({
+      id: 'aaaaaa66-6666-4666-8666-666666666666',
+      name: 'Disney Cruise',
+      destination: { id: 'dest-sg-hd', name: 'Singapore Heaven Delight' },
+      city: { id: 'city-sgc', name: 'Singapore Cruise' },
+    });
+    const fetchMock = masterFetch(cruiseQuotation, {
+      '/masters/hotels': page([disneyCruise, mercure]),
+      '/masters/destinations': page([
+        destinationMaster([
+          { id: 'city-sg', name: 'Singapore' },
+          { id: 'city-sgc', name: 'Singapore Cruise' },
+        ]),
+      ]),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openTab('Hotel');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand hotel stay 1' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Hotel master')).toHaveValue('Mercure Singapore on Stevens'),
+    );
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    const patchCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+      expect(call).toBeDefined();
+      return call!;
+    });
+    const body = JSON.parse(String(patchCall[1]!.body));
+    expect(body.hotels[0]).toMatchObject({
+      hotelId: 'aaaaaa55-5555-4555-8555-555555555555',
+      hotelName: 'Mercure Singapore on Stevens',
+    });
+  });
+});
+
+
 // TODO: update stale selectors/expectations in this block to match the current
 // UI (hotel stays and sightseeing days are collapsed by default). Quarantined temporarily.
 describe.skip('Phase 14 master selectors', () => {
@@ -15269,13 +15382,13 @@ describe.skip('Phase 14 master selectors', () => {
     await screen.findByRole('button', { name: 'Vehicle' });
     // The Visa tab is not part of the navigation.
     expect(screen.queryByRole('button', { name: 'Visa' })).not.toBeInTheDocument();
-    // All remaining tabs are present and Add-on Services follows Vehicle.
+    // All remaining tabs are present in the approved order.
     const expected = [
-      'Flight',
-      'Hotel',
       'Sightseeing',
+      'Hotel',
       'Cruise',
       'Vehicle',
+      'Flight',
       'Add-on Services',
       'Inclusions & Exclusions',
       'Pricing',
@@ -15283,10 +15396,17 @@ describe.skip('Phase 14 master selectors', () => {
     for (const label of expected) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
-    const vehicleButton = screen.getByRole('button', { name: 'Vehicle' });
+    const sightseeingButton = screen.getByRole('button', { name: 'Sightseeing' });
+    const hotelButton = screen.getByRole('button', { name: 'Hotel' });
+    const flightButton = screen.getByRole('button', { name: 'Flight' });
     const addonButton = screen.getByRole('button', { name: 'Add-on Services' });
+    // Sightseeing leads the strip, Hotel follows, and Flight immediately
+    // precedes Add-on Services.
     expect(
-      vehicleButton.compareDocumentPosition(addonButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+      sightseeingButton.compareDocumentPosition(hotelButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      flightButton.compareDocumentPosition(addonButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     // No Visa panel controls are rendered anywhere.
     expect(screen.queryByText('Include Visa in Quotation')).not.toBeInTheDocument();

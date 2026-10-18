@@ -79,7 +79,7 @@ export function SidebarHeader({ collapsed, onToggleCollapse, onCloseMobile }: Si
         <img
           src="/new-logo.png"
           alt="Travel Agency CRM"
-          className="block h-full w-full min-w-0 flex-1 object-contain object-left"
+          className="block h-4/5 w-4/5 min-w-0 object-contain object-left"
         />
       )}
 

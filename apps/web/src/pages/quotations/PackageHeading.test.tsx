@@ -412,12 +412,12 @@ describe('Details page quotation title and package heading', () => {
     renderDetails();
     await screen.findByRole('heading', { name: /Akash Sahni/ });
     // The heading area shows only the lead name (no destination suffix). The
-    // version title and package heading stay editable but are no longer shown.
+    // version title and package heading are no longer shown or editable here.
     expect(screen.getByRole('heading', { name: /Akash Sahni/ }).textContent).toBe('Akash Sahni');
     expect(screen.queryByText('Singapore Escape')).not.toBeInTheDocument();
     expect(screen.queryByText('Singapore Family Holiday Package')).not.toBeInTheDocument();
     expect(screen.queryByText('Custom Package for Akash Sahni')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit title' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit title' })).not.toBeInTheDocument();
   });
 
   it('does not fall back to "Custom Package for [Lead]" in the heading area', async () => {
@@ -425,47 +425,10 @@ describe('Details page quotation title and package heading', () => {
     renderDetails();
     await screen.findByRole('heading', { name: /Akash Sahni/ });
     expect(screen.queryByText('Custom Package for Akash Sahni')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit title' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit title' })).not.toBeInTheDocument();
   });
 
-  it('edits and saves both fields to the current version', async () => {
-    const fetchMock = detailFetch(
-      builderDetail({ packageHeading: 'Singapore Package for Akash Sahni' }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    renderDetails();
-    await screen.findByRole('heading', { name: /Akash Sahni/ });
-    await userEvent.click(screen.getByRole('button', { name: 'Edit title' }));
-    expect(screen.getByLabelText('Quotation Title')).toHaveValue('Singapore Package');
-    expect(screen.getByLabelText('Weblink Package Heading')).toHaveValue(
-      'Singapore Package for Akash Sahni',
-    );
-    await userEvent.clear(screen.getByLabelText('Quotation Title'));
-    await userEvent.type(screen.getByLabelText('Quotation Title'), 'Singapore Escape');
-    await userEvent.clear(screen.getByLabelText('Weblink Package Heading'));
-    await userEvent.type(
-      screen.getByLabelText('Weblink Package Heading'),
-      'Singapore Family Holiday Package',
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(
-          ([url, options]) =>
-            String(url).includes('/versions/version-1') && options?.method === 'PATCH',
-        ),
-      ).toBe(true),
-    );
-    const patch = fetchMock.mock.calls.find(
-      ([url, options]) =>
-        String(url).includes('/versions/version-1') && options?.method === 'PATCH',
-    );
-    const body = JSON.parse(String(patch![1]!.body));
-    expect(body.title).toBe('Singapore Escape');
-    expect(body.packageHeading).toBe('Singapore Family Holiday Package');
-  });
-
-  it('hides the editor for finalized versions and without update permission', async () => {
+  it('hides the title editor for finalized versions and without update permission', async () => {
     const { cleanup } = await import('@testing-library/react');
     vi.stubGlobal(
       'fetch',

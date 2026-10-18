@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 const TABS = [
-  { key: 'flight', label: 'Flight' },
-  { key: 'hotel', label: 'Hotel' },
   { key: 'sightseeing', label: 'Sightseeing' },
+  { key: 'hotel', label: 'Hotel' },
   { key: 'cruise', label: 'Cruise' },
   { key: 'vehicle', label: 'Vehicle' },
+  { key: 'flight', label: 'Flight' },
   { key: 'addon', label: 'Add-on Services' },
   { key: 'inclusions', label: 'Inclusions & Exclusions' },
   { key: 'destinationExpert', label: 'Destination Expert' },
@@ -21,10 +21,10 @@ const defaults = {
 
 describe('Builder tab order and pricing-mode default', () => {
   // Pricing Method is no longer a builder tab; it lives on the Quotation
-  // Details page. The builder opens on its first content tab, Flight.
-  it('Flight is first tab', () => {
-    expect(TABS[0]!.key).toBe('flight');
-    expect(TABS[0]!.label).toBe('Flight');
+  // Details page. The builder strip now leads with Sightseeing.
+  it('Sightseeing is first tab', () => {
+    expect(TABS[0]!.key).toBe('sightseeing');
+    expect(TABS[0]!.label).toBe('Sightseeing');
   });
 
   it('Hotel is second tab', () => {
