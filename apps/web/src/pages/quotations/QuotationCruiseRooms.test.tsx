@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { QuotationBuilderPage } from './QuotationBuilderPage';
 import { PublicQuotationPage } from './PublicQuotationPage';
+import { STANDARD_CRUISE_CABINS } from './cruiseStandardOptions';
 
 const auth = vi.hoisted(() => ({ permissions: new Set<string>() }));
 vi.mock('@/features/auth/AuthProvider', () => ({
@@ -643,6 +644,154 @@ describe('Quotation Builder — cruise card header, collapse and ordering', () =
     // Move it back up to restore the original order (data preserved).
     await userEvent.click(screen.getByRole('button', { name: 'Move cruise stay 2 up' }));
     await waitFor(() => expect(cruiseCardTitles()).toEqual(['Cruise A', 'Cruise B']));
+  });
+});
+
+const CRUISE_MASTER_DETAIL = {
+  id: CRUISE_ID,
+  name: 'Genting Dream',
+  roomTypes: [
+    { id: ROOM_TYPE_INTERIOR_ID, name: 'Interior', price: 1000, status: 'ACTIVE' },
+    { id: ROOM_TYPE_OCEANVIEW_ID, name: 'Oceanview', price: 2000, status: 'ACTIVE' },
+  ],
+};
+
+/** Serve a Cruise Master with cabins plus the quotation; other masters stay empty. */
+function stubFetchWithMaster(quotation: unknown, master: unknown = CRUISE_MASTER_DETAIL) {
+  return vi.fn(async (input: RequestInfo | URL, _options?: RequestInit) => {
+    void _options;
+    const url = String(input);
+    if (url.includes(`/masters/cruises/${CRUISE_ID}`)) return response(master);
+    if (url.includes('/masters/cruises')) return response(page([master]));
+    if (url.includes('/masters/')) return response(page([]));
+    if (url.includes('/api/users') || url.includes('/users?')) return response(page([]));
+    if (url.includes('/settings')) return response({});
+    return response(quotation);
+  });
+}
+
+/** Values offered by the Room 1 type datalist. */
+const roomTypeOptionValues = () => {
+  const input = screen.getByLabelText('Room 1 type master') as HTMLInputElement;
+  const list = document.getElementById(input.getAttribute('list') as string);
+  return Array.from(list?.querySelectorAll('option') ?? []).map((option) =>
+    option.getAttribute('value'),
+  );
+};
+
+describe('Quotation Builder — cruise standard cabin suggestions', () => {
+  it('offers all eight standard cabins alongside the master cabins', async () => {
+    vi.stubGlobal('fetch', stubFetchWithMaster(builderQuotation([cruiseServiceRow()])));
+    renderBuilderPage();
+    await openCruiseTab();
+
+    const normalized = roomTypeOptionValues().map((value) => (value ?? '').trim().toLowerCase());
+    // Master cabins stay available...
+    expect(normalized).toContain('interior');
+    expect(normalized).toContain('oceanview');
+    // ...and every standard cabin is offered even though the master lacks them.
+    for (const cabin of STANDARD_CRUISE_CABINS) {
+      expect(normalized).toContain(cabin.toLowerCase());
+    }
+  });
+
+  it('keeps master cabins first, omits duplicates, and preserves custom master cabins', async () => {
+    const master = {
+      id: CRUISE_ID,
+      name: 'Genting Dream',
+      roomTypes: [
+        { id: 'cabin-balcony', name: '  balcony cabin ', price: 3000, status: 'ACTIVE' },
+        { id: 'cabin-verandah', name: 'Owner Suite with Verandah', price: 9000, status: 'ACTIVE' },
+      ],
+    };
+    vi.stubGlobal('fetch', stubFetchWithMaster(builderQuotation([cruiseServiceRow()]), master));
+    renderBuilderPage();
+    await openCruiseTab();
+
+    const values = roomTypeOptionValues();
+    // Master options come first, unchanged.
+    expect(values[0]).toBe('  balcony cabin ');
+    expect(values[1]).toBe('Owner Suite with Verandah');
+    const normalized = values.map((value) => (value ?? '').trim().toLowerCase());
+    // The standard "Balcony Cabin" is matched case-insensitively and trimmed, so
+    // it is not duplicated...
+    expect(normalized.filter((value) => value === 'balcony cabin')).toHaveLength(1);
+    // ...and a custom master cabin is never dropped.
+    expect(values).toContain('Owner Suite with Verandah');
+    // The remaining standards are appended.
+    for (const cabin of STANDARD_CRUISE_CABINS) {
+      expect(normalized).toContain(cabin.toLowerCase());
+    }
+  });
+
+  it('saves a standard cabin selection as free text without a fabricated master id', async () => {
+    const fetchMock = stubFetchWithMaster(
+      builderQuotation([
+        cruiseServiceRow({ cruiseRoomLines: [cruiseLine({ cruiseRoomTypeId: null, roomType: null })] }),
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openCruiseTab();
+
+    const input = screen.getByLabelText('Room 1 type master');
+    await userEvent.type(input, 'Balcony Cabin');
+    expect(input).toHaveValue('Balcony Cabin');
+
+    await clickSave();
+    const cruise = cruiseOf(await getPatchBody(fetchMock));
+    expect(cruise.cruiseRoomLines[0]).toMatchObject({
+      roomType: 'Balcony Cabin',
+      cruiseRoomTypeId: null,
+    });
+  });
+
+  it('saves an arbitrary custom cabin name as free text without a fabricated master id', async () => {
+    const fetchMock = stubFetchWithMaster(
+      builderQuotation([
+        cruiseServiceRow({ cruiseRoomLines: [cruiseLine({ cruiseRoomTypeId: null, roomType: null })] }),
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openCruiseTab();
+
+    const input = screen.getByLabelText('Room 1 type master');
+    await userEvent.type(input, 'Owner Suite with Verandah');
+    expect(input).toHaveValue('Owner Suite with Verandah');
+
+    await clickSave();
+    const cruise = cruiseOf(await getPatchBody(fetchMock));
+    expect(cruise.cruiseRoomLines[0]).toMatchObject({
+      roomType: 'Owner Suite with Verandah',
+      cruiseRoomTypeId: null,
+    });
+  });
+
+  it('reopening keeps an arbitrary custom cabin name intact', async () => {
+    const fetchMock = stubFetchWithMaster(
+      builderQuotation([
+        cruiseServiceRow({
+          city: null,
+          cruiseRoomTypeId: null,
+          cruiseRoomLines: [
+            cruiseLine({ cruiseRoomTypeId: null, roomType: 'Owner Suite with Verandah' }),
+          ],
+        }),
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderBuilderPage();
+    await openCruiseTab();
+
+    expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Owner Suite with Verandah');
+
+    await clickSave();
+    const cruise = cruiseOf(await getPatchBody(fetchMock));
+    expect(cruise.cruiseRoomLines[0]).toMatchObject({
+      roomType: 'Owner Suite with Verandah',
+      cruiseRoomTypeId: null,
+    });
   });
 });
 

@@ -131,6 +131,7 @@ import {
   STANDARD_ROOM_TYPES,
   withStandardOptions,
 } from './hotelStandardOptions';
+import { withStandardCabinOptions } from './cruiseStandardOptions';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -1481,6 +1482,9 @@ function CruiseRoomLinesEditor({ form, serviceIndex, cruiseId, canCost, nights, 
   const listMaster = (cruiseMastersList.data?.data ?? []).find((m) => m.id === cruiseId);
   const cruiseMaster = (detail.data as unknown as { roomTypes?: Array<{ id: string; name: string; price?: number | null; status: string }> }) ?? listMaster as unknown as { roomTypes?: Array<{ id: string; name: string; price?: number | null; status: string }> } ?? null;
   const roomTypes = (cruiseMaster as unknown as { roomTypes?: Array<{ id: string; name: string; price?: number | null; status: string }> })?.roomTypes ?? [];
+  const roomTypeOptions = withStandardCabinOptions(
+    roomTypes.filter((r) => r.status === 'ACTIVE').map((room) => ({ id: room.id, label: room.name })),
+  );
   const currency = (form.watch('currency') as string) ?? 'INR';
   const isSectionWise = (form.watch('pricingMode' as never) as unknown as string) === 'SECTION_WISE';
   const manualOverridesRef = useRef<Set<string>>(new Set());
@@ -1542,7 +1546,7 @@ function CruiseRoomLinesEditor({ form, serviceIndex, cruiseId, canCost, nights, 
                   <MasterSelect
                     ariaLabel={`Room ${lineIndex + 1} type master`}
                     placeholder={cruiseId ? 'Link a room type' : 'Select cruise first'}
-                    options={roomTypes.filter((r) => r.status === 'ACTIVE').map((room) => ({ id: room.id, label: room.name }))}
+                    options={roomTypeOptions}
                     value={line?.cruiseRoomTypeId}
                     loading={Boolean(cruiseId) && detail.isPending}
                     fallbackLabel={line?.roomType ?? undefined}
@@ -1550,6 +1554,12 @@ function CruiseRoomLinesEditor({ form, serviceIndex, cruiseId, canCost, nights, 
                     onSelect={(option) => {
                       const room = roomTypes.find((entry) => entry.id === option?.id);
                       clearOverrideForLine(lineIndex);
+                      if (option && !room) {
+                        // A standard cabin suggestion is not a Cruise Master record: keep it
+                        // as quotation-specific free text with no master link or price.
+                        applyLine(lineIndex, { cruiseRoomTypeId: null, roomType: option.label });
+                        return;
+                      }
                       const patch: Partial<CruiseRoomLineInput> = {
                         cruiseRoomTypeId: option?.id ?? null,
                         ...(option ? { roomType: option.label } : { roomType: null }),
