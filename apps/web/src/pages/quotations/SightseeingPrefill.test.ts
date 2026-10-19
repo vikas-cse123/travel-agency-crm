@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  selectSightseeingCityForDestination,
-  selectSightseeingPrefillMasters,
-} from './QuotationBuilderPage';
+import { selectSightseeingPrefillMasters } from './QuotationBuilderPage';
 import type { Sightseeing } from '@/features/masters/masters.api';
 
 type Master = Sightseeing;
@@ -47,173 +44,68 @@ function master(
 const ids = (rows: Master[]) => rows.map((row) => row.id);
 
 describe('selectSightseeingPrefillMasters', () => {
-  it('CASE A — destination-level match keeps working (Singapore)', () => {
+  it('scopes to the lead destination by stable id and includes every city', () => {
     const rows = [
-      master('sg-night-safari', 'Night safari', 'Singapore', 'Singapore', 1, {
-        suggestedStartTime: '18:00',
-      }),
-      master('sg-city-tour', 'Singapore City Tour', 'Singapore', 'Singapore', 2),
-      master('sg-archived', 'Old Sentosa Show', 'Singapore', 'Singapore', 3, {
-        status: 'ARCHIVED',
-      }),
+      master('hn-1', 'Hanoi City Tour', 'Vietnam Trio', 'Hanoi', 1),
+      master('dn-1', 'Ba Na Hills', 'Vietnam Trio', 'Da Nang', 3),
+      master('pq-1', 'Phu Quoc Beach', 'Vietnam Trio', 'Phu Quoc', 2),
+      master('hn-x', 'Archived Hanoi Show', 'Vietnam Trio', 'Hanoi', 9, { status: 'ARCHIVED' }),
+      master('my-1', 'KL Towers', 'Malaysia Delight', 'Kuala Lumpur', 1),
     ];
-    const result = selectSightseeingPrefillMasters(rows, 'singapore', ['singapore']);
-    // Both ACTIVE Singapore masters in sequence order; archived row excluded.
-    expect(ids(result)).toEqual(['sg-night-safari', 'sg-city-tour']);
+    const result = selectSightseeingPrefillMasters(rows, 'vietnam trio', ['dest-Vietnam Trio']);
+    // Multi-city attractions are all eligible and ordered by sequence; the other
+    // destination and the archived row are excluded. City never filters.
+    expect(ids(result)).toEqual(['hn-1', 'pq-1', 'dn-1']);
   });
 
-  it('CASE B — city fallback rescues Hanoi masters under destination Vietnam', () => {
+  it('orders strictly by sequence, then createdAt, then id', () => {
     const rows = [
-      master('hn-1', 'Day 1 - Arrival in Hanoi | Hanoi City Tour', 'Vietnam', 'Hanoi', 1),
-      master('hn-2', 'Day 2 - Halong Bay Day Cruise', 'Vietnam', 'Hanoi', 2),
-      master('hn-5', 'Day 5 - Ba Na Hills & Golden Bridge', 'Vietnam', 'Hanoi', 5),
-      master('dn-1', 'Day 3 - Da Nang Leisure Day', 'Vietnam', 'Da Nang', 3),
-    ];
-    // Destination token "hanoi" matches no destination name ("vietnam"), so the
-    // destination filter yields zero rows and the Hanoi city fallback engages.
-    const result = selectSightseeingPrefillMasters(rows, 'hanoi', ['Hanoi']);
-    expect(ids(result)).toEqual(['hn-1', 'hn-2', 'hn-5']);
-  });
-
-  it('CASE C — no city match keeps the empty result (never attaches unrelated sightseeing)', () => {
-    const rows = [
-      master('hn-1', 'Day 1 - Arrival in Hanoi | Hanoi City Tour', 'Vietnam', 'Hanoi', 1),
-      master('sg-1', 'Night safari', 'Singapore', 'Singapore', 1),
-    ];
-    expect(selectSightseeingPrefillMasters(rows, 'atlantis', ['atlantis'])).toEqual([]);
-    // No itinerary cities at all also stays empty.
-    expect(selectSightseeingPrefillMasters(rows, 'atlantis', [])).toEqual([]);
-  });
-
-  it('CASE D — destination match takes precedence; city fallback is not applied', () => {
-    const rows = [
-      master('hn-1', 'Day 1 - Arrival in Hanoi | Hanoi City Tour', 'Vietnam', 'Hanoi', 1),
-      master('dn-1', 'Day 3 - Da Nang Leisure Day', 'Vietnam', 'Da Nang', 3),
-    ];
-    // Token "vietnam" matches the destination, so the full destination list is
-    // returned — including the Da Nang row, which a city-only fallback scoped
-    // to ["hanoi"] would have excluded.
-    const result = selectSightseeingPrefillMasters(rows, 'vietnam', ['hanoi']);
-    expect(ids(result)).toEqual(['hn-1', 'dn-1']);
-  });
-
-  it('CASE E — multiple cities stay separated (no cross-assignment source)', () => {
-    const rows = [
-      master('hn-1', 'Hanoi City Tour', 'Vietnam', 'Hanoi', 1),
-      master('hn-2', 'Halong Bay Day Cruise', 'Vietnam', 'Hanoi', 2),
-      master('dn-1', 'Da Nang Leisure Day', 'Vietnam', 'Da Nang', 3),
-      master('sg-1', 'Night safari', 'Singapore', 'Singapore', 1),
-      master('hn-old', 'Old Hanoi Show', 'Vietnam', 'Hanoi', 4, { status: 'INACTIVE' }),
-    ];
-    // Whitespace/case variants still match exactly after normalization.
-    const result = selectSightseeingPrefillMasters(rows, 'nowhere', ['  HANOI ', 'da nang']);
-    expect(ids(result)).toEqual(['hn-1', 'hn-2', 'dn-1']);
-  });
-
-  it('preserves ordering (sequence, then createdAt, then id) and the empty-token behavior', () => {
-    const rows = [
-      master('b', 'Second', 'Singapore', 'Singapore', 2),
-      master('a', 'First', 'Singapore', 'Singapore', 1, {
+      master('b', 'Second', 'Vietnam Trio', 'Da Nang', 2),
+      master('a', 'First', 'Vietnam Trio', 'Hanoi', 1, {
         createdAt: '2026-02-01T00:00:00.000Z',
       }),
-      master('c', 'Also first', 'Singapore', 'Singapore', 1, {
+      master('c', 'Also first', 'Vietnam Trio', 'Phu Quoc', 1, {
         createdAt: '2026-01-01T00:00:00.000Z',
       }),
     ];
-    expect(ids(selectSightseeingPrefillMasters(rows, 'singapore', ['singapore']))).toEqual([
-      'c',
-      'a',
-      'b',
-    ]);
-    // No destination token (new/blank summary) keeps the previous behavior:
-    // every ACTIVE master is a candidate.
-    expect(ids(selectSightseeingPrefillMasters(rows, undefined, []))).toEqual(['c', 'a', 'b']);
+    expect(
+      ids(selectSightseeingPrefillMasters(rows, 'vietnam trio', ['dest-Vietnam Trio'])),
+    ).toEqual(['c', 'a', 'b']);
   });
 
-  it('restricts the candidate set to the supplied cities (no cross-city leak)', () => {
+  it('stable id scope wins over a name token that would otherwise match', () => {
     const rows = [
-      master('sg-1', 'Singapore City Tour', 'Singapore HD', 'Singapore', 1),
-      master('sn-1', 'Sentosa Beach', 'Singapore HD', 'Sentosa', 2),
-      master('sn-2', 'Universal Studios', 'Singapore HD', 'Sentosa', 3),
+      master('vn-1', 'Hanoi City Tour', 'Vietnam Trio', 'Hanoi', 1),
+      master('vn-extra', 'Hue Imperial City', 'Vietnam Extra', 'Hue', 1),
     ];
-    // Destination token matches, but the hard scope keeps only Sentosa masters.
-    const result = selectSightseeingPrefillMasters(rows, 'singapore hd', ['Sentosa'], ['Sentosa']);
-    expect(ids(result)).toEqual(['sn-1', 'sn-2']);
-  });
-});
-
-describe('selectSightseeingCityForDestination', () => {
-  it('selects the only linked city', () => {
+    // The token "vietnam" matches both destination names, but the stable id
+    // keeps only the lead's destination.
     expect(
-      selectSightseeingCityForDestination([{ id: 'city-sg', name: 'Singapore', sequence: 1 }], []),
-    ).toEqual({ cityId: 'city-sg', cityName: 'Singapore' });
+      ids(selectSightseeingPrefillMasters(rows, 'vietnam', ['dest-Vietnam Trio'])),
+    ).toEqual(['vn-1']);
   });
 
-  it('selects the city with the most ACTIVE attractions', () => {
+  it('falls back to the destination name token before the ids resolve', () => {
     const rows = [
-      master('sg-1', 'Singapore City Tour', 'Singapore HD', 'Singapore'),
-      master('sn-1', 'Sentosa Beach', 'Singapore HD', 'Sentosa'),
-      master('sn-2', 'Universal Studios', 'Singapore HD', 'Sentosa'),
-      master('sn-3', 'Cable Car', 'Singapore HD', 'Sentosa'),
+      master('sg-1', 'City Tour', 'Singapore', 'Singapore', 1),
+      master('sg-2', 'Night Safari', 'Singapore', 'Singapore', 2),
+      master('my-1', 'KL Towers', 'Malaysia Delight', 'Kuala Lumpur', 1),
     ];
-    expect(
-      selectSightseeingCityForDestination(
-        [
-          { id: 'city-sg', name: 'Singapore', sequence: 1 },
-          { id: 'city-sn', name: 'Sentosa', sequence: 2 },
-        ],
-        rows,
-      ),
-    ).toEqual({ cityId: 'city-sn', cityName: 'Sentosa' });
+    expect(ids(selectSightseeingPrefillMasters(rows, 'singapore'))).toEqual(['sg-1', 'sg-2']);
   });
 
-  it('breaks ties by city link sequence, then alphabetical name', () => {
+  it('keeps every ACTIVE master when neither token nor ids are known', () => {
     const rows = [
-      master('sg-1', 'Singapore City Tour', 'Singapore HD', 'Singapore'),
-      master('sn-1', 'Sentosa Beach', 'Singapore HD', 'Sentosa'),
+      master('b', 'Second', 'Singapore', 'Singapore', 2),
+      master('c', 'First', 'Singapore', 'Singapore', 1),
+      master('a', 'Old Show', 'Singapore', 'Singapore', 1, { status: 'INACTIVE' }),
     ];
-    // Equal counts → the lower master sequence wins.
-    expect(
-      selectSightseeingCityForDestination(
-        [
-          { id: 'city-b', name: 'Bravo', sequence: 2 },
-          { id: 'city-a', name: 'Alpha', sequence: 1 },
-        ],
-        rows,
-      ),
-    ).toEqual({ cityId: 'city-a', cityName: 'Alpha' });
-    // Same sequence → alphabetical.
-    expect(
-      selectSightseeingCityForDestination(
-        [
-          { id: 'city-b', name: 'Bravo', sequence: 1 },
-          { id: 'city-a', name: 'Alpha', sequence: 1 },
-        ],
-        rows,
-      ),
-    ).toEqual({ cityId: 'city-a', cityName: 'Alpha' });
+    expect(ids(selectSightseeingPrefillMasters(rows, undefined, []))).toEqual(['c', 'b']);
   });
 
-  it('never counts archived masters', () => {
-    const rows = [
-      master('sg-1', 'Old Show', 'Singapore HD', 'Singapore', 1, { status: 'ARCHIVED' }),
-      master('sn-1', 'Beach', 'Singapore HD', 'Sentosa'),
-    ];
-    expect(
-      selectSightseeingCityForDestination(
-        [
-          { id: 'city-sg', name: 'Singapore', sequence: 1 },
-          { id: 'city-sn', name: 'Sentosa', sequence: 2 },
-        ],
-        rows,
-      ),
-    ).toEqual({ cityId: 'city-sn', cityName: 'Sentosa' });
-  });
-
-  it('returns nulls when the destination links no cities', () => {
-    expect(selectSightseeingCityForDestination([], [master('x', 'X', 'D', 'C')])).toEqual({
-      cityId: null,
-      cityName: null,
-    });
+  it('returns an empty list when the destination matches nothing', () => {
+    const rows = [master('sg-1', 'City Tour', 'Singapore', 'Singapore', 1)];
+    expect(selectSightseeingPrefillMasters(rows, 'atlantis')).toEqual([]);
+    expect(selectSightseeingPrefillMasters(rows, 'atlantis', ['dest-atlantis'])).toEqual([]);
   });
 });

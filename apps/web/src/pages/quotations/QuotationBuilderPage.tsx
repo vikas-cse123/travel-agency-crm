@@ -1866,124 +1866,37 @@ export function shouldAutoPrefillHotels(savedHotelCount: number): boolean {
  * Candidate sightseeing masters for quotation prefill, in consumption order
  * (sequence → createdAt → id).
  *
- * Destination-level matching comes first: masters whose destination name or
- * country name contains the quotation's destination token. That covers the
- * normal case (e.g. token "singapore" with masters under destination
- * "Singapore").
- *
- * City-level fallback: the lead's itinerary destination can be a city (e.g.
- * "Hanoi") while sightseeing masters are organized under the parent
- * destination (e.g. "Vietnam"), so the destination-name filter can
- * legitimately remove every row. When — and only when — destination matching
- * yields zero masters, masters whose city exactly matches (normalized trim +
- * lowercase) one of the itinerary/day cities are retained instead of
- * prefilling empty activities. Matching stays exact (never substring, never
- * reversed) so sightseeing from an unrelated destination can never be
- * attached; with no city match the result is empty and the builder keeps its
- * empty-activity placeholder.
+ * The lead's selected destination identifies the eligible attractions. Rows are
+ * scoped by the destination's stable id (preferred) or, when no id is known yet,
+ * by the destination name/country token. City is deliberately ignored: a
+ * destination such as "Vietnam Trio" owns attractions spread across Hanoi, Da
+ * Nang and Phu Quoc, and every one of them must prefill in sightseeing sequence
+ * order (1, 2, 3, …) regardless of which city it sits in.
  */
 export function selectSightseeingPrefillMasters(
   masters: Sightseeing[],
   destinationToken: string | null | undefined,
-  fallbackCityKeys: string[],
-  restrictCityKeys: string[] = [],
+  destinationIds: string[] = [],
 ): Sightseeing[] {
   const normalizedToken = (destinationToken ?? '').trim().toLowerCase();
-  const ordered = [...(masters ?? [])]
+  const idScope = new Set((destinationIds ?? []).map((id) => id.trim()).filter(Boolean));
+  return [...(masters ?? [])]
     .filter((row) => row.status === 'ACTIVE')
+    .filter((row) => {
+      // The stable destination id is authoritative when we have one; a row with
+      // no destination id can never be proven to belong to it, so it is dropped.
+      if (idScope.size > 0) return Boolean(row.destination?.id && idScope.has(row.destination.id));
+      if (!normalizedToken) return true;
+      return [row.destination?.name, row.destination?.countryName]
+        .map((value) => value?.toLowerCase())
+        .some((value) => Boolean(value && value.includes(normalizedToken)));
+    })
     .sort(
       (a, b) =>
         (a.sequence ?? 0) - (b.sequence ?? 0) ||
         a.createdAt.localeCompare(b.createdAt) ||
         a.id.localeCompare(b.id),
     );
-  // Optional hard scope. When the lead's itinerary carries no city (Create Lead
-  // no longer collects one), the city is resolved from the destination and the
-  // prefill is restricted to the itinerary's cities so attractions from another
-  // city of the same destination can never leak in. Empty = no restriction
-  // (legacy behaviour for leads that already carry a city).
-  const restrict = new Set(
-    (restrictCityKeys ?? []).map((key) => key.trim().toLowerCase()).filter(Boolean),
-  );
-  const scoped =
-    restrict.size === 0
-      ? ordered
-      : ordered.filter((row) => restrict.has((row.city?.name ?? '').trim().toLowerCase()));
-  const destinationMatched = !normalizedToken
-    ? scoped
-    : scoped.filter((row) =>
-        [row.destination?.name, row.destination?.countryName]
-          .map((value) => value?.toLowerCase())
-          .some((value) => Boolean(value && value.includes(normalizedToken))),
-      );
-  if (destinationMatched.length > 0) return destinationMatched;
-  const cityKeys = new Set(
-    (fallbackCityKeys ?? []).map((key) => key.trim().toLowerCase()).filter(Boolean),
-  );
-  if (cityKeys.size === 0) return [];
-  return scoped.filter((row) => cityKeys.has((row.city?.name ?? '').trim().toLowerCase()));
-}
-
-/** A City Master link as embedded on a Destination Master row. */
-export interface SightseeingCityLink {
-  id?: string | null;
-  name?: string | null;
-  sequence?: number | null;
-}
-
-export interface SightseeingCityChoice {
-  cityId: string | null;
-  cityName: string | null;
-}
-
-/**
- * Pick the city to prefill sightseeing for a destination whose lead itinerary
- * has no city. Uses the Destination Master's City links (stable ids) together
- * with the ACTIVE sightseeing masters already scoped to that destination:
- *
- *   - exactly one linked city → that city;
- *   - several linked cities → the one with the most ACTIVE attractions,
- *     breaking ties by the city link's master sequence, then by name, so the
- *     result is deterministic.
- *
- * Returns nulls when the destination links no cities, so the caller keeps its
- * existing empty-activity behaviour instead of inventing a city.
- */
-export function selectSightseeingCityForDestination(
-  cityLinks: SightseeingCityLink[],
-  masters: Sightseeing[],
-): SightseeingCityChoice {
-  const cities = (cityLinks ?? [])
-    .map((link) => ({
-      id: (link.id ?? '').trim(),
-      name: (link.name ?? '').trim(),
-      sequence: link.sequence ?? 0,
-    }))
-    .filter((city) => city.name || city.id);
-  if (cities.length === 0) return { cityId: null, cityName: null };
-  if (cities.length === 1) {
-    const only = cities[0]!;
-    return { cityId: only.id || null, cityName: only.name || null };
-  }
-  const countById = new Map<string, number>();
-  const countByName = new Map<string, number>();
-  for (const master of masters ?? []) {
-    if (master.status !== 'ACTIVE') continue;
-    const id = (master.city?.id ?? '').trim();
-    if (id) countById.set(id, (countById.get(id) ?? 0) + 1);
-    const name = (master.city?.name ?? '').trim().toLowerCase();
-    if (name) countByName.set(name, (countByName.get(name) ?? 0) + 1);
-  }
-  const countFor = (city: { id: string; name: string }): number => {
-    const byId = city.id ? countById.get(city.id) : undefined;
-    if (byId !== undefined) return byId;
-    return city.name ? (countByName.get(city.name.toLowerCase()) ?? 0) : 0;
-  };
-  const best = [...cities].sort(
-    (a, b) =>
-      countFor(b) - countFor(a) || a.sequence - b.sequence || a.name.localeCompare(b.name),
-  )[0]!;
-  return { cityId: best.id || null, cityName: best.name || null };
 }
 
 /** The best available active hotel for a city (first by name). */
@@ -3346,89 +3259,32 @@ export function QuotationBuilderPage() {
     };
     const returnStr = leadTotalNights > 0 && startStr ? addDays(startStr, leadTotalNights) : endStr;
     // Prefill a day-per-night sightseeing itinerary (+1 final travel day) from the
-    // lead. Each day receives at most ONE primary activity, taken from the
-    // active master in ascending sequence order and preferring the day's city;
-    // the remaining attractions stay available in the activity selector.
+    // lead. Each day receives at most ONE primary activity, taken from the ACTIVE
+    // master attractions linked to the lead's destination in ascending
+    // sightseeing sequence order. City is never used to filter, select or order
+    // attractions: a destination like "Vietnam Trio" spans several cities (Hanoi,
+    // Da Nang, Phu Quoc) and all of its numbered attractions must prefill in
+    // sequence order (1, 2, 3, …) regardless of city.
     const leadCities: string[] = [];
-    // Resolve a city for every stay. Legacy leads store one directly; the
-    // Create Lead form no longer collects a city, so a blank stay resolves the
-    // destination's city through the Destination Master's City links (one city
-    // taken as-is, several ranked by ACTIVE attraction count) using stable ids
-    // — never a free-text guess — so sightseeing days are not left blank when
-    // suitable master attractions exist.
-    const destinationsByKey = new Map<
-      string,
-      { id: string; name: string; cities: SightseeingCityLink[] }
-    >();
-    for (const dest of destinationMasters.data?.data ?? []) {
-      const record = {
-        id: dest.id,
-        name: dest.name,
-        cities: (dest.cities ?? []).map((link) => ({
-          id: link.city?.id ?? link.cityId ?? '',
-          name: link.city?.name ?? '',
-          sequence: link.sequence ?? 0,
-        })),
-      };
-      destinationsByKey.set(dest.name.trim().toLowerCase(), record);
-      destinationsByKey.set(dest.id, record);
-    }
-    const resolvedCityByDestination = new Map<string, string>();
-    const resolvedCityNames = new Set<string>();
-    const cityForStay = (stay: {
-      country?: string | null;
-      destination?: string | null;
-    }): string => {
-      const explicit = (stay.destination ?? '').trim();
-      if (explicit) return explicit;
-      const key = (stay.country ?? '').trim().toLowerCase();
-      if (!key) return '';
-      const destination = destinationsByKey.get(key);
-      if (!destination) return '';
-      const cached = resolvedCityByDestination.get(destination.id);
-      if (cached !== undefined) return cached;
-      const scopedMasters = (sightseeingMasters.data?.data ?? []).filter((master) => {
-        const id = master.destination?.id?.trim();
-        const name = master.destination?.name?.trim().toLowerCase();
-        return id === destination.id || name === destination.name.trim().toLowerCase();
-      });
-      const chosen = selectSightseeingCityForDestination(destination.cities, scopedMasters);
-      const cityName = chosen.cityName ?? '';
-      resolvedCityByDestination.set(destination.id, cityName);
-      if (cityName) resolvedCityNames.add(cityName);
-      return cityName;
-    };
     for (const row of quotation.data?.query?.itinerary ?? [])
-      for (let n = 0; n < (row.nights ?? 0); n += 1) leadCities.push(cityForStay(row));
+      for (let n = 0; n < (row.nights ?? 0); n += 1)
+        leadCities.push((row.destination ?? '').trim());
     const sightDayCount = Math.max(1, leadCities.length + (leadCities.length ? 1 : 0));
     const dayCities = Array.from(
       { length: sightDayCount },
       (_, i) => leadCities[i] ?? leadCities[leadCities.length - 1] ?? '',
     );
-    const cityKey = (value: string | null | undefined) => (value ?? '').trim().toLowerCase();
     const destinationToken = (quotation.data?.destinationSummary ?? '')
       .split(/[•(→>,]/)[0]
       ?.trim()
       ?.toLowerCase();
-    // Itinerary/day cities for the city-level fallback inside
-    // selectSightseeingPrefillMasters (lead destination + computed day cities).
-    const fallbackCityKeys = Array.from(
-      new Set([
-        ...(quotation.data?.query?.itinerary ?? []).map((stay) => stay.destination ?? ''),
-        ...dayCities,
-      ]),
-    );
-    // When any city was resolved from the destination (blank lead city), hard-
-    // scope the prefill to the itinerary's cities so attractions from another
-    // city of the same destination are never selected.
-    const restrictCityKeys = resolvedCityNames.size
-      ? Array.from(new Set([...dayCities, ...resolvedCityNames])).filter(Boolean)
-      : [];
+    // Scope the prefill to the lead's destinations by stable id (resolved in
+    // destinationIdSet) so attractions from any other destination can never be
+    // attached. The name token is only a fallback until the masters load.
     const orderedMasters = selectSightseeingPrefillMasters(
       sightseeingMasters.data?.data ?? [],
       destinationToken,
-      fallbackCityKeys,
-      restrictCityKeys,
+      [...destinationIdSet],
     );
 
     /** Detect a departure activity by normalized title. */
@@ -3442,30 +3298,19 @@ export function QuotationBuilderPage() {
       return n.includes('departure') || /check[\s-]?out\s+and\s+departure/i.test(n);
     };
 
-    // If configured, resolve an optional departure master for the final
-    // destination: exact city match first, then any active departure master for
-    // the destination, then by sequence and title.
-    const finalCity = dayCities[dayCities.length - 1] ?? '';
+    // If configured, reserve the first departure-titled master for the final
+    // day, still in sequence order (city is never used to pick or reorder it).
     const departureMasters = orderedMasters.filter((row) => isDepartureTitle(row.title));
-    const departureMaster =
-      departureMasters.find((row) => cityKey(row.city?.name) === cityKey(finalCity)) ??
-      departureMasters[0] ??
-      null;
+    const departureMaster = departureMasters[0] ?? null;
 
     const usedIds = new Set<string>();
     // Reserve the optional departure master so it is never consumed by earlier days.
     if (departureMaster) usedIds.add(departureMaster.id);
     let sequenceCursor = 0;
-    const nextForDay = (city: string, isLastDay: boolean): Sightseeing | null => {
+    // Consume attractions strictly in the master's ascending sequence order; the
+    // city a day belongs to never reorders or filters the selection.
+    const nextForDay = (isLastDay: boolean): Sightseeing | null => {
       if (isLastDay && departureMaster) return departureMaster;
-      const key = cityKey(city);
-      const cityMatch = orderedMasters.find(
-        (row) => !usedIds.has(row.id) && cityKey(row.city?.name) === key,
-      );
-      if (cityMatch) {
-        usedIds.add(cityMatch.id);
-        return cityMatch;
-      }
       while (
         sequenceCursor < orderedMasters.length &&
         usedIds.has(orderedMasters[sequenceCursor]!.id)
@@ -3503,16 +3348,19 @@ export function QuotationBuilderPage() {
       description: null,
       days: dayCities.map((city, i) => {
         const isLastDay = i === dayCities.length - 1;
-        const primary = nextForDay(city, isLastDay);
+        const primary = nextForDay(isLastDay);
+        // The day is labelled with the attraction's own city (Hanoi, Da Nang,
+        // Phu Quoc …), falling back to any lead city when the day is empty.
+        const dayCity = primary?.city?.name ?? city;
         return emptySightseeingDay(i + 1, {
           // Day titles render verbatim: the formatter never injects a
           // separator, so master titles, names and cities are kept as-is.
           title: primary
             ? formatItineraryDayTitle(i + 1, primary.title)
-            : city
-              ? formatItineraryDayTitle(i + 1, city)
+            : dayCity
+              ? formatItineraryDayTitle(i + 1, dayCity)
               : `Day ${i + 1}`,
-          city: city || null,
+          city: dayCity || null,
           date: addDays(startStr, i),
           activities: primary ? [toActivity(primary)] : [emptySightseeingActivity()],
         });

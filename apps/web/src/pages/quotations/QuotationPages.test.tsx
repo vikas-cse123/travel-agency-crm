@@ -11656,6 +11656,31 @@ describe('Quotation Builder - default hotel destination prefill', () => {
     },
   });
 
+  // A lead bound to one Master Destination (resolved by name) whose single stay
+  // spans `nights` nights — used by the sightseeing-prefill tests, which must not
+  // depend on any city being stored on the lead.
+  const sightseeingQuotation = (destination: string, nights: number) => {
+    const base = blankCityQuotation();
+    return {
+      ...base,
+      destinationSummary: destination,
+      query: {
+        ...base.query,
+        itinerary: [
+          {
+            id: 'stay-1',
+            country: destination,
+            destination: '',
+            nights,
+            sequence: 1,
+            arrivalDate: '2026-08-10T00:00:00.000Z',
+            departureDate: '2026-08-16T00:00:00.000Z',
+          },
+        ],
+      },
+    };
+  };
+
   it('prefills sightseeing from the destination when the lead city is blank (single city)', async () => {
     const masters = [
       sightseeingMaster('sg-1', 'City Tour', { id: 'city-sg', name: 'Singapore' }, 1),
@@ -11691,12 +11716,11 @@ describe('Quotation Builder - default hotel destination prefill', () => {
     expect(screen.getByLabelText('Day 3 activity 1 name')).toHaveValue('Sentosa Tour');
   });
 
-  it('picks the city with the most ACTIVE attractions and excludes other cities', async () => {
+  it('includes attractions from every city in sequence order (city never chooses)', async () => {
     const masters = [
       sightseeingMaster('sg-1', 'Singapore City Tour', { id: 'city-sg', name: 'Singapore' }, 1),
       sightseeingMaster('sn-1', 'Sentosa Beach', { id: 'city-sn', name: 'Sentosa' }, 2),
       sightseeingMaster('sn-2', 'Universal Studios', { id: 'city-sn', name: 'Sentosa' }, 3),
-      sightseeingMaster('sn-3', 'Cable Car', { id: 'city-sn', name: 'Sentosa' }, 4),
       // A different destination entirely, sharing nothing with the lead.
       sightseeingMaster(
         'my-1',
@@ -11708,7 +11732,7 @@ describe('Quotation Builder - default hotel destination prefill', () => {
     ];
     vi.stubGlobal(
       'fetch',
-      masterFetch(blankCityQuotation(), {
+      masterFetch(sightseeingQuotation('Singapore Heaven Delight', 3), {
         '/masters/sightseeing': page(masters),
         '/masters/destinations': page([
           destinationMaster([
@@ -11723,18 +11747,92 @@ describe('Quotation Builder - default hotel destination prefill', () => {
     await waitFor(() =>
       expect(
         screen.getAllByRole('button', { name: /^Select sightseeing day \d+$/ }),
-      ).toHaveLength(3),
+      ).toHaveLength(4),
     );
-    // Sentosa has three ACTIVE attractions vs Singapore's one → Sentosa wins.
-    // Only the selected day's card is mounted, so step through the days.
-    expect(screen.getByLabelText('Sightseeing day 1 city')).toHaveValue('Sentosa');
-    expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue('Sentosa Beach');
+    // Three attractions across two cities, taken strictly by sequence.
+    expect(screen.getByLabelText('Sightseeing day 1 city')).toHaveValue('Singapore');
+    expect(screen.getByLabelText('Day 1 activity 1 name')).toHaveValue('Singapore City Tour');
     await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 2' }));
-    expect(screen.getByLabelText('Day 2 activity 1 name')).toHaveValue('Universal Studios');
+    expect(screen.getByLabelText('Sightseeing day 2 city')).toHaveValue('Sentosa');
+    expect(screen.getByLabelText('Day 2 activity 1 name')).toHaveValue('Sentosa Beach');
     await userEvent.click(screen.getByRole('button', { name: 'Select sightseeing day 3' }));
-    expect(screen.getByLabelText('Day 3 activity 1 name')).toHaveValue('Cable Car');
-    // The losing city and the unrelated destination are never prefilled.
-    expect(screen.queryByDisplayValue('Singapore City Tour')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Sightseeing day 3 city')).toHaveValue('Sentosa');
+    expect(screen.getByLabelText('Day 3 activity 1 name')).toHaveValue('Universal Studios');
+    // The unrelated destination is never prefilled.
+    expect(screen.queryByDisplayValue('Kuala Lumpur Towers')).not.toBeInTheDocument();
+  });
+
+  it('prefills a multi-city destination strictly by sequence, each attraction once', async () => {
+    // Vietnam Trio owns attractions numbered 1–7 spread across Hanoi, Da Nang and
+    // Phu Quoc. Every one must prefill in ascending sequence order regardless of
+    // city, and none may repeat.
+    const vietnamDestination = {
+      ...destinationMaster([
+        { id: 'city-hn', name: 'Hanoi' },
+        { id: 'city-dn', name: 'Da Nang' },
+        { id: 'city-pq', name: 'Phu Quoc' },
+      ]),
+      id: 'dest-vn',
+      name: 'Vietnam Trio',
+    };
+    const dest = { id: 'dest-vn', name: 'Vietnam Trio' };
+    // Deliberately shuffled in the source list; prefill must re-order by sequence.
+    const masters = [
+      sightseeingMaster('vn-4', 'Hoi An Ancient Town', { id: 'city-dn', name: 'Da Nang' }, 4, dest),
+      sightseeingMaster('vn-1', 'Hanoi City Tour', { id: 'city-hn', name: 'Hanoi' }, 1, dest),
+      sightseeingMaster('vn-7', 'Phu Quoc Cable Car', { id: 'city-pq', name: 'Phu Quoc' }, 7, dest),
+      sightseeingMaster('vn-3', 'Ba Na Hills', { id: 'city-dn', name: 'Da Nang' }, 3, dest),
+      sightseeingMaster('vn-6', 'Phu Quoc Beach', { id: 'city-pq', name: 'Phu Quoc' }, 6, dest),
+      sightseeingMaster('vn-2', 'Halong Bay Cruise', { id: 'city-hn', name: 'Hanoi' }, 2, dest),
+      sightseeingMaster('vn-5', 'Golden Bridge', { id: 'city-dn', name: 'Da Nang' }, 5, dest),
+      sightseeingMaster(
+        'my-1',
+        'Kuala Lumpur Towers',
+        { id: 'city-kl', name: 'Kuala Lumpur' },
+        1,
+        { id: 'dest-my', name: 'Malaysia Delight' },
+      ),
+    ];
+    // 6 nights → 7 days, exactly enough for all seven attractions.
+    vi.stubGlobal(
+      'fetch',
+      masterFetch(sightseeingQuotation('Vietnam Trio', 6), {
+        '/masters/sightseeing': page(masters),
+        '/masters/destinations': page([vietnamDestination]),
+      }),
+    );
+    renderBuilderPage();
+    await openTab('Sightseeing');
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button', { name: /^Select sightseeing day \d+$/ }),
+      ).toHaveLength(7),
+    );
+
+    const expected = [
+      { day: 1, city: 'Hanoi', name: 'Hanoi City Tour' },
+      { day: 2, city: 'Hanoi', name: 'Halong Bay Cruise' },
+      { day: 3, city: 'Da Nang', name: 'Ba Na Hills' },
+      { day: 4, city: 'Da Nang', name: 'Hoi An Ancient Town' },
+      { day: 5, city: 'Da Nang', name: 'Golden Bridge' },
+      { day: 6, city: 'Phu Quoc', name: 'Phu Quoc Beach' },
+      { day: 7, city: 'Phu Quoc', name: 'Phu Quoc Cable Car' },
+    ];
+    const prefilled: string[] = [];
+    for (const step of expected) {
+      if (step.day > 1) {
+        await userEvent.click(
+          screen.getByRole('button', { name: `Select sightseeing day ${step.day}` }),
+        );
+      }
+      expect(screen.getByLabelText(`Sightseeing day ${step.day} city`)).toHaveValue(step.city);
+      expect(screen.getByLabelText(`Day ${step.day} activity 1 name`)).toHaveValue(step.name);
+      prefilled.push(step.name);
+    }
+    // Every eligible attraction appears exactly once.
+    expect(prefilled).toHaveLength(7);
+    expect(new Set(prefilled).size).toBe(7);
+    // The other destination never leaks in.
     expect(screen.queryByDisplayValue('Kuala Lumpur Towers')).not.toBeInTheDocument();
   });
 
