@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
-import { screen, within, fireEvent } from '@testing-library/react';
+import { screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { QuotationBuilderPage, withSynthesizedLines } from './QuotationBuilderPage';
@@ -1153,5 +1153,125 @@ describe('Hotel section — clear controls, icon-only removes and live preview',
     expect(
       fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH' || options?.method === 'POST'),
     ).toBe(false);
+  });
+});
+
+describe('Hotel Room Type and Meal Plan standard suggestions', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('scrollTo', vi.fn());
+    auth.permissions = new Set(['quotations.view', 'quotations.update', 'quotations.view_costing']);
+  });
+
+  const datalistValues = (ariaLabel: string): string[] => {
+    const input = screen.getByLabelText(ariaLabel);
+    const listId = input.getAttribute('list');
+    const list = listId ? document.getElementById(listId) : null;
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('option')).map(
+      (option) => option.getAttribute('value') ?? '',
+    );
+  };
+
+  const openRoomEditor = async () => {
+    renderBuilder();
+    await screen.findByRole('heading', { name: 'Quotation builder' });
+    await openHotelTab();
+    await expandStay();
+  };
+
+  it('shows all standard room types and meal plans when the stay has no Hotel Master', async () => {
+    vi.stubGlobal('fetch', builderFetch(detail()));
+    await openRoomEditor();
+    const rooms = datalistValues('Room 1 type master');
+    for (const label of [
+      'Standard Room',
+      'Superior Room',
+      'Deluxe Room',
+      'Premium Room',
+      'Executive Room',
+      'Junior Suite Room',
+      'Suite Room',
+    ]) {
+      expect(rooms).toContain(label);
+    }
+    const meals = datalistValues('Meal plan 1 master');
+    for (const label of ['Breakfast', 'Breakfast (Veg)', 'Breakfast + Dinner', 'Breakfast + Dinner (Veg)']) {
+      expect(meals).toContain(label);
+    }
+  });
+
+  it('keeps master suggestions, omits duplicates and still accepts arbitrary custom text', async () => {
+    const masterHotel = {
+      id: 'hotel-1',
+      name: 'Coastal Bay Resort',
+      roomTypes: [{ id: 'rt-1', name: 'Deluxe Room' }],
+      mealPlans: [{ id: 'mp-1', name: 'Breakfast', type: 'BREAKFAST' }],
+    };
+    vi.stubGlobal(
+      'fetch',
+      builderFetch(detail({ hotels: [hotelRow({ hotelId: 'hotel-1' })] }), {
+        '/masters/hotels/hotel-1': masterHotel,
+      }),
+    );
+    await openRoomEditor();
+    // Wait for the linked master's room/meal options to load.
+    await waitFor(() => expect(datalistValues('Room 1 type master')).toContain('Deluxe Room'));
+
+    const rooms = datalistValues('Room 1 type master');
+    // The master-provided standard name appears exactly once (no duplicate).
+    expect(rooms.filter((value) => value === 'Deluxe Room')).toHaveLength(1);
+    for (const label of [
+      'Standard Room',
+      'Superior Room',
+      'Premium Room',
+      'Executive Room',
+      'Junior Suite Room',
+      'Suite Room',
+    ]) {
+      expect(rooms).toContain(label);
+    }
+
+    const meals = datalistValues('Meal plan 1 master');
+    expect(meals.filter((value) => value === 'Breakfast')).toHaveLength(1);
+    for (const label of ['Breakfast (Veg)', 'Breakfast + Dinner', 'Breakfast + Dinner (Veg)']) {
+      expect(meals).toContain(label);
+    }
+
+    // Arbitrary custom values that match nothing remain enterable.
+    fireEvent.change(screen.getByLabelText('Room 1 type master'), {
+      target: { value: 'Super Deluxe Valley View' },
+    });
+    fireEvent.change(screen.getByLabelText('Meal plan 1 master'), {
+      target: { value: 'Half Board' },
+    });
+    expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Super Deluxe Valley View');
+    expect(screen.getByLabelText('Meal plan 1 master')).toHaveValue('Half Board');
+  });
+
+  it('saves a standard suggestion as free text without a fabricated master link', async () => {
+    const fetchMock = builderFetch(detail());
+    vi.stubGlobal('fetch', fetchMock);
+    await openRoomEditor();
+    fireEvent.change(screen.getByLabelText('Room 1 type master'), {
+      target: { value: 'Suite Room' },
+    });
+    fireEvent.change(screen.getByLabelText('Meal plan 1 master'), {
+      target: { value: 'Breakfast (Veg)' },
+    });
+    expect(screen.getByLabelText('Room 1 type master')).toHaveValue('Suite Room');
+    expect(screen.getByLabelText('Meal plan 1 master')).toHaveValue('Breakfast (Veg)');
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save quotation' })[1]!);
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true),
+    );
+    const patch = fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH');
+    const hotels = JSON.parse(String(patch![1]!.body)).hotels;
+    expect(hotels[0].roomType).toBe('Suite Room');
+    expect(hotels[0].mealPlan).toBe('Breakfast (Veg)');
+    // Standard suggestions are free text, never a fabricated master link.
+    expect(hotels[0].hotelRoomTypeId).toBeNull();
+    expect(hotels[0].hotelMealPlanId).toBeNull();
   });
 });

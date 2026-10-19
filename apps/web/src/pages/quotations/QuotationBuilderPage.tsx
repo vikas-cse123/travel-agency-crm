@@ -126,6 +126,11 @@ import { resolveWeblinkDisplay, resolveWeblinkProfile } from './PublicQuotationP
 import { dateShort } from './FlightPublicView';
 import { formatPublicQuotationNumber } from './quotationContact';
 import { deriveDestinationSummary, repairLegacyItinerary } from './quotationItineraryRepair';
+import {
+  STANDARD_MEAL_PLANS,
+  STANDARD_ROOM_TYPES,
+  withStandardOptions,
+} from './hotelStandardOptions';
 
 const field =
   'w-full rounded-lg border border-border bg-card px-3 py-2 text-sm h-[38px] shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-ring transition-colors';
@@ -1092,6 +1097,11 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
   const watchedLines = useWatch({ control: form.control, name: `hotels.${hotelIndex}.roomLines` }) ?? [];
   const detail = useHotel(hotelId ?? undefined);
   const roomTypes = detail.data?.roomTypes ?? [];
+  const roomTypeOptions = withStandardOptions(
+    roomTypes.map((room) => ({ id: room.id, label: room.name })),
+    STANDARD_ROOM_TYPES,
+    'standard-room-type',
+  );
   const currency = (form.watch('currency') as string) ?? 'INR';
   const isSectionWise = (form.watch('pricingMode') as string ?? 'PER_PERSON') === 'SECTION_WISE';
   const watchedNights = useWatch({ control: form.control, name: `hotels.${hotelIndex}.nights` as never }) as unknown as number | null | undefined;
@@ -1200,7 +1210,7 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
                   <MasterSelect
                     ariaLabel={`Room ${lineIndex + 1} type master`}
                     placeholder={hotelId ? 'Link a room type' : 'Type room type'}
-                    options={roomTypes.map((room) => ({ id: room.id, label: room.name }))}
+                    options={roomTypeOptions}
                     value={line?.hotelRoomTypeId}
                     loading={Boolean(hotelId) && detail.isPending}
                     fallbackLabel={line?.roomType ?? undefined}
@@ -1213,6 +1223,12 @@ function HotelRoomLinesEditor({ form, hotelIndex, hotelId, canCost, recalculateT
                     onSelect={(option) => {
                       const room = roomTypes.find((entry) => entry.id === option?.id);
                       clearOverrideForLine(lineIndex);
+                      if (option && !room) {
+                        // A standard suggestion that is not a Hotel Master
+                        // record stays free text, never a fabricated link.
+                        applyLine(lineIndex, { hotelRoomTypeId: null, roomType: option.label });
+                        return;
+                      }
                       const resolved = room ? resolveRoomPricingForDate(room as unknown as Parameters<typeof resolveRoomPricingForDate>[0], checkInDate) : null;
                       const patch: Partial<HotelRoomLineInput> = {
                         hotelRoomTypeId: option?.id ?? null,
@@ -1318,6 +1334,11 @@ function HotelMealPlanLinesEditor({ form, hotelIndex, hotelId, canCost, recalcul
   const watchedLines = useWatch({ control: form.control, name: `hotels.${hotelIndex}.mealPlanLines` }) ?? [];
   const detail = useHotel(hotelId ?? undefined);
   const mealPlans = detail.data?.mealPlans ?? [];
+  const mealPlanOptions = withStandardOptions(
+    mealPlans.map((meal) => ({ id: meal.id, label: meal.name, hint: meal.type })),
+    STANDARD_MEAL_PLANS,
+    'standard-meal-plan',
+  );
   const currency = (form.watch('currency') as string) ?? 'INR';
   const isSectionWise = (form.watch('pricingMode') as string ?? 'PER_PERSON') === 'SECTION_WISE';
   const checkInDate = useWatch({ control: form.control, name: `hotels.${hotelIndex}.checkInDate` as never }) as unknown as string | Date | null | undefined;
@@ -1365,7 +1386,7 @@ function HotelMealPlanLinesEditor({ form, hotelIndex, hotelId, canCost, recalcul
                 <MasterSelect
                   ariaLabel={`Meal plan ${lineIndex + 1} master`}
                   placeholder={hotelId ? 'Link a meal plan' : 'Type meal plan'}
-                  options={mealPlans.map((meal) => ({ id: meal.id, label: meal.name, hint: meal.type }))}
+                  options={mealPlanOptions}
                   value={line?.hotelMealPlanId}
                   loading={Boolean(hotelId) && detail.isPending}
                   fallbackLabel={line?.mealPlan ?? undefined}
@@ -1378,6 +1399,12 @@ function HotelMealPlanLinesEditor({ form, hotelIndex, hotelId, canCost, recalcul
                   onSelect={(option) => {
                     const meal = mealPlans.find((entry) => entry.id === option?.id);
                     clearOverrideForLine(lineIndex);
+                    if (option && !meal) {
+                      // A standard suggestion that is not a Hotel Master
+                      // record stays free text, never a fabricated link.
+                      applyLine(lineIndex, { hotelMealPlanId: null, mealPlan: option.label });
+                      return;
+                    }
                     const resolved = meal ? resolveMealPlanPricingForDate(meal as unknown as Parameters<typeof resolveMealPlanPricingForDate>[0], checkInDate) : null;
                     const patch: Partial<HotelMealPlanLineInput> = {
                       hotelMealPlanId: option?.id ?? null,
