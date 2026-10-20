@@ -62,6 +62,34 @@ export interface ResolvedSightseeingMealPrefill {
 }
 
 /**
+ * Canonical empty state applied when a master configures nothing (or when an
+ * activity becomes custom/unlinked). Derived from the existing data model:
+ * schema defaults are all-false meals with `NO_TRANSFER` modes and null
+ * details; the activity transfer is null so the UI falls back to the day's
+ * `NO_TRANSFER`. This is the "empty state" referenced by the replacement
+ * rules — never inherited from a previous attraction.
+ */
+export const EMPTY_SIGHTSEEING_MEALS: Record<SightseeingMealKey, boolean> = {
+  breakfast: false,
+  lunch: false,
+  dinner: false,
+};
+
+export interface FullSightseeingMealReplacement {
+  /** Complete day-level meals — always all three keys, never partial. */
+  meals: Record<SightseeingMealKey, boolean>;
+  /** Complete per-meal preferences — all three keys with canonical defaults. */
+  mealPreferences: Record<
+    SightseeingMealKey,
+    { mode: SightseeingMealMode; transferDetails: string | null }
+  >;
+  /** Activity overall transfer — valid enum or null (falls back to day NO_TRANSFER). */
+  activityTransfer: SightseeingOverallTransfer | null;
+  /** True when the master actually carried a `mealDefaults` object. */
+  hasMasterDefaults: boolean;
+}
+
+/**
  * Single source of truth mapping a sightseeing master's `mealDefaults` onto
  * quotation-builder fields. Both the automatically generated day prefill
  * (QuotationBuilderPage) and the manual search-bar selection
@@ -112,6 +140,58 @@ export function resolveSightseeingMealPrefill(
   const rawTransfer = mealDefaults.transfer;
   const activityTransfer = isSightseeingOverallTransfer(rawTransfer) ? rawTransfer : null;
   return { meals, mealModes, mealTransferDetails, activityTransfer };
+}
+
+/**
+ * Full-replacement state for a master change. Unlike the partial overlay
+ * above, this always returns complete values with canonical defaults applied,
+ * so callers replacing one attraction with another can overwrite every
+ * master-controlled field and leave no stale values behind:
+ * - meals: master booleans, or all-false when the master configures nothing.
+ * - each meal mode: valid master enum, else `NO_TRANSFER`.
+ * - each meal details: non-blank master text, else null (stale details from a
+ *   previous attraction are thereby removed).
+ * - activity transfer: valid master enum, else null (UI falls back to day
+ *   `NO_TRANSFER`).
+ */
+export function resolveSightseeingMealReplacement(
+  master: SightseeingMasterLike | null | undefined,
+): FullSightseeingMealReplacement {
+  const mealDefaults = master?.mealDefaults;
+  if (!mealDefaults) {
+    return {
+      meals: { ...EMPTY_SIGHTSEEING_MEALS },
+      mealPreferences: {
+        breakfast: { mode: 'NO_TRANSFER', transferDetails: null },
+        lunch: { mode: 'NO_TRANSFER', transferDetails: null },
+        dinner: { mode: 'NO_TRANSFER', transferDetails: null },
+      },
+      activityTransfer: null,
+      hasMasterDefaults: false,
+    };
+  }
+  const meals: Record<SightseeingMealKey, boolean> = {
+    breakfast: Boolean(mealDefaults.meals?.breakfast),
+    lunch: Boolean(mealDefaults.meals?.lunch),
+    dinner: Boolean(mealDefaults.meals?.dinner),
+  };
+  const mealPreferences = {} as FullSightseeingMealReplacement['mealPreferences'];
+  for (const meal of SIGHTSEEING_MEAL_KEYS) {
+    const rawMode = mealDefaults.mealModes?.[meal];
+    const rawDetails = mealDefaults.mealTransferDetails?.[meal];
+    const details = typeof rawDetails === 'string' && rawDetails.trim() ? rawDetails.trim() : null;
+    mealPreferences[meal] = {
+      mode: isSightseeingMealMode(rawMode) ? rawMode : 'NO_TRANSFER',
+      transferDetails: details,
+    };
+  }
+  const rawTransfer = mealDefaults.transfer;
+  return {
+    meals,
+    mealPreferences,
+    activityTransfer: isSightseeingOverallTransfer(rawTransfer) ? rawTransfer : null,
+    hasMasterDefaults: true,
+  };
 }
 
 /** Day-level patch derived from a master — meals + per-meal preferences. */

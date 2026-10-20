@@ -102,7 +102,10 @@ import {
   type Sightseeing,
 } from '@/features/masters/masters.api';
 import { normalizeAddonPricingSnapshot } from '@/features/quotations/addonPricing';
-import { resolveSightseeingMealPrefill } from '@/features/quotations/sightseeingMealPrefill';
+import {
+  resolveSightseeingMealPrefill,
+  resolveSightseeingMealReplacement,
+} from '@/features/quotations/sightseeingMealPrefill';
 import { useUsers } from '@/features/users/users.api';
 import { useFaqs } from '@/features/masters/masters.api';
 import {
@@ -3326,9 +3329,11 @@ export function QuotationBuilderPage() {
     };
     const toActivity = (row: Sightseeing) => {
       const images = masterGallerySnapshot(row.images, row.title);
-      // Shared mapping with the manual search-bar selection: initialize the
-      // activity's overall transfer from the master's mealDefaults. Null keeps
-      // the builder fallback (day NO_TRANSFER) for masters without defaults.
+      // Shared full-replacement mapping with the manual search-bar selection:
+      // the activity's overall transfer comes from the master's mealDefaults.
+      // Null keeps the builder fallback (day NO_TRANSFER) for masters without
+      // defaults. resolveSightseeingMealPrefill is retained for the overlay
+      // computation below; the transfer itself matches the replacement helper.
       const mealPrefill = resolveSightseeingMealPrefill(row);
       return {
         sightseeingId: row.id,
@@ -3358,39 +3363,29 @@ export function QuotationBuilderPage() {
         // The day is labelled with the attraction's own city (Hanoi, Da Nang,
         // Phu Quoc …), falling back to any lead city when the day is empty.
         const dayCity = primary?.city?.name ?? city;
-        // Shared mapping with the manual search-bar selection: initialize day
-        // meals + per-meal modes/details from the master's mealDefaults. When
-        // the master carries no defaults, fall back to `emptySightseeingDay`
-        // so fresh days keep the existing intended defaults and saved
-        // quotations are never rewritten here (hydration preserves them).
+        // Shared full-replacement mapping with the manual search-bar
+        // selection: a day created for a master gets that master's complete
+        // meal/transfer configuration (canonical defaults for anything the
+        // master leaves unconfigured), identical to picking the same master
+        // manually. Days without a primary keep `emptySightseeingDay`
+        // defaults. Saved quotations are never rewritten here (hydration
+        // preserves them — see the `form.reset` below).
         const baseDay = emptySightseeingDay(i + 1);
-        const mealPrefill = primary ? resolveSightseeingMealPrefill(primary) : null;
-        const dayMeals = mealPrefill?.meals ?? baseDay.meals;
-        const dayMealPreferences: Record<string, { mode: unknown; transferDetails: unknown }> = {
-          ...(baseDay.mealPreferences as Record<string, { mode: unknown; transferDetails: unknown }>),
-        };
-        if (mealPrefill?.meals) {
-          for (const meal of ['breakfast', 'lunch', 'dinner'] as const) {
-            const mode = mealPrefill.mealModes[meal];
-            const details = mealPrefill.mealTransferDetails[meal];
-            if (mode) {
-              dayMealPreferences[meal] = { mode, transferDetails: details ?? null };
-            } else if (details) {
-              const existing = dayMealPreferences[meal] ?? {
-                mode: 'NO_TRANSFER',
-                transferDetails: null,
-              };
-              dayMealPreferences[meal] = { ...existing, transferDetails: details };
-            } else if (mealPrefill.meals[meal]) {
-              // Enabled meal without a valid master mode: ensure a visible
-              // entry exists so the UI falls back to NO_TRANSFER instead of
-              // inheriting an unrelated default.
-              if (!dayMealPreferences[meal]) {
-                dayMealPreferences[meal] = { mode: 'NO_TRANSFER', transferDetails: null };
+        const replacement = primary ? resolveSightseeingMealReplacement(primary) : null;
+        const dayMeals = replacement?.meals ?? baseDay.meals;
+        const dayMealPreferences: Record<string, { mode: unknown; transferDetails: unknown }> =
+          replacement
+            ? {
+                breakfast: { ...replacement.mealPreferences.breakfast },
+                lunch: { ...replacement.mealPreferences.lunch },
+                dinner: { ...replacement.mealPreferences.dinner },
               }
-            }
-          }
-        }
+            : {
+                ...(baseDay.mealPreferences as Record<
+                  string,
+                  { mode: unknown; transferDetails: unknown }
+                >),
+              };
         return emptySightseeingDay(i + 1, {
           // Day titles render verbatim: the formatter never injects a
           // separator, so master titles, names and cities are kept as-is.

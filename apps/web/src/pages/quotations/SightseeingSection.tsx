@@ -31,7 +31,7 @@ import {
   quotationDocumentInlineUrl,
   uploadQuotationAttachment,
 } from '@/features/quotations/quotations.api';
-import { resolveSightseeingMealPrefill } from '@/features/quotations/sightseeingMealPrefill';
+import { resolveSightseeingMealReplacement } from '@/features/quotations/sightseeingMealPrefill';
 import {
   useSightseeingActivities,
   useSightseeingPresentations,
@@ -741,6 +741,35 @@ function DayCard({
     });
   };
 
+  // Write a complete master-derived meal/transfer state, overwriting every
+  // master-controlled field so no value from a previous attraction survives.
+  // Runs only on explicit master-identity transitions (different master,
+  // master → custom, custom → master, clear) — never on unrelated edits,
+  // re-renders, tab changes, or refetches.
+  const applyMealReplacement = (
+    abase: string,
+    replacement: ReturnType<typeof resolveSightseeingMealReplacement>,
+  ) => {
+    for (const meal of ['breakfast', 'lunch', 'dinner'] as const) {
+      form.setValue(fp(`${base}.meals.${meal}`), replacement.meals[meal], {
+        shouldDirty: true,
+      });
+      form.setValue(
+        fp(`${base}.mealPreferences.${meal}.mode`),
+        replacement.mealPreferences[meal].mode as never,
+        { shouldDirty: true },
+      );
+      form.setValue(
+        fp(`${base}.mealPreferences.${meal}.transferDetails`),
+        replacement.mealPreferences[meal].transferDetails as never,
+        { shouldDirty: true },
+      );
+    }
+    form.setValue(fp(`${abase}.dailyTransfer`), replacement.activityTransfer as never, {
+      shouldDirty: true,
+    });
+  };
+
   const clearActivity = (abase: string, activityIndex: number) => {
     form.setValue(fp(`${abase}.sightseeingId`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.imageDocumentId`), null as never, { shouldDirty: true });
@@ -757,6 +786,10 @@ function DayCard({
     form.setValue(fp(`${abase}.sequence`), null as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.displayPricing`), [] as never, { shouldDirty: true });
     form.setValue(fp(`${abase}.displayPricingHeading`), 'PRICING' as never, { shouldDirty: true });
+    // Clearing the master link removes its meal/transfer configuration so a
+    // subsequent custom name cannot inherit stale master state. Canonical
+    // empty state (all meals off, NO_TRANSFER, no details, no transfer).
+    applyMealReplacement(abase, resolveSightseeingMealReplacement(null));
     // Clearing the first activity resets the day title; any other slot leaves it alone.
     if (activityIndex === 0) syncDayTitleFromFirstActivity();
   };
@@ -788,12 +821,22 @@ function DayCard({
           ? SPECIAL_ARRIVAL_CHECKIN_DESCRIPTION
           : null;
     form.setValue(fp(`${abase}.description`), description as never, { shouldDirty: true });
+    // Custom (unlinked) activities carry no master configuration: clear any
+    // previous master's meal/transfer state to the canonical empty state.
+    applyMealReplacement(abase, resolveSightseeingMealReplacement(null));
     // The first activity defines the day title; any other slot leaves it alone.
     if (activityIndex === 0) syncDayTitleFromFirstActivity();
   };
 
   const pickMaster = (abase: string, activityIndex: number, option: SightseeingSelectOption) => {
     const picked = attractions.find((row) => row.id === option.id) ?? null;
+    // Stable master identity: the same master re-selected must preserve the
+    // user's manual meal/transfer edits; a *different* master must fully
+    // replace them. Names can duplicate or be edited, so compare IDs only.
+    // Read before overwriting.
+    const previousId = form.getValues(fp(`${abase}.sightseeingId`) as never) as unknown;
+    const previousSightseeingId = typeof previousId === 'string' ? previousId : null;
+    const isSameMaster = Boolean(picked) && previousSightseeingId === picked!.id;
     form.setValue(fp(`${abase}.sightseeingId`), (picked?.id ?? null) as never, {
       shouldDirty: true,
     });
@@ -835,38 +878,17 @@ function DayCard({
         shouldDirty: true,
       });
       form.setValue(fp(`${abase}.sequence`), 1 as never, { shouldDirty: true });
-      // Prefill day meals + this activity's transfer from the master defaults.
-      // Runs only on explicit activity selection, so unrelated edits and
-      // re-renders never overwrite manual changes; picking another activity
-      // refreshes the defaults from the newly selected master. Mapping is
-      // shared with the automatic day prefill via
-      // `resolveSightseeingMealPrefill` so both paths stay identical; invalid
-      // enums are ignored (current values kept) and transfer details copy
-      // over only when the master actually provides them.
-      const prefill = resolveSightseeingMealPrefill(picked);
-      if (prefill.meals) {
-        for (const meal of ['breakfast', 'lunch', 'dinner'] as const) {
-          form.setValue(fp(`${base}.meals.${meal}`), prefill.meals[meal], {
-            shouldDirty: true,
-          });
-          const mode = prefill.mealModes[meal];
-          if (mode) {
-            form.setValue(fp(`${base}.mealPreferences.${meal}.mode`), mode as never, {
-              shouldDirty: true,
-            });
-          }
-          const details = prefill.mealTransferDetails[meal];
-          if (details) {
-            form.setValue(fp(`${base}.mealPreferences.${meal}.transferDetails`), details as never, {
-              shouldDirty: true,
-            });
-          }
-        }
-        if (prefill.activityTransfer) {
-          form.setValue(fp(`${abase}.dailyTransfer`), prefill.activityTransfer as never, {
-            shouldDirty: true,
-          });
-        }
+      // Replace day meals + this activity's transfer from the new master's
+      // configuration. Full replacement (shared with auto prefill via
+      // `resolveSightseeingMealReplacement`): every master-controlled field
+      // is overwritten, missing/null values fall back to canonical defaults
+      // (all meals off, NO_TRANSFER, null details, null transfer), and stale
+      // details from the previous attraction are removed. Same-master
+      // re-selection skips this entirely so manual edits survive. Runs only
+      // on explicit selection — unrelated edits, re-renders, tab changes,
+      // preview updates and refetches never touch these fields.
+      if (!isSameMaster) {
+        applyMealReplacement(abase, resolveSightseeingMealReplacement(picked));
       }
       // Prefill pricingOptions from master pricing if activity has no pricing yet.
       // Keep existing manual edits: only fill when all current prices are blank/zero.

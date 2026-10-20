@@ -260,19 +260,21 @@ describe('Sightseeing master meal and transfer prefill', () => {
     expect(within(day1Again).getByLabelText('dinner')).not.toBeChecked();
   });
 
-  it('leaves entries untouched for masters without defaults', async () => {
+  it('resets to canonical defaults for masters without defaults', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
     render(<Harness />);
     await pickActivity(0, 'Night safari');
     const day = dayArticle(0);
     await waitFor(() => expect(within(day).getByLabelText('dinner')).toBeChecked());
 
-    // Switching to a master without defaults keeps the current values.
+    // Switching to a master without defaults clears the previous master's
+    // configuration instead of retaining it.
     await repickActivity(0, 'Old tour');
-    expect(within(day).getByLabelText('breakfast')).toBeChecked();
-    expect(within(day).getByLabelText('dinner')).toBeChecked();
+    await waitFor(() => expect(within(day).getByLabelText('breakfast')).not.toBeChecked());
+    expect(within(day).getByLabelText('lunch')).not.toBeChecked();
+    expect(within(day).getByLabelText('dinner')).not.toBeChecked();
     expect(
-      within(day).getByLabelText('Day 1 activity 1 daily transfer Private Transfer'),
+      within(day).getByLabelText('Day 1 activity 1 daily transfer No Transfer'),
     ).toBeChecked();
   });
 
@@ -297,7 +299,7 @@ describe('Sightseeing master meal and transfer prefill', () => {
     ).toBeChecked();
   });
 
-  it('replaces details when another master is selected, keeps manual details otherwise', async () => {
+  it('replaces details when another master is selected, clears stale details', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
     render(<Harness />);
     await pickActivity(0, 'Seafood dinner');
@@ -313,10 +315,11 @@ describe('Sightseeing master meal and transfer prefill', () => {
     await userEvent.type(within(day).getByLabelText('dinner transfer details'), 'Pool deck');
     expect(within(day).getByLabelText('dinner transfer details')).toHaveValue('Pool deck');
 
-    // A master without details (legacy shape) leaves the manual value alone.
+    // A master without details (legacy shape) clears the stale value instead
+    // of retaining the previous attraction's details.
     await repickActivity(0, 'Rooftop dinner');
     await waitFor(() =>
-      expect(within(day).getByLabelText('dinner transfer details')).toHaveValue('Pool deck'),
+      expect(within(day).getByLabelText('dinner transfer details')).toHaveValue(''),
     );
 
     // Picking the detailed master again refreshes from the new selection.
