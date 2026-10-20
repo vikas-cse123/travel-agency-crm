@@ -714,6 +714,22 @@ export function buildFullPreviewData(input: {
   for (const [documentId, url] of Object.entries(sightseeingPreviewUrls ?? {})) {
     if (url) sightseeingDocumentPresentations[documentId] = { imageUrl: url };
   }
+  // Live Preview must number days from the current ordered itinerary, not from
+  // stale saved `dayNumber` values. Inserting/moving/removing builder days
+  // leaves stored `dayNumber`s stale until Save (which renumbers via
+  // `dayIndex + 1`); the public weblink reads saved data so it is already
+  // correct. Renumber here — preview only, inputs never mutated — so every
+  // derived label (`DAY N | ...`, summary cards, headings) stays consistent
+  // immediately after any reorder/add/remove.
+  const previewSightseeingDetails = form.sightseeingDetails
+    ? {
+        ...form.sightseeingDetails,
+        days: (form.sightseeingDetails.days ?? []).map((day, index) => ({
+          ...(day as Record<string, unknown>),
+          dayNumber: index + 1,
+        })),
+      }
+    : form.sightseeingDetails;
   return {
     company: {
       name: profile?.name ?? '',
@@ -749,9 +765,12 @@ export function buildFullPreviewData(input: {
     },
     // Live form values win over the saved row everywhere the builder edits;
     // identity, lifecycle, and attribution stay with the saved version.
+    // Sightseeing days carry the position-derived numbering above so the
+    // shared public renderer displays the current unsaved order.
     version: {
       ...savedVersion,
       ...form,
+      sightseeingDetails: previewSightseeingDetails,
     } as unknown as QuotationVersion,
     heroImageUrl: resolved.heroImageUrl,
     hotelPresentations: resolved.hotelPresentations,

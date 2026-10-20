@@ -102,6 +102,7 @@ import {
   type Sightseeing,
 } from '@/features/masters/masters.api';
 import { normalizeAddonPricingSnapshot } from '@/features/quotations/addonPricing';
+import { resolveSightseeingMealPrefill } from '@/features/quotations/sightseeingMealPrefill';
 import { useUsers } from '@/features/users/users.api';
 import { useFaqs } from '@/features/masters/masters.api';
 import {
@@ -3325,6 +3326,10 @@ export function QuotationBuilderPage() {
     };
     const toActivity = (row: Sightseeing) => {
       const images = masterGallerySnapshot(row.images, row.title);
+      // Shared mapping with the manual search-bar selection: initialize the
+      // activity's overall transfer from the master's mealDefaults. Null keeps
+      // the builder fallback (day NO_TRANSFER) for masters without defaults.
+      const mealPrefill = resolveSightseeingMealPrefill(row);
       return {
         sightseeingId: row.id,
         name: row.title,
@@ -3337,6 +3342,7 @@ export function QuotationBuilderPage() {
         images,
         imageSnapshotPresent: masterGalleryPresence(row),
         pdfImageUrl: images[0] ? quotationSnapshotImageIdentity(images[0]) : null,
+        dailyTransfer: mealPrefill.activityTransfer ?? null,
         pricingOptions: emptySightseeingActivity().pricingOptions,
         sequence: 1,
       };
@@ -3352,6 +3358,39 @@ export function QuotationBuilderPage() {
         // The day is labelled with the attraction's own city (Hanoi, Da Nang,
         // Phu Quoc …), falling back to any lead city when the day is empty.
         const dayCity = primary?.city?.name ?? city;
+        // Shared mapping with the manual search-bar selection: initialize day
+        // meals + per-meal modes/details from the master's mealDefaults. When
+        // the master carries no defaults, fall back to `emptySightseeingDay`
+        // so fresh days keep the existing intended defaults and saved
+        // quotations are never rewritten here (hydration preserves them).
+        const baseDay = emptySightseeingDay(i + 1);
+        const mealPrefill = primary ? resolveSightseeingMealPrefill(primary) : null;
+        const dayMeals = mealPrefill?.meals ?? baseDay.meals;
+        const dayMealPreferences: Record<string, { mode: unknown; transferDetails: unknown }> = {
+          ...(baseDay.mealPreferences as Record<string, { mode: unknown; transferDetails: unknown }>),
+        };
+        if (mealPrefill?.meals) {
+          for (const meal of ['breakfast', 'lunch', 'dinner'] as const) {
+            const mode = mealPrefill.mealModes[meal];
+            const details = mealPrefill.mealTransferDetails[meal];
+            if (mode) {
+              dayMealPreferences[meal] = { mode, transferDetails: details ?? null };
+            } else if (details) {
+              const existing = dayMealPreferences[meal] ?? {
+                mode: 'NO_TRANSFER',
+                transferDetails: null,
+              };
+              dayMealPreferences[meal] = { ...existing, transferDetails: details };
+            } else if (mealPrefill.meals[meal]) {
+              // Enabled meal without a valid master mode: ensure a visible
+              // entry exists so the UI falls back to NO_TRANSFER instead of
+              // inheriting an unrelated default.
+              if (!dayMealPreferences[meal]) {
+                dayMealPreferences[meal] = { mode: 'NO_TRANSFER', transferDetails: null };
+              }
+            }
+          }
+        }
         return emptySightseeingDay(i + 1, {
           // Day titles render verbatim: the formatter never injects a
           // separator, so master titles, names and cities are kept as-is.
@@ -3362,6 +3401,8 @@ export function QuotationBuilderPage() {
               : `Day ${i + 1}`,
           city: dayCity || null,
           date: addDays(startStr, i),
+          meals: dayMeals,
+          mealPreferences: dayMealPreferences as never,
           activities: primary ? [toActivity(primary)] : [emptySightseeingActivity()],
         });
       }),

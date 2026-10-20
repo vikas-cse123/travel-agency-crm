@@ -31,6 +31,7 @@ import {
   quotationDocumentInlineUrl,
   uploadQuotationAttachment,
 } from '@/features/quotations/quotations.api';
+import { resolveSightseeingMealPrefill } from '@/features/quotations/sightseeingMealPrefill';
 import {
   useSightseeingActivities,
   useSightseeingPresentations,
@@ -837,59 +838,32 @@ function DayCard({
       // Prefill day meals + this activity's transfer from the master defaults.
       // Runs only on explicit activity selection, so unrelated edits and
       // re-renders never overwrite manual changes; picking another activity
-      // refreshes the defaults from the newly selected master. Enum values
-      // are validated explicitly so a malformed master can never write an
-      // invalid mode into the quotation; per-meal Transfer Details copy over
-      // only when the master actually provides them (manual details are kept
-      // otherwise, mirroring the mode behavior below).
-      const MEAL_MODES = ['NO_TRANSFER', 'INCLUDE_AT_HOTEL', 'WITH_TRANSFER'] as const;
-      const TRANSFERS = ['PRIVATE', 'SHARED', 'NO_TRANSFER'] as const;
-      const mealDefaults = (picked as unknown as {
-        mealDefaults?: {
-          meals?: { breakfast?: boolean; lunch?: boolean; dinner?: boolean } | null;
-          mealModes?: {
-            breakfast?: string | null;
-            lunch?: string | null;
-            dinner?: string | null;
-          } | null;
-          mealTransferDetails?: {
-            breakfast?: string | null;
-            lunch?: string | null;
-            dinner?: string | null;
-          } | null;
-          transfer?: string | null;
-        } | null;
-      })?.mealDefaults;
-      if (mealDefaults) {
+      // refreshes the defaults from the newly selected master. Mapping is
+      // shared with the automatic day prefill via
+      // `resolveSightseeingMealPrefill` so both paths stay identical; invalid
+      // enums are ignored (current values kept) and transfer details copy
+      // over only when the master actually provides them.
+      const prefill = resolveSightseeingMealPrefill(picked);
+      if (prefill.meals) {
         for (const meal of ['breakfast', 'lunch', 'dinner'] as const) {
-          const enabled = Boolean(mealDefaults.meals?.[meal]);
-          form.setValue(fp(`${base}.meals.${meal}`), enabled, {
+          form.setValue(fp(`${base}.meals.${meal}`), prefill.meals[meal], {
             shouldDirty: true,
           });
-          const rawMode = enabled ? mealDefaults.mealModes?.[meal] : null;
-          const mode = (
-            typeof rawMode === 'string' && (MEAL_MODES as readonly string[]).includes(rawMode)
-              ? rawMode
-              : null
-          ) as (typeof MEAL_MODES)[number] | null;
+          const mode = prefill.mealModes[meal];
           if (mode) {
             form.setValue(fp(`${base}.mealPreferences.${meal}.mode`), mode as never, {
               shouldDirty: true,
             });
           }
-          const details = mealDefaults.mealTransferDetails?.[meal]?.trim() || null;
+          const details = prefill.mealTransferDetails[meal];
           if (details) {
             form.setValue(fp(`${base}.mealPreferences.${meal}.transferDetails`), details as never, {
               shouldDirty: true,
             });
           }
         }
-        const rawTransfer = mealDefaults.transfer;
-        if (
-          typeof rawTransfer === 'string' &&
-          (TRANSFERS as readonly string[]).includes(rawTransfer)
-        ) {
-          form.setValue(fp(`${abase}.dailyTransfer`), rawTransfer as never, {
+        if (prefill.activityTransfer) {
+          form.setValue(fp(`${abase}.dailyTransfer`), prefill.activityTransfer as never, {
             shouldDirty: true,
           });
         }
