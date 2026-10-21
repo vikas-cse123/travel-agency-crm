@@ -606,7 +606,7 @@ export function useGenerateQuotationPdf(quotationId: string) {
   return useMutation({
     mutationFn: async (input: {
       versionId: string;
-      style: 'CLASSIC' | 'STYLISH';
+      style: 'CLASSIC' | 'STYLISH' | 'WEBLINK';
       coverSource?: 'DESTINATION' | 'UPLOAD';
       coverImageDataUrl?: string;
       page1HeroImageDataUrl?: string;

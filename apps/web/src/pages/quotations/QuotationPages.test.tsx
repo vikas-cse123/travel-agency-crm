@@ -19238,6 +19238,191 @@ describe('Generate PDF button — real request, open, loading and error states',
   });
 });
 
+describe('Weblink PDF option — third PDF style', () => {
+  const finalizedVersion = {
+    id: 'version-1',
+    versionNumber: 1,
+    title: 'Goa proposal',
+    introduction: null,
+    destinationSummary: 'Goa',
+    travelStartDate: null,
+    travelEndDate: null,
+    currency: 'INR',
+    subtotalSellingPrice: '25000',
+    markupMode: 'NONE',
+    markupValue: '0',
+    totalMarkup: '0',
+    taxRate: '0',
+    taxAmount: '0',
+    discountAmount: '0',
+    finalAmount: '25000',
+    pricingMode: 'ITEMIZED',
+    notes: null,
+    status: 'FINALIZED',
+    finalizedAt: '2026-07-21T00:00:00.000Z',
+    createdAt: '2026-07-21T00:00:00.000Z',
+    createdBy: person,
+    itinerary: [],
+    hotels: [],
+    services: [],
+    inclusions: [],
+    exclusions: [],
+    terms: [],
+  };
+  const detail = {
+    id: 'quotation-1',
+    quotationNumber: 'QT-2026-000001',
+    queryId: 'lead-1',
+    currentVersionId: 'version-1',
+    status: 'SENT',
+    customerName: 'Aarav Mehta',
+    customerEmail: 'aarav@example.test',
+    customerPhone: '+91 90000 00000',
+    destinationSummary: 'Goa',
+    travelStartDate: null,
+    travelEndDate: null,
+    adults: 2,
+    childrenWithBed: 0,
+    childrenWithoutBed: 0,
+    infants: 0,
+    rooms: 1,
+    validUntil: null,
+    lastSentAt: '2026-07-21T00:00:00.000Z',
+    lastViewedAt: null,
+    acceptedAt: null,
+    rejectedAt: null,
+    rejectionReason: null,
+    createdAt: '2026-07-21T00:00:00.000Z',
+    updatedAt: '2026-07-21T00:00:00.000Z',
+    createdBy: person,
+    query: {
+      id: 'lead-1',
+      queryNumber: 'QRY-1',
+      leadStage: 'QUOTATION_SENT',
+      assignedToId: 'user-1',
+      createdById: 'user-1',
+    },
+    versions: [finalizedVersion],
+    documents: [],
+    emailLogs: [],
+    activityTimeline: [],
+  };
+  const errorResponse = () =>
+    ({
+      ok: false,
+      status: 500,
+      json: async () => ({ success: false, error: { code: 'INTERNAL_ERROR', message: 'boom' } }),
+    }) as Response;
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    auth.permissions = new Set(['quotations.view', 'quotations.generate_pdf']);
+  });
+
+  const renderDetails = () =>
+    renderWithProviders(
+      <Routes>
+        <Route path="/quotations/:quotationId" element={<QuotationDetailsPage />} />
+      </Routes>,
+      { route: '/quotations/quotation-1' },
+    );
+
+  const pdfTab = () =>
+    ({
+      opener: window,
+      document: { title: '', body: { innerHTML: '' } },
+      location: { replace: vi.fn() },
+      close: vi.fn(),
+    }) as unknown as Window;
+
+  const openPopup = async () => {
+    await screen.findByText('Activity timeline');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate PDF' }));
+    expect(screen.getByRole('dialog', { name: 'Choose PDF style' })).toBeInTheDocument();
+  };
+
+  it('lists Weblink PDF alongside Classic and Stylish without changing them', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(detail)));
+    renderDetails();
+    await openPopup();
+    expect(screen.getByRole('button', { name: /Classic PDF/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Stylish PDF/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Weblink PDF/ })).toBeEnabled();
+  });
+
+  it('generates the Weblink PDF and opens it inline in a new tab', async () => {
+    const tab = pdfTab();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(tab);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/generate-pdf'))
+        return response({ id: 'doc-weblink', fileName: 'qt-2026-000001-aarav-mehta-v1-weblink-quotation.pdf' });
+      if (url.includes('/download-url'))
+        return response({ url: 'https://files.example.test/weblink-quotation.pdf' });
+      if (url.endsWith('/weblink-analytics'))
+        return response({ totalViews: 0, externalViews: 0, homeIpViews: 0, uniqueIps: 0, entries: [] });
+      return response(detail);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetails();
+    await openPopup();
+    await userEvent.click(screen.getByRole('button', { name: /Weblink PDF/ }));
+    await waitFor(() =>
+      expect(tab.location.replace).toHaveBeenCalledWith(
+        'https://files.example.test/weblink-quotation.pdf',
+      ),
+    );
+    const genCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/generate-pdf'));
+    expect(String(genCall![0])).toContain('/versions/version-1/generate-pdf');
+    // Same workflow shape as Classic: forced fresh generation, inline open.
+    expect(JSON.parse(String(genCall![1]?.body))).toEqual({ force: true, style: 'WEBLINK' });
+    expect(
+      fetchMock.mock.calls.some(([u]) => String(u).includes('/download-url?disposition=inline')),
+    ).toBe(true);
+    expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
+  });
+
+  it('disables reselection while Weblink generation is pending', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(pdfTab());
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/generate-pdf')) return new Promise<Response>(() => {});
+      if (url.includes('/download-url'))
+        return response({ url: 'https://files.example.test/weblink.pdf' });
+      return response(detail);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetails();
+    await openPopup();
+    await userEvent.click(screen.getByRole('button', { name: /Weblink PDF/ }));
+    // While pending the entry button is busy and disabled, so a second
+    // selection cannot start a duplicate request.
+    const busy = await screen.findByRole('button', { name: /Generating PDF/ });
+    expect(busy).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/generate-pdf')).length).toBe(
+      1,
+    );
+  });
+
+  it('closes the temporary tab and shows an error when Weblink generation fails', async () => {
+    const tab = pdfTab();
+    vi.spyOn(window, 'open').mockReturnValue(tab);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/generate-pdf')) return errorResponse();
+      return response(detail);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderDetails();
+    await openPopup();
+    await userEvent.click(screen.getByRole('button', { name: /Weblink PDF/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'PDF generation failed. Please try again.',
+    );
+    expect(tab.close).toHaveBeenCalled();
+  });
+});
+
 /**
  * Per-activity informational pricing on the customer-facing weblink.
  *

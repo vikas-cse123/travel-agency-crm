@@ -202,6 +202,44 @@ describe('createPublicLink', () => {
     );
     expect(result.url).toBe(`${env.PUBLIC_SLUG_BASE_URL.replace(/\/$/, '')}/singapore`);
   });
+
+  it('repairs a stale token hash on reuse without changing the link', async () => {
+    const { companyId, userId, quotationId, versionId } = await seedQuotation('stale-hash');
+    const first = await quotationsService.createPublicLink(
+      auth(companyId, userId),
+      quotationId,
+      versionId,
+      null,
+      REQUEST_CONTEXT,
+    );
+    const stored = await db.quotation.findUniqueOrThrow({ where: { id: quotationId } });
+    const token = stored.publicToken!;
+    // Simulate a TOKEN_PEPPER rotation: the stored hash no longer matches the
+    // current pepper, so the existing link 404s as invalid/expired.
+    await db.quotation.update({
+      where: { id: quotationId },
+      data: { publicTokenHash: '0'.repeat(64) },
+    });
+    await expect(quotationsService.publicView(token, {})).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    // Re-provisioning keeps the same token/URL and repairs the stored hash.
+    const second = await quotationsService.createPublicLink(
+      auth(companyId, userId),
+      quotationId,
+      versionId,
+      null,
+      REQUEST_CONTEXT,
+    );
+    expect(second.reused).toBe(true);
+    expect(second.url).toBe(first.url);
+    const repaired = await db.quotation.findUniqueOrThrow({ where: { id: quotationId } });
+    expect(repaired.publicToken).toBe(token);
+    expect(repaired.publicTokenHash).toBe(hashToken(token));
+    // The same link now resolves.
+    const view = await quotationsService.publicView(token, {});
+    expect(view.quotation.quotationNumber).toBe('QT-1');
+  });
 });
 
 describe('friendlyPublicSlugBaseUrl', () => {

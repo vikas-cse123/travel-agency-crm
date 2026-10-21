@@ -1,0 +1,148 @@
+/**
+ * Weblink PDF print stylesheet (`?pdf=weblink` static rendering mode).
+ *
+ * Scoped strictly to `[data-pdf-mode="weblink"]` so the interactive public
+ * weblink is never affected. These rules apply only when Chromium prints the
+ * page to A4: they force the single-column mobile composition (A4 width would
+ * otherwise activate Tailwind's sm/md/lg breakpoints), remove interactive-only
+ * chrome, freeze animations, and give sensible card-aware page breaks.
+ */
+
+@media print {
+  /* Never animate while paginating. */
+  [data-pdf-mode='weblink'] *,
+  [data-pdf-mode='weblink'] *::before,
+  [data-pdf-mode='weblink'] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* Belt and braces: no floating/fixed chrome may print (SectionNav and
+     BackToTop are already excluded from the PDF-mode tree). */
+  [data-pdf-mode='weblink'] .fixed {
+    display: none !important;
+  }
+
+  /* Force the mobile single-column composition regardless of paper width.
+     The Services Include grid is exempted below: mobile shows it two-up. */
+  [data-pdf-mode="weblink"] .sm\:grid-cols-2:not(.weblink-services-grid),
+  [data-pdf-mode="weblink"] .sm\:grid-cols-3:not(.weblink-services-grid),
+  [data-pdf-mode="weblink"] .md\:grid-cols-2,
+  [data-pdf-mode="weblink"] .md\:grid-cols-4,
+  [data-pdf-mode="weblink"] .lg\:grid-cols-3,
+  [data-pdf-mode="weblink"] .lg\:grid-cols-4:not(.weblink-services-grid),
+  [data-pdf-mode="weblink"] .sm\:grid-cols-\[42\%_1fr\] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  /* Services Include keeps the actual mobile two-column tile layout (three
+     rows of two, existing order). The six-tile grid is short enough to move
+     as one block when it does not fit the remaining space. */
+  [data-pdf-mode="weblink"] .weblink-services-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    break-inside: avoid;
+  }
+  [data-pdf-mode='weblink'] .sm\:flex-row,
+  [data-pdf-mode='weblink'] .md\:flex-row {
+    flex-direction: column !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:w-64,
+  [data-pdf-mode='weblink'] .md\:w-\[285px\] {
+    width: 100% !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:self-start {
+    align-self: stretch !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:items-center,
+  [data-pdf-mode='weblink'] .sm\:items-start,
+  [data-pdf-mode='weblink'] .sm\:items-end {
+    align-items: stretch !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:justify-between {
+    justify-content: flex-start !important;
+  }
+
+  /* Card-aware pagination: keep small units whole and headings glued to the
+     content they introduce, while long flowing content (day cards, policies,
+     FAQ answers, rich descriptions) splits at sensible internal boundaries
+     instead of punching large blank gaps or stranding content. Cards are
+     deliberately NOT all marked unbreakable: an overlong card moves only its
+     heading + lead block forward, then continues across pages. */
+  [data-pdf-mode='weblink'] h2,
+  [data-pdf-mode='weblink'] h3 {
+    break-after: avoid;
+  }
+  /* A fixed-height photo frame always fits: never split an image. */
+  [data-pdf-mode='weblink'] .weblink-media-frame {
+    break-inside: avoid;
+  }
+  /* Itinerary photos belong with the start of the description that explains
+     them. Scoped to day cards: hotel/cruise/vehicle cards may otherwise be
+     pushed to a fresh page by a photo that would have fitted at the bottom. */
+  [data-pdf-mode='weblink'] .weblink-day-card .weblink-media-frame {
+    break-after: avoid;
+  }
+  /* Ordinary day cards move whole rather than being fragmented at their top
+     border (which previously left an empty card shell behind). Cards taller
+     than a page cannot avoid a break and still split at their internal
+     boundaries. */
+  [data-pdf-mode='weblink'] .weblink-day-card,
+  [data-pdf-mode='weblink'] .weblink-hotel-card,
+  [data-pdf-mode='weblink'] .weblink-contact-card {
+    break-inside: avoid;
+  }
+  /* Tighten the day card's internal print spacing just enough for the tallest
+     itinerary day to fit one page, so its meals line never lands alone at the
+     top of the next page. The interactive weblink is untouched. */
+  [data-pdf-mode='weblink'] .weblink-day-card {
+    padding: 12px !important;
+  }
+  [data-pdf-mode='weblink'] .weblink-day-card .weblink-media-frame {
+    max-height: 312px;
+  }
+  [data-pdf-mode='weblink'] .weblink-activity-panel {
+    margin-top: 8px !important;
+  }
+  [data-pdf-mode='weblink'] .weblink-activity-panel > div {
+    padding: 8px !important;
+  }
+  [data-pdf-mode='weblink'] .weblink-day-meals {
+    margin-top: 4px !important;
+  }
+  /* The Activities & Details header introduces the block below it. */
+  [data-pdf-mode='weblink'] .weblink-activities-heading {
+    break-after: avoid;
+  }
+  /* The day meta line (city/date/time) belongs with the heading above and
+     the card below: heading + meta + section header move as one run instead
+     of stranding the heading at the bottom of a page. */
+  [data-pdf-mode='weblink'] .weblink-day-meta {
+    break-after: avoid;
+  }
+  /* A policy title must not sit alone at the foot of a page. */
+  [data-pdf-mode='weblink'] .weblink-policy-heading {
+    break-after: avoid;
+  }
+  /* Paragraphs never strand single lines; bullets break between items (the
+     sensible boundary for long attraction/inclusion lists), never mid-item. */
+  [data-pdf-mode='weblink'] p {
+    orphans: 3;
+    widows: 3;
+  }
+  [data-pdf-mode='weblink'] li {
+    break-inside: avoid;
+  }
+  [data-pdf-mode='weblink'] ul,
+  [data-pdf-mode='weblink'] ol {
+    orphans: 3;
+    widows: 3;
+  }
+  [data-pdf-mode='weblink'] .weblink-rich-text,
+  [data-pdf-mode='weblink'] .rich-text-content {
+    break-inside: auto;
+  }
+
+  /* Links print in a readable color; Chromium keeps them clickable. */
+  [data-pdf-mode='weblink'] a {
+    text-decoration-thickness: from-font;
+  }
+}

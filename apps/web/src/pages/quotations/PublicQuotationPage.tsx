@@ -56,6 +56,7 @@ import {
 } from '@interscale/shared';
 import { useFavicon } from '@/hooks/useFavicon';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import './weblink-pdf.css';
 import { formatTime12Hour } from '@/utils/dateTime';
 import { decodeHtmlEntities } from '@/utils/richTextPaste';
 import { buildQuotationDescription, normalizeWhatsAppPhone } from './quotationContact';
@@ -863,7 +864,14 @@ function DestinationExpertSection({
 }
 
 /** FAQs — polished accordion. Hidden entirely when no FAQs exist. */
-function FaqSection({ faqs }: { faqs: Array<{ question: string; answer: string }> }) {
+function FaqSection({
+  faqs,
+  expandAll = false,
+}: {
+  faqs: Array<{ question: string; answer: string }>;
+  /** PDF mode: every answer rendered open, no interactive controls. */
+  expandAll?: boolean;
+}) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   if (!faqs.length) return null;
   return (
@@ -871,28 +879,35 @@ function FaqSection({ faqs }: { faqs: Array<{ question: string; answer: string }
       <SectionTitle>Frequently Asked Questions</SectionTitle>
       <div className="space-y-2">
         {faqs.map((faq, index) => {
-          const open = openIndex === index;
+          const open = expandAll || openIndex === index;
           return (
             <div
               key={`${faq.question}-${index}`}
               className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
             >
-              <button
-                type="button"
-                aria-expanded={open}
-                aria-controls={`faq-panel-${index}`}
-                onClick={() => setOpenIndex(open ? null : index)}
-                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-              >
-                <span
-                  className="weblink-rich-text rich-text-content min-w-0 flex-1 whitespace-pre-line break-words text-sm font-semibold text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+              {expandAll ? (
+                <p
+                  className="weblink-rich-text rich-text-content break-words px-4 pt-3 text-sm font-semibold text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(faq.question) }}
                 />
-                <ChevronDown
-                  className={`h-4 w-4 shrink-0 text-[#000000] transition-transform ${open ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                />
-              </button>
+              ) : (
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-controls={`faq-panel-${index}`}
+                  onClick={() => setOpenIndex(open ? null : index)}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                >
+                  <span
+                    className="weblink-rich-text rich-text-content min-w-0 flex-1 whitespace-pre-line break-words text-sm font-semibold text-[#000000] [&_a]:text-blue-600 [&_a]:underline [&_li]:mb-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(faq.question) }}
+                  />
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-[#000000] transition-transform ${open ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
+                  />
+                </button>
+              )}
               {open && (
                 <div
                   id={`faq-panel-${index}`}
@@ -1221,6 +1236,7 @@ function SightseeingItineraryView({
   fmt,
   pricingMode,
   sectionTitle,
+  pdfMode = false,
 }: {
   days: SightseeingDay[];
   color: string;
@@ -1233,6 +1249,8 @@ function SightseeingItineraryView({
   pricingMode?: string;
   /** Builder-configured section title; falls back to `Your Itinerary`. */
   sectionTitle?: string | null;
+  /** PDF mode: first gallery image only, no carousel controls. */
+  pdfMode?: boolean;
 }) {
   const normalized = useMemo(
     () => days.map((day, index) => normalizeItineraryDay(day, index + 1)),
@@ -1313,19 +1331,20 @@ function SightseeingItineraryView({
                   className="absolute left-[10px] top-6 h-3.5 w-3.5 rounded-full border-2 bg-white"
                   style={{ borderColor: color }}
                 />
-                <article className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-card p-4 shadow-sm md:gap-5 md:p-5">
+                <article className="weblink-day-card flex flex-col gap-4 rounded-lg border border-slate-200 bg-card p-4 shadow-sm md:gap-5 md:p-5">
                   {validActivities.length === 0 && (
                     <QuotationMediaFrame
                       images={dayImages}
                       label="Itinerary day"
                       radius="rounded-lg"
                       className="shrink-0 md:w-[285px]"
+                      firstOnly={pdfMode}
                       placeholder={<ItineraryImage src={null} alt={title} />}
                     />
                   )}
                   <div className="min-w-0 flex-1">
                     <h3 className="text-lg font-bold text-[#000000]">{title}</h3>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#000000]">
+                    <div className="weblink-day-meta mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#000000]">
                       {day.city?.trim() && (
                         <span className="inline-flex items-center gap-1">
                           <MapPin className="h-4 w-4" /> {day.city}
@@ -1353,8 +1372,8 @@ function SightseeingItineraryView({
                         const activityImages = imagesForActivity(activity);
                         return (
                           <>
-                            <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
-                              <p className="border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-[#000000]">
+                            <div className="weblink-activity-panel mt-3 overflow-hidden rounded-lg border border-slate-200">
+                              <p className="weblink-activities-heading border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-[#000000]">
                                 Activities &amp; Details
                               </p>
                               <div className="flex flex-col gap-3 bg-white p-3 sm:flex-row">
@@ -1364,6 +1383,7 @@ function SightseeingItineraryView({
                                   label={activity.name ?? 'Activity'}
                                   radius="rounded-md"
                                   className="shrink-0 sm:w-64"
+                                  firstOnly={pdfMode}
                                   placeholder={
                                     <ItineraryThumb src={null} alt={activity.name ?? 'Activity'} />
                                   }
@@ -1407,7 +1427,7 @@ function SightseeingItineraryView({
                               </div>
                             </div>
                             {mealsLabel && (
-                              <p className="mt-2 flex items-center gap-1 text-sm text-[#000000]">
+                              <p className="weblink-day-meals mt-2 flex items-center gap-1 text-sm text-[#000000]">
                                 <Utensils className="h-4 w-4 text-[#000000]" />
                                 <span className="font-semibold">Meals:</span> {mealsLabel}
                               </p>
@@ -1417,8 +1437,8 @@ function SightseeingItineraryView({
                       })()
                     ) : validActivities.length >= 2 ? (
                       <>
-                        <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
-                          <p className="border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-[#000000]">
+                        <div className="weblink-activity-panel mt-3 overflow-hidden rounded-lg border border-slate-200">
+                          <p className="weblink-activities-heading border-b border-slate-200 bg-slate-100/80 px-3 py-1.5 text-sm font-semibold text-[#000000]">
                             Activities &amp; Details
                           </p>
                           <div className="bg-white p-3">
@@ -1436,6 +1456,7 @@ function SightseeingItineraryView({
                                       label={activity.name ?? 'Activity'}
                                       radius="rounded-md"
                                       className="shrink-0 sm:w-64"
+                                      firstOnly={pdfMode}
                                       placeholder={
                                         <ItineraryThumb
                                           src={null}
@@ -1487,7 +1508,7 @@ function SightseeingItineraryView({
                           </div>
                         </div>
                         {mealsLabel && (
-                          <p className="mt-2 flex items-center gap-1 text-sm text-[#000000]">
+                          <p className="weblink-day-meals mt-2 flex items-center gap-1 text-sm text-[#000000]">
                             <Utensils className="h-4 w-4 text-[#000000]" />
                             <span className="font-semibold">Meals:</span> {mealsLabel}
                           </p>
@@ -1511,7 +1532,7 @@ function SightseeingItineraryView({
                           );
                         })()}
                         {mealsLabel && (
-                          <p className="mt-2 flex items-center gap-1 text-sm text-[#000000]">
+                          <p className="weblink-day-meals mt-2 flex items-center gap-1 text-sm text-[#000000]">
                             <Utensils className="h-4 w-4 text-[#000000]" />
                             <span className="font-semibold">Meals:</span> {mealsLabel}
                           </p>
@@ -1745,6 +1766,7 @@ function QuotationMediaFrame({
   className,
   imageFit = 'cover',
   'aria-label': ariaLabel,
+  firstOnly = false,
 }: {
   images: QuotationGalleryImage[];
   imageUrl?: string | null;
@@ -1758,18 +1780,32 @@ function QuotationMediaFrame({
   /** `contain` letterboxes the whole image instead of cropping to the frame. */
   imageFit?: 'cover' | 'contain';
   'aria-label'?: string;
+  /** PDF mode: render only the first gallery image, no carousel controls. */
+  firstOnly?: boolean;
 }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const shownImages = firstOnly ? images.slice(0, 1) : images;
   const lightboxImages = imageUrl
     ? [imageAlt ? { url: imageUrl, alt: imageAlt } : { url: imageUrl }]
     : [];
+  // PDF mode with no image at all renders nothing: a 16:9 placeholder void
+  // would waste print space with no recovery value (no retries/lightbox).
+  if (firstOnly && shownImages.length === 0 && !imageUrl) return null;
   return (
     <div
       aria-label={ariaLabel}
-      className={`relative aspect-[16/9] w-full overflow-hidden bg-slate-100 ${radius} ${className ?? ''}`}
+      className={`weblink-media-frame relative aspect-[16/9] w-full overflow-hidden bg-slate-100 ${radius} ${className ?? ''}`}
     >
-      {images.length > 0 ? (
-        <QuotationImageCarousel images={images} label={label} imageFit={imageFit} />
+      {shownImages.length > 0 ? (
+        firstOnly ? (
+          <img
+            src={shownImages[0]!.url}
+            alt={shownImages[0]!.alt || imageAlt || label}
+            className={`h-full w-full object-center ${imageFit === 'contain' ? 'object-contain' : 'object-cover'}`}
+          />
+        ) : (
+          <QuotationImageCarousel images={shownImages} label={label} imageFit={imageFit} />
+        )
       ) : imageUrl ? (
         <button
           type="button"
@@ -1803,6 +1839,12 @@ function QuotationMediaFrame({
 
 export function PublicQuotationPage() {
   const { token = '', slug = '' } = useParams();
+  // Static PDF rendering mode for Weblink PDF generation (`/q/:token?pdf=weblink`):
+  // same data and components, with navigation hidden, policies/FAQs expanded
+  // and first-image galleries. Telemetry is skipped in this mode.
+  const pdfMode =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('pdf') === 'weblink';
   // Friendly `travelagencycrm.in/<slug>` alias vs the legacy `/q/<token>` path.
   // Both render this same page; only the API endpoint differs.
   const isSlug = Boolean(slug);
@@ -1837,8 +1879,10 @@ export function PublicQuotationPage() {
   // Best-effort visitor telemetry: an initial snapshot on load plus a final
   // scroll/time beacon on leave. Fully client-derived (device, screen, locale,
   // referrer, UTM); the server adds IP, User-Agent parsing and geolocation.
+  // Skipped in PDF rendering mode so headless generation never pollutes
+  // weblink analytics.
   useEffect(() => {
-    if (!identifier) return;
+    if (pdfMode || !identifier) return;
     const trackUrl = isSlug
       ? `/api/public/quotations/by-slug/${encodeURIComponent(slug)}/track`
       : `/api/public/quotations/${encodeURIComponent(token)}/track`;
@@ -1971,7 +2015,7 @@ export function PublicQuotationPage() {
       if (document.visibilityState === 'visible') activeMs += Date.now() - lastResume;
       send(true);
     };
-  }, [token, slug, isSlug, staffViewToken]);
+  }, [token, slug, isSlug, staffViewToken, pdfMode, identifier]);
   if (error)
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
@@ -1983,7 +2027,7 @@ export function PublicQuotationPage() {
       </main>
     );
   if (!data) return <div className="min-h-screen animate-pulse bg-slate-100" />;
-  return <PublicQuotationView data={data} />;
+  return <PublicQuotationView data={data} pdfMode={pdfMode} />;
 }
 
 /**
@@ -2118,7 +2162,18 @@ function TravelerPriceBreakdown({
  * route and the Quotation Builder's full live preview. Everything renders
  * from `data` alone: no fetching, no telemetry, no saves.
  */
-export function PublicQuotationView({ data }: { data: PublicQuotation }) {
+export function PublicQuotationView({
+  data,
+  pdfMode = false,
+}: {
+  data: PublicQuotation;
+  /**
+   * Static PDF rendering mode (Weblink PDF): no section navigator or floating
+   * controls, every policy/FAQ expanded, first gallery image only. The
+   * interactive weblink is unchanged when false.
+   */
+  pdfMode?: boolean;
+}) {
   // Public Policies accordion: only one section is open at a time; Inclusions
   // (or the first non-empty section) starts open.
   const [openPolicy, setOpenPolicy] = useState<string | null>(null);
@@ -2317,7 +2372,11 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
 
   return (
     <QuotationDocumentContext.Provider value={getOwnerDoc}>
-    <main ref={rootRef} className="flex min-h-screen flex-col bg-slate-100">
+    <main
+      ref={rootRef}
+      className="flex min-h-screen flex-col bg-slate-100"
+      {...(pdfMode ? { 'data-pdf-mode': 'weblink' } : {})}
+    >
       <div className="flex-1 pb-16">
         {/* Hero */}
         <header
@@ -2596,7 +2655,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
           )}
 
           {/* Quick navigation to the sections present in this quotation. */}
-          {v.showQuickNav !== false && <SectionNav sticky={v.quickNavSticky ?? false} />}
+          {!pdfMode && v.showQuickNav !== false && <SectionNav sticky={v.quickNavSticky ?? false} />}
 
           {/* Weblink sections — rendered in custom order when configured, otherwise default order. Empty sections stay hidden. */}
           {(() => {
@@ -2609,7 +2668,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
               includedServices.length > 0 ? (
                 <section>
                   <SectionTitle>Services Include</SectionTitle>
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                  <div className="weblink-services-grid grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                     {includedServices.map((service) => {
                       const Icon = serviceCardIcon(service.key);
                       return (
@@ -2648,6 +2707,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                   fmt={fmt}
                   pricingMode={pricing.pricingMode}
                   sectionTitle={v.sightseeingDetails?.sectionTitle ?? null}
+                  pdfMode={pdfMode}
                 />
               ) : null;
             nodes['hotels'] = hotelIncluded ? (
@@ -2690,13 +2750,14 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                         // to its stable source position to stay unique.
                         key={hotel.id ?? `hotel-${sourceIndex}`}
                         data-preview-item={`hotel:${sourceIndex}`}
-                        className="overflow-hidden rounded-xl border bg-card shadow-sm sm:grid sm:grid-cols-[42%_1fr]"
+                        className="weblink-hotel-card overflow-hidden rounded-xl border bg-card shadow-sm sm:grid sm:grid-cols-[42%_1fr]"
                       >
                         <QuotationMediaFrame
                           images={snapshotImages}
                           imageUrl={cardImageUrl}
                           label="Hotel"
                           imageAlt={hotel.hotelName}
+                          firstOnly={pdfMode}
                           className="sm:self-start"
                           placeholder={
                             <div className="text-center text-[#000000]">
@@ -2903,6 +2964,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 <SectionTitle>{fd?.sectionTitle || 'Flight Details'}</SectionTitle>
                 {fd?.entryMode === 'IMAGE' && (data.flightImages?.length || data.flightImageUrl) ? (
                   <FlightImageViewer
+                    firstOnly={pdfMode}
                     images={
                       data.flightImages?.length
                         ? data.flightImages
@@ -2954,6 +3016,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                           <QuotationMediaFrame
                             images={displayImages}
                             label="Vehicle"
+                            firstOnly={pdfMode}
                             imageAlt={vehicle.name || presentation?.name || 'Vehicle'}
                             placeholder={
                               <div className="text-center text-[#000000]">
@@ -3023,6 +3086,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                           <QuotationMediaFrame
                             images={displayImages}
                             label="Cruise"
+                            firstOnly={pdfMode}
                             imageAlt={cruise.name}
                             placeholder={
                               <div className="flex flex-col items-center justify-center gap-1 text-[#000000]">
@@ -3116,6 +3180,7 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                                 label="Add-on"
                                 imageAlt={service.name}
                                 imageFit="contain"
+                                firstOnly={pdfMode}
                               />
                             </div>
                           )}
@@ -3185,33 +3250,43 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                   <SectionTitle>Policies</SectionTitle>
                   <div className="space-y-2">
                     {visibleSections.map((section) => {
-                      const open = openPolicy === section.key;
+                      const open = pdfMode || openPolicy === section.key;
                       return (
                         <div
                           key={section.key}
                           className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
                         >
-                          <button
-                            type="button"
-                            aria-expanded={open}
-                            aria-controls={`policy-panel-${section.key}`}
-                            onClick={() => setOpenPolicy(open ? null : section.key)}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-                          >
-                            <span className="flex items-center gap-2 text-sm font-semibold text-blue-600">
+                          {pdfMode ? (
+                            <p className="weblink-policy-heading flex items-center gap-2 px-4 pt-3 text-sm font-semibold text-blue-600">
                               <section.Icon
                                 className={`h-4 w-4 shrink-0 ${section.iconClass}`}
                                 aria-hidden="true"
                               />
                               {section.label}
-                            </span>
-                            <ChevronDown
-                              className={`h-4 w-4 shrink-0 text-[#000000] transition-transform ${
-                                open ? 'rotate-180' : ''
-                              }`}
-                              aria-hidden="true"
-                            />
-                          </button>
+                            </p>
+                          ) : (
+                            <button
+                              type="button"
+                              aria-expanded={open}
+                              aria-controls={`policy-panel-${section.key}`}
+                              onClick={() => setOpenPolicy(open ? null : section.key)}
+                              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                            >
+                              <span className="flex items-center gap-2 text-sm font-semibold text-blue-600">
+                                <section.Icon
+                                  className={`h-4 w-4 shrink-0 ${section.iconClass}`}
+                                  aria-hidden="true"
+                                />
+                                {section.label}
+                              </span>
+                              <ChevronDown
+                                className={`h-4 w-4 shrink-0 text-[#000000] transition-transform ${
+                                  open ? 'rotate-180' : ''
+                                }`}
+                                aria-hidden="true"
+                              />
+                            </button>
+                          )}
                           {open && (
                             <div
                               id={`policy-panel-${section.key}`}
@@ -3253,7 +3328,10 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
                 </div>
               </section>
             ) : null;
-            nodes['faqs'] = faqsNormalized.length > 0 ? <FaqSection faqs={faqsNormalized} /> : null;
+            nodes['faqs'] =
+              faqsNormalized.length > 0 ? (
+                <FaqSection faqs={faqsNormalized} expandAll={pdfMode} />
+              ) : null;
             const renderOrder = order.flatMap((id) =>
               id === 'policies' ? ['customerNotes', id] : [id],
             );
@@ -3291,16 +3369,18 @@ export function PublicQuotationView({ data }: { data: PublicQuotation }) {
         </div>
       </div>
 
-      <PublicQuotationFooter
-        companyName={company.name}
-        operatingSince={company.operatingSince}
-        tripsSold={company.tripsSold}
-        tan={company.tan}
-        quotationNumber={q.quotationNumber}
-        generatedAt={q.createdAt}
-      />
+      {!pdfMode && (
+        <PublicQuotationFooter
+          companyName={company.name}
+          operatingSince={company.operatingSince}
+          tripsSold={company.tripsSold}
+          tan={company.tan}
+          quotationNumber={q.quotationNumber}
+          generatedAt={q.createdAt}
+        />
+      )}
 
-      <BackToTop />
+      {!pdfMode && <BackToTop />}
     </main>
     </QuotationDocumentContext.Provider>
   );

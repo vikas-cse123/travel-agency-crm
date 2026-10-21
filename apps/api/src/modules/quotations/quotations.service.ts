@@ -52,6 +52,10 @@ import { resolveHotelRoomPricing } from './hotel-pricing-resolver.js';
 import { renderQuotationPdf, type QuotationPdfInput } from './pdf.service.js';
 import { renderStylishQuotationPdf } from './stylish-pdf.service.js';
 import {
+  buildWeblinkPdfUrl,
+  renderWeblinkPdfFromUrl,
+} from './weblink-browser-pdf.service.js';
+import {
   preferredPublicAppBaseUrl,
   friendlyPublicSlugBaseUrl,
 } from '../custom-domains/custom-domain.service.js';
@@ -78,7 +82,7 @@ import { logger } from '../../config/logger.js';
 const userSelect = { id: true, fullName: true, username: true } as const;
 
 type QuotationPdfOptions = {
-  style: 'CLASSIC' | 'STYLISH';
+  style: 'CLASSIC' | 'STYLISH' | 'WEBLINK';
   coverSource: 'DESTINATION' | 'UPLOAD';
   coverImageDataUrl?: string;
   /**
@@ -3402,6 +3406,31 @@ export const quotationsService = {
     return presentVersion(result, await hasCosting(auth));
   },
 
+  /**
+   * Render the Weblink PDF for a version through a real browser pointed at
+   * that quotation's own public weblink (`?pdf=weblink` static mode). The
+   * token is reused when one exists, otherwise minted exactly like Copy
+   * Weblink URL (same permissions, same activity log), so the PDF always
+   * reflects the currently published public data.
+   */
+  async renderWeblinkPdfForVersion(
+    auth: AuthContext,
+    id: string,
+    versionId: string,
+    context: RequestContext,
+  ): Promise<Buffer> {
+    await this.createPublicLink(auth, id, versionId, null, context);
+    const stored = await prisma.quotation.findUniqueOrThrow({
+      where: { id },
+      select: { publicToken: true },
+    });
+    if (!stored.publicToken) throw new ConflictError('A public weblink is required for Weblink PDF.');
+    const baseUrl = env.WEB_URL.replace(/\/$/, '');
+    return renderWeblinkPdfFromUrl({
+      url: buildWeblinkPdfUrl(baseUrl, stored.publicToken),
+    });
+  },
+
   async generatePdf(
     auth: AuthContext,
     id: string,
@@ -3415,7 +3444,24 @@ export const quotationsService = {
     const styleFileNameFilter =
       options.style === 'STYLISH'
         ? { endsWith: '-stylish-quotation.pdf' }
-        : { endsWith: '-quotation.pdf', not: { contains: '-stylish-' } };
+        : options.style === 'WEBLINK'
+          ? { endsWith: '-weblink-quotation.pdf' }
+          : {
+              endsWith: '-quotation.pdf',
+              not: { contains: '-stylish-' },
+            };
+    // The classic suffix also matches `-weblink-quotation.pdf`, so the classic
+    // lookup additionally excludes weblink documents (each style reuses only
+    // its own files).
+    const fileNameCondition =
+      options.style === 'CLASSIC'
+        ? {
+            AND: [
+              { fileName: styleFileNameFilter },
+              { fileName: { not: { contains: '-weblink-' } } },
+            ],
+          }
+        : { fileName: styleFileNameFilter };
     const existing = !force
       ? await prisma.quotationDocument.findFirst({
           where: {
@@ -3423,7 +3469,7 @@ export const quotationsService = {
             quotationId: id,
             quotationVersionId: versionId,
             documentType: 'QUOTATION_PDF',
-            fileName: styleFileNameFilter,
+            ...fileNameCondition,
             status: 'AVAILABLE',
             deletedAt: null,
           },
@@ -3460,11 +3506,16 @@ export const quotationsService = {
     // Page-1 consultant strip: prepared-by/creator → lead assignee → company.
     const consultant = await resolvePdfConsultant(auth.companyId, quotation, company);
 
+    // Weblink PDF renders the live public weblink in a real browser, so it
+    // needs no server-resolved presentations or image buffers — skip that
+    // work entirely for this style.
+    const isWeblinkPdf = options.style === 'WEBLINK';
+
     // Hotel catalogue presentation is optional and customer-safe. Keep it
     // aligned with the quotation stays so both PDF renderers can consume it
     // without exposing Master ids.
     let hotelPresentations: QuotationPdfInput['hotelPresentations'];
-    try {
+    if (!isWeblinkPdf) try {
       const ownerCompanyIds = await linkedMasterOwnerCompanyIds(auth.companyId);
       const presentationByOptionId = await resolveHotelPresentations(
         ownerCompanyIds,
@@ -3486,9 +3537,10 @@ export const quotationsService = {
     }
 
     // --- PDF image resolution: server-side buffers, never signed URLs ----------
+    // (skipped for Weblink PDF — the browser loads the weblink's own images).
     let images: QuotationPdfInput['images'] | undefined;
     let pdfSightseeingDetails: unknown = version.sightseeingDetails;
-    try {
+    if (!isWeblinkPdf) try {
       const imageCache = new Map<string, Buffer | null>();
       const fetchImage = async (key: string | null | undefined): Promise<Buffer | null> => {
         if (!key) return null;
@@ -3929,12 +3981,14 @@ export const quotationsService = {
       }
     }
 
-    const renderer = options.style === 'STYLISH' ? renderStylishQuotationPdf : renderQuotationPdf;
+    const renderer =
+      options.style === 'STYLISH' ? renderStylishQuotationPdf : renderQuotationPdf;
 
     // Destination Expert — same resolved data the weblink uses, plus the
     // profile image bytes for the PDF (the weblink gets a signed URL instead).
+    // Skipped for Weblink PDF — the browser loads the weblink's own images.
     let destinationExpert: QuotationPdfInput['destinationExpert'] = null;
-    {
+    if (!isWeblinkPdf) {
       const expert = await resolveDestinationExpertPresentation(
         auth.companyId,
         normalizeDestinationExpertConfig(
@@ -4010,7 +4064,11 @@ export const quotationsService = {
       ...(images ? { images } : {}),
       ...(destinationExpert ? { destinationExpert } : {}),
     };
-    const pdf = await renderer(pdfInput);
+    // Weblink PDF renders the live public weblink in a real browser — same
+    // published data and components, never a reconstructed layout.
+    const pdf = isWeblinkPdf
+      ? await this.renderWeblinkPdfForVersion(auth, id, versionId, context)
+      : await renderer(pdfInput);
     const checksum = createHash('sha256').update(pdf).digest('hex');
     const documentId = randomUUID();
     // Meaningful filename: <number>-<customer>-v<version>[-stylish]-quotation.pdf.
@@ -4019,7 +4077,7 @@ export const quotationsService = {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
     const fileName = sanitizeFileName(
-      `${quotation.quotationNumber}-${customerSlug ? `${customerSlug}-` : ''}v${version.versionNumber}${options.style === 'STYLISH' ? '-stylish' : ''}-quotation.pdf`,
+      `${quotation.quotationNumber}-${customerSlug ? `${customerSlug}-` : ''}v${version.versionNumber}${options.style === 'STYLISH' ? '-stylish' : options.style === 'WEBLINK' ? '-weblink' : ''}-quotation.pdf`,
     );
     const objectKey = quotationObjectKey({
       companyId: auth.companyId,
@@ -4317,11 +4375,19 @@ export const quotationsService = {
     // the latest customer-facing content, even when a token already exists.
     const isExplicitHistorical = Boolean(versionId);
     if (quotation.publicToken) {
+      // Self-heal a stale token hash (e.g. minted before a TOKEN_PEPPER
+      // rotation, which invalidates every existing hash): the stored plaintext
+      // token and its URL stay exactly the same, so no link changes and no
+      // access rule changes — but the hash must match the current pepper or
+      // every public lookup for this quotation 404s as invalid/expired.
+      const repairedHash = hashToken(quotation.publicToken);
+      const repair: Record<string, unknown> = {};
+      if (quotation.publicTokenHash !== repairedHash) repair.publicTokenHash = repairedHash;
       if (!isExplicitHistorical && quotation.publicVersionId !== selected.id) {
-        await prisma.quotation.update({
-          where: { id },
-          data: { publicVersionId: selected.id },
-        });
+        repair.publicVersionId = selected.id;
+      }
+      if (Object.keys(repair).length > 0) {
+        await prisma.quotation.update({ where: { id }, data: repair });
       }
       const url = quotation.publicSlug
         ? `${await friendlyPublicSlugBaseUrl(auth.companyId)}/${quotation.publicSlug}`

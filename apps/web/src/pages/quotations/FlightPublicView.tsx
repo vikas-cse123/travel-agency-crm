@@ -253,14 +253,18 @@ export function FlightJourneyView({
 
 export function FlightImageViewer({
   images,
+  firstOnly = false,
 }: {
   images: Array<{ description?: string | null; url: string }>;
+  /** PDF mode: render only the first image. */
+  firstOnly?: boolean;
 }) {
-  if (!images.length) return null;
+  const shown = firstOnly ? images.slice(0, 1) : images;
+  if (!shown.length) return null;
 
   return (
     <div className="mx-auto grid max-w-4xl items-start gap-5">
-      {images.map((image, index) => {
+      {shown.map((image, index) => {
         const description = image.description?.trim() || '';
         const accessibleTitle = description || 'flight document';
         return (

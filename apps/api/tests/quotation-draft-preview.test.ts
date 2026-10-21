@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
 import type { PrismaClient } from '@prisma/client';
@@ -8,6 +8,17 @@ import { createAuthClient, registrationPayload } from './helpers/auth-client.js'
 import { getMemoryEmailProvider } from '../src/services/email/email.service.js';
 import { resetSystemCompanyIdCache } from '../src/modules/masters/master-visibility.js';
 import { validateQuotationPricing, resolveQuotationPricing } from '@interscale/shared';
+
+// The real Chromium capture is covered end-to-end by weblink-pdf.test.ts and
+// the deliverable run. This API test only asserts the WEBLINK route/filename
+// contract, so it must not depend on a live web server + browser (which would
+// also read the dev database, not this test database).
+vi.mock('../src/modules/quotations/weblink-browser-pdf.service.js', () => ({
+  buildWeblinkPdfUrl: (baseUrl: string, token: string) =>
+    `${baseUrl.replace(/\/$/, '')}/q/${encodeURIComponent(token)}?pdf=weblink`,
+  renderWeblinkPdfFromUrl: vi.fn(async () => Buffer.from('%PDF-1.4\n% weblink test\n')),
+  closeWeblinkPdfBrowser: vi.fn(async () => undefined),
+}));
 
 let app: Express;
 let db: PrismaClient;
@@ -230,6 +241,25 @@ describe('draft preview vs finalize - By Section partially priced', () => {
     const token2 = await fetchPublicToken(db, q.id);
     const pub2 = await request(app).get(`/api/public/quotations/${token2}`);
     expect(pub2.status, JSON.stringify(pub2.body)).toBe(200);
+  });
+
+  it('weblink PDF generates alongside classic/stylish with its own filename', async () => {
+    const client = await owner();
+    const lead = (await client.post('/api/queries', leadPayload())).body.data;
+    const q = (await client.post('/api/quotations', { queryId: lead.id })).body.data;
+    const versionId = q.versions[0].id;
+    const weblink = await client.post(`/api/quotations/${q.id}/versions/${versionId}/generate-pdf`, {
+      force: true,
+      style: 'WEBLINK',
+    });
+    expect(weblink.status, JSON.stringify(weblink.body)).toBe(200);
+    expect(weblink.body.data.fileName).toMatch(/-weblink-quotation\.pdf$/);
+    // An unsupported style is rejected by request validation.
+    const bogus = await client.post(`/api/quotations/${q.id}/versions/${versionId}/generate-pdf`, {
+      force: true,
+      style: 'POSTER',
+    });
+    expect(bogus.status).toBe(400);
   });
 
   it('By Traveler incomplete may be previewed but finalize still requires valid traveler pricing', async () => {

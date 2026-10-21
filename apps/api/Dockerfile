@@ -67,6 +67,15 @@ COPY --from=builder /app/apps/api/src/assets/destination-expert ./apps/api/src/a
 COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
 COPY --from=builder /app/package.json ./package.json
 
+# Weblink PDF browser: headless Chromium (via Playwright) renders the real
+# public quotation view to A4. Installed to a shared path readable by the
+# unprivileged runtime user; PLAYWRIGHT_BROWSERS_PATH is honored both here
+# and by the Playwright runtime when launching the browser.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN ./node_modules/.bin/playwright install --with-deps chromium \
+  && chmod -R a+rX /ms-playwright \
+  && rm -rf /var/lib/apt/lists/*
+
 # Runtime database-bootstrap wrapper (constructs DATABASE_URL from injected
 # secret fields before launching the API).
 COPY apps/api/docker-entrypoint.mjs ./apps/api/docker-entrypoint.mjs

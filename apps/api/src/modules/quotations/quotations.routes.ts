@@ -123,7 +123,7 @@ router.post(
     body: z
       .object({
         force: z.boolean().optional(),
-        style: z.enum(['CLASSIC', 'STYLISH']).optional(),
+        style: z.enum(['CLASSIC', 'STYLISH', 'WEBLINK']).optional(),
         coverSource: z.enum(['DESTINATION', 'UPLOAD']).optional(),
         coverImageDataUrl: z.string().max(7_000_000).optional(),
         page1HeroImageDataUrl: z.string().max(7_000_000).optional(),

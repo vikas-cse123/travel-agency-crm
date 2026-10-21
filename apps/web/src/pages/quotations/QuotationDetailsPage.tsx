@@ -6,6 +6,7 @@ import {
   Pencil,
   ExternalLink,
   FileText,
+  Globe,
   Image as ImageIcon,
   Plus,
   Sparkles,
@@ -323,7 +324,7 @@ export function QuotationDetailsPage() {
     setWhatsappOpen(true);
   };
   const generateIntoNewTab = async (
-    style: 'CLASSIC' | 'STYLISH',
+    style: 'CLASSIC' | 'STYLISH' | 'WEBLINK',
     selectedCoverSource: 'DESTINATION' | 'UPLOAD' = 'DESTINATION',
   ) => {
     if (!current || generatePdf.isPending) return;
@@ -745,7 +746,7 @@ export function QuotationDetailsPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="pdf-style-title"
-            className="w-full max-w-2xl rounded-2xl bg-card p-6 shadow-xl"
+            className="w-full max-w-3xl rounded-2xl bg-card p-6 shadow-xl"
           >
             <h2 id="pdf-style-title" className="text-xl font-semibold">
               Choose PDF style
@@ -753,7 +754,7 @@ export function QuotationDetailsPage() {
             <p className="mt-1 text-sm text-slate-500">
               Select how this quotation should be presented.
             </p>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <div className="mt-5 grid gap-4 sm:grid-cols-3">
               <button
                 type="button"
                 className="rounded-xl border p-5 text-left transition hover:border-brand-400 hover:bg-brand-50"
@@ -782,6 +783,20 @@ export function QuotationDetailsPage() {
                 <strong className="mt-4 block text-lg">Stylish PDF</strong>
                 <span className="mt-1 block text-sm text-slate-500">
                   A photo-led navy and gold proposal inspired by the supplied design.
+                </span>
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border p-5 text-left transition hover:border-brand-400 hover:bg-brand-50"
+                onClick={() => {
+                  setPdfChoiceOpen(false);
+                  void generateIntoNewTab('WEBLINK');
+                }}
+              >
+                <Globe className="h-7 w-7 text-emerald-600" />
+                <strong className="mt-4 block text-lg">Weblink PDF</strong>
+                <span className="mt-1 block text-sm text-slate-500">
+                  The public quotation weblink as a multipage A4 PDF.
                 </span>
               </button>
             </div>
