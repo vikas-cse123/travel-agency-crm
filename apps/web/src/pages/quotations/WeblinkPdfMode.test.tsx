@@ -295,6 +295,10 @@ describe('Weblink PDF static mode', () => {
     expect(document.querySelector('.weblink-hotel-card')).not.toBeNull();
     expect(document.querySelector('.weblink-policy-heading')).not.toBeNull();
     expect(document.querySelector('.weblink-contact-card')).not.toBeNull();
+    // The print stylesheet removes the interactive timeline decoration.
+    expect(document.querySelector('.weblink-timeline-line')).not.toBeNull();
+    expect(document.querySelector('.weblink-timeline-marker')).not.toBeNull();
+    expect(document.querySelector('.weblink-timeline-item')).not.toBeNull();
   });
 
   it('leaves the interactive weblink unchanged without pdfMode', async () => {
@@ -308,6 +312,9 @@ describe('Weblink PDF static mode', () => {
     expect(screen.getByText('Full exclusion text for PDF.')).toBeInTheDocument();
     // Carousel controls render normally.
     expect(screen.getByRole('button', { name: 'Next hotel image' })).toBeInTheDocument();
+    // The interactive itinerary timeline decoration is untouched.
+    expect(document.querySelector('.weblink-timeline-line')).not.toBeNull();
+    expect(document.querySelector('.weblink-timeline-marker')).not.toBeNull();
     expect(document.querySelector('main[data-pdf-mode]')).toBeNull();
     expect(within(document.body as HTMLElement).getByText('Jump to')).toBeInTheDocument();
   });

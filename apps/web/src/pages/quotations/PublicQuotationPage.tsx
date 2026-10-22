@@ -1284,7 +1284,7 @@ function SightseeingItineraryView({
       <div className="relative">
         <div
           aria-hidden="true"
-          className="absolute bottom-4 left-4 top-4 w-0.5"
+          className="weblink-timeline-line absolute bottom-4 left-4 top-4 w-0.5"
           style={{ backgroundColor: color }}
         />
         <div className="space-y-5">
@@ -1325,10 +1325,10 @@ function SightseeingItineraryView({
               // Stable internal anchor for live-preview deep-linking (the
               // builder targets a day by form position; `sourceIndex` is that
               // same position, unaffected by filtering). Never user-visible.
-              <div key={`${day.dayNumber}`} data-preview-item={`day:${sourceIndex}`} className="relative pl-10 md:pl-12">
+              <div key={`${day.dayNumber}`} data-preview-item={`day:${sourceIndex}`} className="weblink-timeline-item relative pl-10 md:pl-12">
                 <span
                   aria-hidden="true"
-                  className="absolute left-[10px] top-6 h-3.5 w-3.5 rounded-full border-2 bg-white"
+                  className="weblink-timeline-marker absolute left-[10px] top-6 h-3.5 w-3.5 rounded-full border-2 bg-white"
                   style={{ borderColor: color }}
                 />
                 <article className="weblink-day-card flex flex-col gap-4 rounded-lg border border-slate-200 bg-card p-4 shadow-sm md:gap-5 md:p-5">

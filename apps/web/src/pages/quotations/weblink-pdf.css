@@ -9,6 +9,20 @@
  */
 
 @media print {
+  /* Chromium does not paint the body background into the PDF page margins;
+     @page is the only surface that fills the full A4 sheet. This matches the
+     quotation's slate-100 canvas so no white strips appear around the content
+     or behind the page-number footer. */
+  @page {
+    background: #f1f5f9;
+  }
+  /* The app shell's near-white body background otherwise shows through below
+     the final content block, leaving a pale strip above the page footer. */
+  html:has([data-pdf-mode='weblink']),
+  body:has([data-pdf-mode='weblink']) {
+    background: #f1f5f9 !important;
+  }
+
   /* Never animate while paginating. */
   [data-pdf-mode='weblink'] *,
   [data-pdf-mode='weblink'] *::before,
@@ -121,6 +135,16 @@
   /* A policy title must not sit alone at the foot of a page. */
   [data-pdf-mode='weblink'] .weblink-policy-heading {
     break-after: avoid;
+  }
+  /* The interactive itinerary uses a vertical timeline. On paper it reads as
+     a stray rule beside the cards, so remove the connector and its markers
+     and let the day cards align with every other quotation section. */
+  [data-pdf-mode='weblink'] .weblink-timeline-line,
+  [data-pdf-mode='weblink'] .weblink-timeline-marker {
+    display: none !important;
+  }
+  [data-pdf-mode='weblink'] .weblink-timeline-item {
+    padding-left: 0 !important;
   }
   /* Paragraphs never strand single lines; bullets break between items (the
      sensible boundary for long attraction/inclusion lists), never mid-item. */
