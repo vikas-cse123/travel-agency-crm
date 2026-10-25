@@ -19356,7 +19356,7 @@ describe('Weblink PDF option — third PDF style', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _options?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/generate-pdf'))
-        return response({ id: 'doc-weblink', fileName: 'qt-2026-000001-aarav-mehta-v1-weblink-quotation.pdf' });
+        return response({ id: 'doc-weblink', fileName: 'aarav-mehta-quotation.pdf' });
       if (url.includes('/download-url'))
         return response({ url: 'https://files.example.test/weblink-quotation.pdf' });
       if (url.endsWith('/weblink-analytics'))

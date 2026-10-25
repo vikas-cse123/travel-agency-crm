@@ -117,6 +117,25 @@ export function normalizeWeblinkIp(value: string | null | undefined): string {
 }
 
 /**
+ * Customer-friendly Weblink PDF filename: `{customer-slug}-quotation.pdf`.
+ *
+ * Weblink-only: Classic (`<number>-<customer>-v<n>-quotation.pdf`) and Stylish
+ * (`...-stylish-quotation.pdf`) keep their archival names. The customer name
+ * is lowercased, runs of non-alphanumerics collapse to one hyphen, and
+ * leading/trailing hyphens are trimmed (`Vikas Sahni` →
+ * `vikas-sahni-quotation.pdf`). An empty name falls back to `quotation.pdf`.
+ * The caller still passes the result through `sanitizeFileName`.
+ */
+export function weblinkPdfFileName(customerName: string | null | undefined): string {
+  const slug = (customerName ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+  return `${slug ? `${slug}-` : ''}quotation.pdf`;
+}
+
+/**
  * Whether a weblink load should be classified HOME. True only when the request
  * is a verified session of the owning company, OR it carries a valid signed
  * staff-view signal bound to this company and quotation. Anonymous visitors,
@@ -3441,24 +3460,33 @@ export const quotationsService = {
   ) {
     const quotation = await getQuotation(auth, id);
     const version = await getVersion(auth, id, versionId);
+    // Classic/Stylish/legacy-Weblink files all start with the quotation
+    // number; the customer-friendly Weblink name (`<slug>-quotation.pdf`)
+    // never does, which is how the styles tell each other's cached files
+    // apart now that Weblink no longer carries a `-weblink-` label.
     const styleFileNameFilter =
       options.style === 'STYLISH'
         ? { endsWith: '-stylish-quotation.pdf' }
         : options.style === 'WEBLINK'
-          ? { endsWith: '-weblink-quotation.pdf' }
+          ? {
+              endsWith: '-quotation.pdf',
+              not: { startsWith: quotation.quotationNumber },
+            }
           : {
               endsWith: '-quotation.pdf',
               not: { contains: '-stylish-' },
             };
-    // The classic suffix also matches `-weblink-quotation.pdf`, so the classic
-    // lookup additionally excludes weblink documents (each style reuses only
-    // its own files).
+    // The classic suffix also matches legacy `-weblink-quotation.pdf` files
+    // and the new customer-friendly Weblink names, so the classic lookup
+    // excludes the weblink label and requires the quotation-number prefix
+    // (each style reuses only its own files).
     const fileNameCondition =
       options.style === 'CLASSIC'
         ? {
             AND: [
               { fileName: styleFileNameFilter },
               { fileName: { not: { contains: '-weblink-' } } },
+              { fileName: { startsWith: quotation.quotationNumber } },
             ],
           }
         : { fileName: styleFileNameFilter };
@@ -4072,12 +4100,15 @@ export const quotationsService = {
     const checksum = createHash('sha256').update(pdf).digest('hex');
     const documentId = randomUUID();
     // Meaningful filename: <number>-<customer>-v<version>[-stylish]-quotation.pdf.
+    // Weblink alone uses the customer-friendly `<customer>-quotation.pdf`.
     const customerSlug = quotation.customerName
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
     const fileName = sanitizeFileName(
-      `${quotation.quotationNumber}-${customerSlug ? `${customerSlug}-` : ''}v${version.versionNumber}${options.style === 'STYLISH' ? '-stylish' : options.style === 'WEBLINK' ? '-weblink' : ''}-quotation.pdf`,
+      options.style === 'WEBLINK'
+        ? weblinkPdfFileName(quotation.customerName)
+        : `${quotation.quotationNumber}-${customerSlug ? `${customerSlug}-` : ''}v${version.versionNumber}${options.style === 'STYLISH' ? '-stylish' : ''}-quotation.pdf`,
     );
     const objectKey = quotationObjectKey({
       companyId: auth.companyId,

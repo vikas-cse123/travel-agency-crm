@@ -8,6 +8,7 @@ import {
   createWeblinkPdfContext,
   IQOO_NEO_9_PRO_PROFILE,
   renderWeblinkPdfFromUrl,
+  WEBLINK_PDF_FOOTER_TEMPLATE,
 } from '../src/modules/quotations/weblink-browser-pdf.service.js';
 // Chromium's A4 rounding differs slightly from these PDFKit constants; the
 // geometry assertions below allow rounding tolerance.
@@ -127,8 +128,24 @@ describe.skipIf(!browserBinaryPresent)('weblink PDF effective browser profile', 
   });
 });
 
+describe('weblink PDF footer template', () => {
+  it('shows only the current page number, right-aligned', () => {
+    // Chromium fills .pageNumber per page; the total count must be gone.
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).toContain('pageNumber');
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).not.toContain('totalPages');
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).not.toMatch(/\bof\b/);
+    // Bottom-right corner: right alignment with right padding mirroring the
+    // 32px content margin so the number never touches the paper edge.
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).toMatch(/text-align:\s*right/);
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).toMatch(/padding-right:\s*32px/);
+    // Discreet style preserved, scaled with the Weblink PDF 25% type scale.
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).toMatch(/font-size:\s*11\.25px/);
+    expect(WEBLINK_PDF_FOOTER_TEMPLATE).toContain('#6b7280');
+  });
+});
+
 describe.skipIf(!browserBinaryPresent)('weblink browser PDF pipeline', () => {
-  it('renders A4 pages with N-of-M footers and clickable links', async () => {
+  it('renders A4 pages with right-aligned page-only footers and clickable links', async () => {
     const long = Array.from(
       { length: 60 },
       (_, i) => `<p>Policy line ${i + 1} of the inclusions.</p>`,
@@ -150,8 +167,25 @@ describe.skipIf(!browserBinaryPresent)('weblink browser PDF pipeline', () => {
         expect(box.height).toBeCloseTo(PDF_PAGE_HEIGHT, -1);
         expect(box.height).toBeGreaterThan(box.width);
       }
-      expect(pdfTextPage(pdf, 1)).toMatch(/1 of \d+/);
-      expect(pdfTextPage(pdf, total)).toMatch(new RegExp(`${total} of ${total}`));
+      // Footer shows only the current page number, right-aligned at the end
+      // of the page text (pdftotext -layout preserves the right position).
+      // The old "N of M" format must be gone everywhere.
+      const lastLine = (text: string) =>
+        text
+          .split('\n')
+          .map((line) => line.trimEnd())
+          .filter((line) => line.trim().length > 0)
+          .pop() ?? '';
+      const firstText = pdfTextPage(pdf, 1);
+      expect(firstText).not.toMatch(/\d+ of \d+/);
+      expect(lastLine(firstText)).toMatch(/1$/);
+      const mid = Math.max(2, Math.floor(total / 2));
+      const midText = pdfTextPage(pdf, mid);
+      expect(midText).not.toMatch(/\d+ of \d+/);
+      expect(lastLine(midText)).toMatch(new RegExp(`${mid}$`));
+      const lastText = pdfTextPage(pdf, total);
+      expect(lastText).not.toMatch(/\d+ of \d+/);
+      expect(lastLine(lastText)).toMatch(new RegExp(`${total}$`));
       const raw = pdf.toString('latin1');
       expect(raw).toMatch(/\/Subtype\s*\/Link/);
       expect(raw).toContain('/URI (https://alpha.example/)');

@@ -48,6 +48,22 @@ export const IQOO_NEO_9_PRO_PROFILE = {
 const DEFAULT_TIMEOUT_MS = 60_000;
 const OVERALL_TIMEOUT_MS = 240_000;
 
+/**
+ * Page-number footer for Weblink PDFs (Chromium header/footer template).
+ *
+ * Weblink-only: Classic PDFKit and Stylish PDFs have their own footers and
+ * are untouched. Right-aligned near the bottom-right corner with the same
+ * discreet system-ui grey style; shows only the current page number
+ * (no total-page count). The size follows the Weblink PDF 25% typography
+ * scale (9px -> 11.25px). The 32px right padding mirrors the content margin
+ * so the number aligns with the quotation body and never touches the paper
+ * edge. Chromium fills `.pageNumber` per page starting at 1.
+ */
+export const WEBLINK_PDF_FOOTER_TEMPLATE =
+  '<div style="font-size:11.25px;color:#6b7280;width:100%;text-align:right;' +
+  'font-family:system-ui,sans-serif;padding-right:32px;box-sizing:border-box;">' +
+  '<span class="pageNumber"></span></div>';
+
 let browserPromise: Promise<Browser> | null = null;
 /** Serializes renders so concurrent generations queue instead of overlapping. */
 let renderQueue: Promise<unknown> = Promise.resolve();
@@ -145,10 +161,7 @@ async function renderOnce({ url, timeoutMs = DEFAULT_TIMEOUT_MS }: WeblinkBrowse
       // No website header in the PDF (avoids duplicating the quotation hero);
       // the discreet page-number footer is the only browser chrome.
       headerTemplate: '<div></div>',
-      footerTemplate:
-        '<div style="font-size:9px;color:#6b7280;width:100%;text-align:center;' +
-        'font-family:system-ui,sans-serif"><span class="pageNumber"></span> of ' +
-        '<span class="totalPages"></span></div>',
+      footerTemplate: WEBLINK_PDF_FOOTER_TEMPLATE,
       margin: { top: '36px', bottom: '72px', left: '32px', right: '32px' },
       preferCSSPageSize: false,
     });

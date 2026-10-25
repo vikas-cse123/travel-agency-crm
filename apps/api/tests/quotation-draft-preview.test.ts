@@ -253,7 +253,16 @@ describe('draft preview vs finalize - By Section partially priced', () => {
       style: 'WEBLINK',
     });
     expect(weblink.status, JSON.stringify(weblink.body)).toBe(200);
-    expect(weblink.body.data.fileName).toMatch(/-weblink-quotation\.pdf$/);
+    // Customer-friendly name: no quotation id, version or weblink label.
+    expect(weblink.body.data.fileName).toBe('aarav-mehta-quotation.pdf');
+    // The inline download URL (opened in a new tab) carries the same name,
+    // so the browser viewer offers it when the user saves the PDF.
+    const inline = await client.get(
+      `/api/quotations/${q.id}/documents/${weblink.body.data.id}/download-url?disposition=inline`,
+    );
+    expect(inline.status, JSON.stringify(inline.body)).toBe(200);
+    expect(inline.body.data.url).toContain('filename=aarav-mehta-quotation.pdf');
+    expect(inline.body.data.url).toContain('disposition=inline');
     // An unsupported style is rejected by request validation.
     const bogus = await client.post(`/api/quotations/${q.id}/versions/${versionId}/generate-pdf`, {
       force: true,

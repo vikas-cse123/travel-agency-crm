@@ -8,6 +8,175 @@
  * chrome, freeze animations, and give sensible card-aware page breaks.
  */
 
+/**
+ * Weblink PDF 25% typography scale (PDF-mode only).
+ *
+ * Applies ONLY inside `[data-pdf-mode='weblink']`, which exists solely on the
+ * static `?pdf=weblink` render consumed by headless Chromium. The interactive
+ * public weblink never carries the attribute, so it is untouched.
+ *
+ * Mechanism (centralized, no per-component edits):
+ *  - The inherited base (unstyled text, 16px) moves to 20px on the PDF root.
+ *  - Every Tailwind text-size utility used by the public quotation view is
+ *    overridden with its exact x1.25 pixel value (Tailwind v3 defaults are
+ *    rem-based, so 12px -> 15px, 14px -> 17.5px, ...). Specificity (0,2,0)
+ *    beats utilities and responsive media rules; responsive overrides are
+ *    ordered base -> sm -> md -> lg (mirroring Tailwind) so the applied
+ *    breakpoint wins and no element is ever scaled twice.
+ *  - Bare h1/h2/h3 (no size utility) fall back to x1.25 of the UA defaults;
+ *    any utility override wins over these by specificity.
+ *  - rem-based leading utilities scale x1.25 in px to preserve vertical
+ *    rhythm; unitless leadings scale automatically with the font.
+ *  - Google-Docs-pasted rich text carries inline pt sizes (11pt body, 16pt
+ *    headings, 10.5pt list items); known values scale x1.25 via substring
+ *    match. `!important` overrides non-important inline styles.
+ * Font family, weight, color, decoration, alignment and letter spacing are
+ * untouched. Spacing, widths, images and cards are untouched (root html
+ * font-size is NOT changed, so rem-based layout stays identical).
+ */
+[data-pdf-mode='weblink'] {
+  font-size: 20px;
+}
+[data-pdf-mode='weblink'] h1 {
+  font-size: 40px !important;
+}
+[data-pdf-mode='weblink'] h2 {
+  font-size: 30px !important;
+}
+[data-pdf-mode='weblink'] h3 {
+  font-size: 23.4px !important;
+}
+/* Base text-size utilities: exact x1.25 of the used size. */
+[data-pdf-mode='weblink'] .text-xs {
+  font-size: 15px !important;
+}
+[data-pdf-mode='weblink'] .text-sm {
+  font-size: 17.5px !important;
+}
+[data-pdf-mode='weblink'] .text-base {
+  font-size: 20px !important;
+}
+[data-pdf-mode='weblink'] .text-lg {
+  font-size: 22.5px !important;
+}
+[data-pdf-mode='weblink'] .text-xl {
+  font-size: 25px !important;
+}
+[data-pdf-mode='weblink'] .text-2xl {
+  font-size: 30px !important;
+}
+[data-pdf-mode='weblink'] .text-4xl {
+  font-size: 45px !important;
+}
+[data-pdf-mode='weblink'] .text-6xl {
+  font-size: 75px !important;
+}
+/* Arbitrary pixel sizes used by the public quotation view. */
+[data-pdf-mode='weblink'] .text-\[10px\] {
+  font-size: 12.5px !important;
+}
+[data-pdf-mode='weblink'] .text-\[11px\] {
+  font-size: 13.75px !important;
+}
+[data-pdf-mode='weblink'] .text-\[14px\] {
+  font-size: 17.5px !important;
+}
+[data-pdf-mode='weblink'] .text-\[15px\] {
+  font-size: 18.75px !important;
+}
+[data-pdf-mode='weblink'] .text-\[16px\] {
+  font-size: 20px !important;
+}
+[data-pdf-mode='weblink'] .text-\[17px\] {
+  font-size: 21.25px !important;
+}
+[data-pdf-mode='weblink'] .text-\[19px\] {
+  font-size: 23.75px !important;
+}
+[data-pdf-mode='weblink'] .text-\[24px\] {
+  font-size: 30px !important;
+}
+[data-pdf-mode='weblink'] .text-\[30px\] {
+  font-size: 37.5px !important;
+}
+[data-pdf-mode='weblink'] .text-\[34px\] {
+  font-size: 42.5px !important;
+}
+[data-pdf-mode='weblink'] .text-\[40px\] {
+  font-size: 50px !important;
+}
+[data-pdf-mode='weblink'] .text-\[48px\] {
+  font-size: 60px !important;
+}
+[data-pdf-mode='weblink'] .text-\[32px\] {
+  font-size: 40px !important;
+}
+/* Responsive variants live inside their breakpoints (mirroring Tailwind), so
+   only the active breakpoint's override competes — a later source order must
+   never beat an inactive breakpoint. */
+@media (min-width: 640px) {
+  [data-pdf-mode='weblink'] .sm\:text-sm {
+    font-size: 17.5px !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:text-xl {
+    font-size: 25px !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:text-\[15px\] {
+    font-size: 18.75px !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:text-\[17px\] {
+    font-size: 21.25px !important;
+  }
+  [data-pdf-mode='weblink'] .sm\:text-\[40px\] {
+    font-size: 50px !important;
+  }
+}
+@media (min-width: 768px) {
+  [data-pdf-mode='weblink'] .md\:text-\[24px\] {
+    font-size: 30px !important;
+  }
+  [data-pdf-mode='weblink'] .md\:text-\[34px\] {
+    font-size: 42.5px !important;
+  }
+}
+@media (min-width: 1024px) {
+  [data-pdf-mode='weblink'] .lg\:text-\[19px\] {
+    font-size: 23.75px !important;
+  }
+  [data-pdf-mode='weblink'] .lg\:text-\[48px\] {
+    font-size: 60px !important;
+  }
+}
+/* rem-based line heights: x1.25 in px to preserve rhythm. */
+[data-pdf-mode='weblink'] .leading-4 {
+  line-height: 20px !important;
+}
+[data-pdf-mode='weblink'] .leading-5 {
+  line-height: 25px !important;
+}
+[data-pdf-mode='weblink'] .leading-6 {
+  line-height: 30px !important;
+}
+[data-pdf-mode='weblink'] .leading-7 {
+  line-height: 35px !important;
+}
+/* Docs-pasted rich text: known inline pt sizes, x1.25. */
+[data-pdf-mode='weblink'] .weblink-rich-text [style*='font-size:11pt'],
+[data-pdf-mode='weblink'] .rich-text-content [style*='font-size:11pt'],
+[data-pdf-mode='weblink'] .itinerary-rich-text [style*='font-size:11pt'] {
+  font-size: 13.75pt !important;
+}
+[data-pdf-mode='weblink'] .weblink-rich-text [style*='font-size:16pt'],
+[data-pdf-mode='weblink'] .rich-text-content [style*='font-size:16pt'],
+[data-pdf-mode='weblink'] .itinerary-rich-text [style*='font-size:16pt'] {
+  font-size: 20pt !important;
+}
+[data-pdf-mode='weblink'] .weblink-rich-text [style*='font-size:10.5pt'],
+[data-pdf-mode='weblink'] .rich-text-content [style*='font-size:10.5pt'],
+[data-pdf-mode='weblink'] .itinerary-rich-text [style*='font-size:10.5pt'] {
+  font-size: 13.125pt !important;
+}
+
 @media print {
   /* Chromium does not paint the body background into the PDF page margins;
      @page is the only surface that fills the full A4 sheet. This matches the
@@ -124,6 +293,28 @@
   }
   /* The Activities & Details header introduces the block below it. */
   [data-pdf-mode='weblink'] .weblink-activities-heading {
+    break-after: avoid;
+  }
+  /* With 25% larger type a day card can exceed the page: when it must split,
+     never strand just the transfer badge + meals tail on the next page.
+     Gluing the panel to the tail forces the split earlier, between
+     activities (at their hr separators), so the final fragment carries a
+     fair share of content. Fitting cards are unaffected: avoids only
+     constrain where a required break may land. */
+  [data-pdf-mode='weblink'] .weblink-day-card .weblink-activity-panel {
+    break-after: avoid;
+  }
+  /* The meals line is never split internally nor separated from the block
+     above it (transfer badge, panel or description). */
+  [data-pdf-mode='weblink'] .weblink-day-meals {
+    break-before: avoid;
+    break-inside: avoid;
+  }
+  /* When a day card must split, the transfer badge + meals tail stays glued
+     to the end of the description: the split then lands between the
+     description's own paragraphs (honouring orphans/widows) instead of
+     stranding a two-line tail alone on the next page. */
+  [data-pdf-mode='weblink'] .weblink-day-card .itinerary-rich-text {
     break-after: avoid;
   }
   /* The day meta line (city/date/time) belongs with the heading above and
