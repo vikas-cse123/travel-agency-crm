@@ -1331,6 +1331,7 @@ function versionCreateData(
         : Prisma.JsonNull,
       taxCategory: row.taxCategory,
       notes: row.notes,
+      duration: row.duration ?? null,
       images: row.imageSnapshotPresent
         ? ((row.images ?? []) as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull,

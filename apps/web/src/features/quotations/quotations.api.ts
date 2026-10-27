@@ -105,6 +105,8 @@ export interface TemplateService extends MasterServiceRefs {
   }> | null;
   taxCategory: string | null;
   notes: string | null;
+  /** Vehicle "Duration" free text, independent from `notes` (Usage). */
+  duration?: string | null;
   images?: QuotationSnapshotImage[];
   imageSnapshotPresent?: boolean;
   pdfImageUrl?: string | null;

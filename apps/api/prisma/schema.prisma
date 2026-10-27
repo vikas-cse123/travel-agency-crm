@@ -3540,6 +3540,8 @@ model QuotationTemplateService {
   pricingSnapshot  Json?             @db.Json
   taxCategory      String?           @db.VarChar(80)
   notes            String?           @db.VarChar(2000)
+  /// Vehicle "Duration" free text, independent from `notes` (Usage).
+  duration         String?           @db.VarChar(2000)
   sequence         Int
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -4023,6 +4025,8 @@ model QuotationVersionService {
   pricingSnapshot    Json?            @db.Json
   taxCategory        String?          @db.VarChar(80)
   notes              String?          @db.VarChar(2000)
+  /// Vehicle "Duration" free text, independent from `notes` (Usage).
+  duration           String?          @db.VarChar(2000)
   /// Ordered, quotation-owned image snapshot copied from a selected Master.
   images             Json?            @db.Json
   /// Exactly one saved image selected for PDF; falls back to the first image.

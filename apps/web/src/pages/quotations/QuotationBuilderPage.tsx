@@ -2219,6 +2219,7 @@ const newVehicleServiceRow = (sequence: number) => ({
   pricingBasis: 'PER_DAY' as const,
   taxCategory: 'Transportation',
   notes: null,
+  duration: null,
   images: [],
   imageSnapshotPresent: false,
   pdfImageUrl: null,
@@ -3809,6 +3810,7 @@ export function QuotationBuilderPage() {
               ? 'Cruise Details'
               : row.taxCategory,
           notes: row.notes,
+          duration: (row as unknown as { duration?: string | null })?.duration ?? null,
           // Quotation-owned add-on pricing snapshot (every option) plus the
           // section-wise basis. These fields were previously omitted from this
           // explicit mapper, so reopening a quotation silently dropped every
@@ -5365,6 +5367,7 @@ export function QuotationBuilderPage() {
                 const vehicleId = (vehicle as unknown as { vehicleId?: string | null })?.vehicleId ?? '';
                 const vehicleName = (vehicle as unknown as { name?: string | null })?.name ?? '';
                 const usage = (vehicle as unknown as { notes?: string | null })?.notes ?? '';
+                const duration = (vehicle as unknown as { duration?: string | null })?.duration ?? '';
                 const description = (vehicle as unknown as { description?: string | null })?.description ?? '';
                 const amount = Number((vehicle as unknown as { sellingPrice?: number | null })?.sellingPrice ?? 0);
                 const pricingBasis = String((vehicle as unknown as { pricingBasis?: string | null })?.pricingBasis ?? 'PER_DAY');
@@ -5597,13 +5600,24 @@ export function QuotationBuilderPage() {
                             </select>
                           </label>
                           <label className="text-sm font-semibold text-slate-800">
-                            Usage / Duration
+                            Usage
                             <input
-                              aria-label={`Vehicle ${index + 1} usage or duration`}
+                              aria-label={`Vehicle ${index + 1} usage`}
                               maxLength={2000}
                               placeholder="e.g., Airport transfers & sightseeing"
                               value={usage}
                               onChange={(event) => applyService(index, { notes: event.target.value || null })}
+                              className={`${field} mt-1`}
+                            />
+                          </label>
+                          <label className="text-sm font-semibold text-slate-800">
+                            Duration
+                            <input
+                              aria-label={`Vehicle ${index + 1} duration`}
+                              maxLength={2000}
+                              placeholder="e.g., 3 days"
+                              value={duration}
+                              onChange={(event) => applyService(index, { duration: event.target.value || null })}
                               className={`${field} mt-1`}
                             />
                           </label>

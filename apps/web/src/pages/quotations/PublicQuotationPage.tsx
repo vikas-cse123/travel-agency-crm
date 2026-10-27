@@ -3039,6 +3039,12 @@ export function PublicQuotationView({
                                   <strong className="text-[#000000]">Usage:</strong> {vehicle.notes}
                                 </p>
                               )}
+                              {vehicle.duration && (
+                                <p>
+                                  <strong className="text-[#000000]">Duration:</strong>{' '}
+                                  {vehicle.duration}
+                                </p>
+                              )}
                             </div>
                             {vehicle.description && <RichHtml html={vehicle.description} />}
                           </div>

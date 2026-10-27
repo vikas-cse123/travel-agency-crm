@@ -259,6 +259,7 @@ export interface ServiceRowPatch {
   sellingPrice?: number;
   description?: string | null;
   notes?: string | null;
+  duration?: string | null;
   taxCategory?: string | null;
   dayNumber?: number | null;
   city?: string | null;

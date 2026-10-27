@@ -576,6 +576,10 @@ export const quotationServiceSchema = z.object({
   pricingSnapshot: z.array(quotationPricingSnapshotEntrySchema).max(MAX_ADD_ON_PRICING_ENTRIES).nullish(),
   taxCategory: optionalText(80),
   notes: optionalText(2000),
+  // Vehicle "Duration" — free-text (e.g. "3 days", "8 hours", "Airport transfer"),
+  // persisted independently from `notes` (which holds the vehicle "Usage").
+  // NULL for legacy rows and every non-vehicle service type.
+  duration: optionalText(2000),
   // Cruise-specific structured duration and multi-room allocation.
   // Legacy single-room cruises store nights in free-text notes; new code uses cruiseNights.
   cruiseNights: z.preprocess(
